@@ -1,40 +1,40 @@
-# Consolidated Macro Investing Dashboard (US Focus)
+# Quantitative Risk & Trading Dashboard
 
-A professional-grade macro analysis tool built with Streamlit to track US economic health, liquidity, and market sentiment. This dashboard aggregates 16 key metrics to calculate a proprietary **RoRo (Risk-On/Risk-Off) Score**, helping investors determine the current market regime.
+A Flask-based financial analytics dashboard that automates technical analysis and risk regime identification. This tool integrates real-time data from Yahoo Finance to provide actionable signals across four distinct quantitative modules.
 
-## 📊 Core Features
+## 🛠️ System Architecture
 
-### 1. The RoRo Score
-A weighted index ranging from **1-100** that signals market sentiment:
-* **0-40:** Risk-Off (Defensive)
-* **41-60:** Neutral
-* **61-100:** Risk-On (Aggressive)
+The application is built on a modular logic engine that processes price data into higher-level market signals:
 
-### 2. 16 Key Macro Metrics
-The dashboard tracks data across eight critical categories:
+### 1. Risk Regime Module
+Determines if the market is in a **RISK-ON** or **RISK-OFF** environment by evaluating three conditions:
+* **Trend:** Is SPY trading above its 200-day Moving Average?
+* **Fear:** Is the VIX Index below 20?
+* **Breadth:** Is the Equal-Weight S&P 500 (RSP) outperforming the Cap-Weighted SPY (50-day relative strength)?
 
-* **Economic Growth:** Real GDP (Annualized), ISM Manufacturing PMI, Bank Loan Growth, and New Construction Spending.
-* **Labor Market:** Unemployment Rate.
-* **Inflation:** Consumer Price Index (CPI) YoY.
-* **Monetary Policy & Risk:** Fed Funds Rate, 10Y-2Y Yield Spread, VIX Index, MOVE Index, and High Yield OAS.
-* **Liquidity:** M2 Money Supply YoY.
-* **Carry Trade & FX:** USD/JPY Interest Rate Differential, Realized Volatility, and CFTC JPY Net Positions.
-* **Market Breadth:** % of S&P 500 stocks above their 200-Day Moving Average.
-* **Sector Strength:** Real-time tracking of the 3 strongest and 3 weakest US sectors.
+### 2. QQQ Tactical Mean Reversion
+A high-velocity strategy targeting the Nasdaq-100 (QQQ) using a **2-period RSI** (Wilder's Smoothing):
+* **Strong Buy:** RSI(2) ≤ 10 and price > 200MA.
+* **Exit/Profit Take:** RSI(2) ≥ 70.
+* **Risk Mitigation:** No new buys if price is below the 200-day Moving Average.
 
-## 🛠️ Tech Stack
-* **Frontend:** [Streamlit](https://streamlit.io/)
-* **Data Sourcing:** `yfinance` (Market data), `pandas-datareader` (FRED/Economic data)
-* **Analysis:** `pandas`, `numpy`
-* **Visualization:** `plotly`, `matplotlib`
+### 3. Sector Rotation Ranking
+Calculates the 20-day relative momentum of all 11 S&P 500 sectors (XLF, XLK, XLE, etc.) against the SPY benchmark. It ranks them from strongest to weakest to identify where institutional capital is flowing.
 
-## 🚀 Getting Started
+### 4. Cross-Asset Trend Following
+Monitors a diverse basket of assets (Tech, Energy, Gold, Bitcoin, Treasuries) using a multi-factor trend logic:
+* **Buy Logic:** SMA 50 > SMA 200 + Low Volatility (ATR Filter) + RSI < 70.
+* **Exit Logic:** Price drops below SMA 50 or hits a **10x ATR Trailing Stop** from recent highs.
 
-### Prerequisites
-Ensure you have Python 3.8+ installed.
+## 🔧 Technical Stack
+* **Framework:** Flask (Python)
+* **Data Sourcing:** `yfinance` (Yahoo Finance API)
+* **Data Processing:** `pandas`, `numpy` (Vectorized RSI and ATR calculations)
+* **Frontend:** HTML/CSS via Jinja2 templates (`dashboard.html`)
 
-### Installation
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/shyammundhra2/stocks.git](https://github.com/shyammundhra2/stocks.git)
-   cd stocks
+## 🚀 Quick Start
+
+### 1. Installation
+Clone the repository and install the required dependencies:
+```bash
+pip install flask yfinance pandas numpy
