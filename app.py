@@ -76,53 +76,61 @@ def get_trends():
     results = []
     for sym, name in assets.items():
         try:
-            # 1. Download and handle MultiIndex (common 2025/2026 yfinance issue)
             df = yf.download(sym, period="1y", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             
             c = df['Close'].dropna()
-            if len(c) < 20: continue # Skip if not enough data
-            
-            # --- Dual-Condition Filter Logic ---
-            window = 10
-            # Use raw values if logs fail, but log is better for % growth
-            y = np.log(c.tail(window).values) 
-            x = np.arange(len(y))
-            
-            # Linear Regression for Slope & R-Squared
-            coeffs = np.polyfit(x, y, 1)
-            slope = coeffs[0]
-            p = np.poly1d(coeffs)
-            y_hat = p(x)
-            r_squared = 1 - (np.sum((y - y_hat)**2) / np.sum((y - np.mean(y))**2))
-            
-            pct_slope = slope * window 
-            
-            # --- Standard Indicators ---
-            s50, s200 = c.rolling(50).mean(), c.rolling(200).mean()
-            rsi14 = compute_RSI(c, 14)
-            last_c, last_rsi = float(c.iloc[-1]), float(rsi14.iloc[-1])
-            
-            # --- The Macro Gatekeeper ---
-            # BUY only if Slope is positive AND R2 > 0.6
-            is_quality_trend = (slope > 0) and (r_squared > 0.6)
-            
-            buy = (float(s50.iloc[-1]) > float(s200.iloc[-1])) and \
-                  (last_rsi < 85) and (last_c > float(s50.iloc[-1])) and \
-                  is_quality_trend
+            if len(c) < 50: continue 
 
-            status = "BUY" if buy else ("HOLD" if last_c > float(s50.iloc[-1]) else "SELL")
+            # --- 1. Momentum Stats (10-Day Window) ---
+            window = 10
+            y = np.log(c.tail(window).values)
+            x = np.arange(len(y))
+            coeffs = np.polyfit(x, y, 1)
+            slope, r_squared = coeffs[0], 1 - (np.sum((y - np.polyval(coeffs, x))**2) / np.sum((y - np.mean(y))**2))
+            pct_slope = slope * window 
+
+            # --- 2. Macro & Volatility Indicators ---
+            s50, s200 = c.rolling(50).mean(), c.rolling(200).mean()
+            atr = compute_ATR(df, 14).iloc[-1]
+            last_c = float(c.iloc[-1])
             
+            # --- 3. Smart Exit Logic (The Trailing Stop) ---
+            # Chandelier Exit: Highest high of last 20 days minus 2.5x ATR
+            recent_high = c.tail(20).max()
+            trailing_stop = recent_high - (2.5 * atr)
+
+            # --- 4. Signal Generation ---
+            # BUY: Golden Cross + Price > 50MA + Strong 10-day R2
+            is_bullish_ma = (s50.iloc[-1] > s200.iloc[-1]) and (last_c > s50.iloc[-1])
+            is_strong_mom = (slope > 0) and (r_squared > 0.6)
+            
+            buy_signal = is_bullish_ma and is_strong_mom
+
+            # SELL Logic:
+            # - Price breaks the 50-day MA (Macro Exit)
+            # - Price hits the ATR Trailing Stop (Profit Protection)
+            # - R2 collapses < 0.3 (Momentum Decay)
+            if last_c < s50.iloc[-1] or last_c < trailing_stop:
+                status = "SELL"
+            elif r_squared < 0.3:
+                status = "HOLD (Weakening)"
+            elif buy_signal:
+                status = "BUY"
+            else:
+                status = "HOLD"
+
             results.append({
-                "sym": sym, "name": name, "price": round(last_c, 2), 
-                "status": status, "rsi14": round(last_rsi, 1), 
-                "r2": round(r_squared, 2), "slope": round(pct_slope * 100, 2)
+                "sym": sym, "name": name, "price": round(last_c, 2),
+                "status": status, "r2": round(r_squared, 2),
+                "slope": round(pct_slope * 100, 2), "stop": round(trailing_stop, 2)
             })
         except Exception as e:
             print(f"Error on {sym}: {e}")
             continue
-    return sorted(results, key=lambda x: x['rsi14'], reverse=True)
+    return sorted(results, key=lambda x: x['r2'], reverse=True)
+
 @app.route('/')
 def index():
     return render_template('dashboard.html', 
