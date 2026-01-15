@@ -64,11 +64,30 @@ def get_mean_reversion():
 def get_sector_rotation():
     try:
         sectors = {"XLC": "Comm Serv", "XLY": "Discr", "XLP": "Staples", "XLE": "Energy", "XLF": "Financials", "XLV": "Health", "XLI": "Industrials", "XLB": "Materials", "XLRE": "Real Estate", "XLK": "Tech", "XLU": "Utilities"}
-        data = yf.download(list(sectors.keys()) + ["SPY"], period="6mo", progress=False)['Close']
+        data = yf.download(list(sectors.keys()) + ["SPY"], period="1y", progress=False)['Close']
+        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
+        
         rel_mom = data[list(sectors.keys())].div(data["SPY"], axis=0).pct_change(20).iloc[-1]
-        ranked = rel_mom.sort_values(ascending=False)
-        all_r = [{"name": sectors[t], "gain": f"{rel_mom[t]:+.2%}", "is_positive": rel_mom[t] > 0} for t in ranked.index]
-        return {"top_3": all_r[:3], "all_ranked": all_r}
+        
+        all_r = []
+        window = 20 # Rotation lookback
+        for t, label in sectors.items():
+            y = np.log(data[t].tail(window).values)
+            x = np.arange(len(y))
+            coeffs = np.polyfit(x, y, 1)
+            slope = coeffs[0]
+            r2 = 1 - (np.sum((y - np.polyval(coeffs, x))**2) / np.sum((y - np.mean(y))**2))
+            
+            all_r.append({
+                "name": label, 
+                "gain": f"{rel_mom[t]:+.2%}", 
+                "is_positive": rel_mom[t] > 0,
+                "r2": round(r2, 2),
+                "slope": round(slope * window * 100, 2)
+            })
+        
+        ranked = sorted(all_r, key=lambda x: float(x['gain'].strip('%')), reverse=True)
+        return {"top_3": ranked[:3], "all_ranked": ranked}
     except: return {"top_3": [], "all_ranked": []}
 
 def get_trends():
@@ -77,13 +96,10 @@ def get_trends():
     for sym, name in assets.items():
         try:
             df = yf.download(sym, period="1y", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             c = df['Close'].dropna()
             if len(c) < 50: continue 
 
-            # --- 1. Momentum Stats (10-Day Window) ---
             window = 10
             y = np.log(c.tail(window).values)
             x = np.arange(len(y))
@@ -91,54 +107,33 @@ def get_trends():
             slope, r_squared = coeffs[0], 1 - (np.sum((y - np.polyval(coeffs, x))**2) / np.sum((y - np.mean(y))**2))
             pct_slope = slope * window 
 
-            # --- 2. Macro & Volatility Indicators ---
             s50, s200 = c.rolling(50).mean(), c.rolling(200).mean()
             atr = compute_ATR(df, 14).iloc[-1]
-            last_c = float(c.iloc[-1])
+            last_c, last_rsi = float(c.iloc[-1]), float(compute_RSI(c, 14).iloc[-1])
             
-            # --- 3. Smart Exit Logic (The Trailing Stop) ---
-            # Chandelier Exit: Highest high of last 20 days minus 2.5x ATR
             recent_high = c.tail(20).max()
             trailing_stop = recent_high - (2.5 * atr)
 
-            # --- 4. Signal Generation ---
-            # BUY: Golden Cross + Price > 50MA + Strong 10-day R2
             is_bullish_ma = (s50.iloc[-1] > s200.iloc[-1]) and (last_c > s50.iloc[-1])
             is_strong_mom = (slope > 0) and (r_squared > 0.6)
-            
             buy_signal = is_bullish_ma and is_strong_mom
 
-            # SELL Logic:
-            # - Price breaks the 50-day MA (Macro Exit)
-            # - Price hits the ATR Trailing Stop (Profit Protection)
-            # - R2 collapses < 0.3 (Momentum Decay)
-            if last_c < s50.iloc[-1] or last_c < trailing_stop:
-                status = "SELL"
-            elif r_squared < 0.3:
-                status = "HOLD (Weakening)"
-            elif buy_signal:
-                status = "BUY"
-            else:
-                status = "HOLD"
+            if last_c < s50.iloc[-1] or last_c < trailing_stop: status = "SELL"
+            elif r_squared < 0.3: status = "HOLD (Weakening)"
+            elif buy_signal: status = "BUY"
+            else: status = "HOLD"
 
             results.append({
                 "sym": sym, "name": name, "price": round(last_c, 2),
-                "status": status, "r2": round(r_squared, 2),
+                "status": status, "r2": round(r_squared, 2), "rsi14": round(last_rsi, 1),
                 "slope": round(pct_slope * 100, 2), "stop": round(trailing_stop, 2)
             })
-        except Exception as e:
-            print(f"Error on {sym}: {e}")
-            continue
+        except: continue
     return sorted(results, key=lambda x: x['r2'], reverse=True)
 
 @app.route('/')
 def index():
-    return render_template('dashboard.html', 
-                           regime=get_risk_regime(), 
-                           vix_mr=get_vix_signal(), 
-                           mr=get_mean_reversion(), 
-                           sr=get_sector_rotation(), 
-                           trends=get_trends())
+    return render_template('dashboard.html', regime=get_risk_regime(), vix_mr=get_vix_signal(), mr=get_mean_reversion(), sr=get_sector_rotation(), trends=get_trends())
 
 if __name__ == "__main__":
     app.run(debug=True)
