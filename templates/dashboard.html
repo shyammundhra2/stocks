@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"><title>MacroSystem Dashboard</title>
+    <meta charset="UTF-8">
+    <title>MacroSystem Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 p-6 font-sans">
@@ -59,17 +60,23 @@
             </div>
 
             <div class="lg:col-span-8 bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
-                <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (High RSI First)</h2>
+                <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (Linear Regression & RSI)</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% for item in trends %}
                     <div class="bg-slate-900 p-5 rounded-2xl border border-slate-700 flex justify-between items-center hover:bg-slate-800 transition shadow-inner">
                         <div>
                             <span class="text-[10px] text-slate-500 font-black uppercase">{{ item.sym }}</span>
                             <p class="font-bold text-white leading-tight">{{ item.name }}</p>
-                            <p class="text-[10px] text-blue-400 font-mono mt-1">RSI(14): {{ item.rsi14 }}</p>
+                            <div class="flex gap-2 mt-1">
+                                <p class="text-[10px] text-blue-400 font-mono">RSI(14): {{ item.rsi14 }}</p>
+                                <p class="text-[10px] text-slate-500 font-mono">R²: {{ item.r2 }}</p>
+                            </div>
+                            <p class="text-[10px] text-slate-500 font-mono italic">Slope: {{ item.slope }}%</p>
                         </div>
                         <div class="text-right">
-                            <p class="text-xl font-black {{ 'text-green-400' if item.status == 'BUY' else 'text-red-400' }}">{{ item.status }}</p>
+                            <p class="text-xl font-black {{ 'text-green-400' if item.status == 'BUY' else 'text-yellow-500' if 'Weakening' in item.status else 'text-red-400' }}">
+                                {{ item.status }}
+                            </p>
                             <p class="text-[10px] text-slate-500 font-bold uppercase">Stop: ${{ item.stop }}</p>
                         </div>
                     </div>
