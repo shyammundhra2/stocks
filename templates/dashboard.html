@@ -70,10 +70,10 @@
                     {% for item in trends %}
                     <div class="bg-slate-900 p-5 rounded-2xl border border-slate-700 flex justify-between items-center hover:bg-slate-800 transition shadow-inner">
                         <div>
-                            <span class="text-[10px] text-slate-500 font-black uppercase">{{ item.sym }}</span>
+                            <span class="text-[10px] text-slate-500 font-black uppercase">{{ item.sym }} — ${{ item.price }}</span>
                             <p class="font-bold text-white leading-tight">{{ item.name }}</p>
                             <div class="flex gap-2 mt-1">
-                                <p class="text-[10px] text-blue-400 font-mono">RSI(14): {{ item.rsi14 }}</p>
+                                <p class="text-[10px] text-blue-400 font-mono">RSI: {{ item.rsi14 }}</p>
                                 <p class="text-[10px] text-slate-500 font-mono">R²: {{ item.r2 }}</p>
                             </div>
                             <p class="text-[10px] text-slate-500 font-mono italic">Slope: {{ item.slope }}%</p>
