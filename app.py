@@ -55,8 +55,8 @@ def get_mean_reversion():
         rsi2 = float(compute_RSI(df["Close"], 2).iloc[-1])
         p, s200 = float(df["Close"].iloc[-1]), float(df["Close"].rolling(200).mean().iloc[-1])
         if rsi2 >= 70: sig = "EXIT"
-        elif p < s200: sig = "RISK_OFF"
-        elif rsi2 <= 10: sig = "STRONG_BUY"
+        elif p < s200: sig = "RISK OFF"
+        elif rsi2 <= 10: sig = "BUY"
         else: sig = "HOLD"
         return {"price": round(p, 2), "rsi2": round(rsi2, 1), "signal": sig}
     except: return {"price": 0, "rsi2": 0, "signal": "ERROR"}
@@ -76,18 +76,53 @@ def get_trends():
     results = []
     for sym, name in assets.items():
         try:
+            # 1. Download and handle MultiIndex (common 2025/2026 yfinance issue)
             df = yf.download(sym, period="1y", progress=False)
-            c = df['Close']
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            c = df['Close'].dropna()
+            if len(c) < 20: continue # Skip if not enough data
+            
+            # --- Dual-Condition Filter Logic ---
+            window = 10
+            # Use raw values if logs fail, but log is better for % growth
+            y = np.log(c.tail(window).values) 
+            x = np.arange(len(y))
+            
+            # Linear Regression for Slope & R-Squared
+            coeffs = np.polyfit(x, y, 1)
+            slope = coeffs[0]
+            p = np.poly1d(coeffs)
+            y_hat = p(x)
+            r_squared = 1 - (np.sum((y - y_hat)**2) / np.sum((y - np.mean(y))**2))
+            
+            pct_slope = slope * window 
+            
+            # --- Standard Indicators ---
             s50, s200 = c.rolling(50).mean(), c.rolling(200).mean()
-            rsi14, atr = compute_RSI(c, 14), compute_ATR(df, 14)
+            rsi14 = compute_RSI(c, 14)
             last_c, last_rsi = float(c.iloc[-1]), float(rsi14.iloc[-1])
-            stop = float(c.rolling(50).max().iloc[-1]) - (10 * float(atr.iloc[-1]))
-            buy = (float(s50.iloc[-1]) > float(s200.iloc[-1])) and (last_rsi < 85) and (last_c > float(s50.iloc[-1]))
-            status = "BUY" if buy else ("SELL" if last_c < float(s50.iloc[-1]) or last_c < stop else "HOLD")
-            results.append({"sym": sym, "name": name, "price": round(last_c, 2), "stop": round(stop, 2), "status": status, "rsi14": round(last_rsi, 1)})
-        except: continue
-    return sorted(results, key=lambda x: x['rsi14'], reverse=True)
+            
+            # --- The Macro Gatekeeper ---
+            # BUY only if Slope is positive AND R2 > 0.6
+            is_quality_trend = (slope > 0) and (r_squared > 0.6)
+            
+            buy = (float(s50.iloc[-1]) > float(s200.iloc[-1])) and \
+                  (last_rsi < 85) and (last_c > float(s50.iloc[-1])) and \
+                  is_quality_trend
 
+            status = "BUY" if buy else ("HOLD" if last_c > float(s50.iloc[-1]) else "SELL")
+            
+            results.append({
+                "sym": sym, "name": name, "price": round(last_c, 2), 
+                "status": status, "rsi14": round(last_rsi, 1), 
+                "r2": round(r_squared, 2), "slope": round(pct_slope * 100, 2)
+            })
+        except Exception as e:
+            print(f"Error on {sym}: {e}")
+            continue
+    return sorted(results, key=lambda x: x['rsi14'], reverse=True)
 @app.route('/')
 def index():
     return render_template('dashboard.html', 
