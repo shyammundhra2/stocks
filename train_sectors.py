@@ -2,48 +2,62 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler
 import joblib
 
-# 1. Tickers for Sectors and Macro Metrics
+# 1. Tickers - Expanded for better Macro coverage
 sector_tickers = ['VDE', 'XLB', 'VIS', 'XLY', 'XLF', 'XLC', 'VGT', 'XLV', 'XLP', 'XLU', 'XLRE']
-macro_tickers = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE'] 
+# Added TYX for Curve Slope and HYG/LQD for Credit Spread
+macro_tickers = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD'] 
 
-# 2. Download and Prep Sector Data
-print("Downloading sector data...")
-sector_data = yf.download(sector_tickers, start="2018-01-01")['Close']
-returns = sector_data.pct_change(periods=5).shift(-5)
-returns = returns.dropna()
-y = returns.idxmax(axis=1)
+# 2. Data Fetching
+data = yf.download(sector_tickers + macro_tickers, start="2015-01-01")['Close'].ffill()
 
-# 3. Download Macro Data
-print("Downloading macro features...")
-X = yf.download(macro_tickers, start="2018-01-01")['Close'].ffill()
+# 3. Feature Engineering (The "Strategist" Layer)
+X_raw = pd.DataFrame(index=data.index)
+X_raw['DXY_mom'] = data['DX-Y.NYB'].pct_change(10) # 2-week momentum
+X_raw['VIX_level'] = data['^VIX']
+X_raw['MOVE_level'] = data['^MOVE']
+X_raw['Yield_Curve'] = data['^TYX'] - data['^TNX'] # 30Y - 10Y
+X_raw['Credit_Spread'] = data['LQD'] / data['HYG'] # IG vs HY proxy
+X_raw['TNX_vol'] = data['^TNX'].rolling(10).std() # Yield volatility
 
-# 4. Align Datasets
-common_index = X.index.intersection(y.index)
-X = X.loc[common_index]
-y = y.loc[common_index]
+# 4. Target Labeling (The "Portfolio Manager" Layer)
+# Find the best performing sector over the NEXT 5 days
+sector_returns = data[sector_tickers].pct_change(5).shift(-5)
+y = sector_returns.idxmax(axis=1)
 
-# 5. Time-Series Cross-Validation
-# We use 5 splits to simulate training on the past to predict the "future"
+# 5. Final Alignment & Cleaning
+features_and_target = pd.concat([X_raw, y.rename('target')], axis=1).dropna()
+X = features_and_target.drop(columns=['target'])
+y = features_and_target['target']
+
+# 6. Scaling (Crucial for interpreting 'importance' across different units)
+scaler = StandardScaler()
+X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns, index=X.index)
+
+# 7. Time-Series Walk-Forward Validation
 tscv = TimeSeriesSplit(n_splits=5)
-model = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42, class_weight='balanced')
+model = RandomForestClassifier(
+    n_estimators=500, # Increased for stability
+    max_depth=4,      # Kept shallow to prevent overfitting macro noise
+    class_weight='balanced',
+    random_state=42
+)
 
-print("Executing Time-Series Cross-Validation...")
-cv_results = cross_val_score(model, X, y, cv=tscv)
+# 
+# This diagram would illustrate how we train on early dates and test on later dates 
+# to ensure no data leakage.
 
-print(f"Mean CV Accuracy: {cv_results.mean():.2%}")
-print(f"Stability (Std Dev): {cv_results.std():.2%}")
+print("Executing Walk-Forward Analysis...")
+scores = []
+for train_index, test_index in tscv.split(X_scaled):
+    model.fit(X_scaled.iloc[train_index], y.iloc[train_index])
+    scores.append(model.score(X_scaled.iloc[test_index], y.iloc[test_index]))
 
-# 6. Final Fit & Save
-# We train on the full dataset now that we've verified the logic
-model.fit(X, y)
+print(f"Mean Predictive Accuracy: {np.mean(scores):.2%}")
 
-# Save feature importance for dashboard insights
-importances = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
-print("\nFeature Importance:")
-print(importances)
-
-joblib.dump(model, 'sector_model.joblib')
-print("\nSuccess: 'sector_model.joblib' updated with CV-verified logic.")
+# 8. Final Fit and Export
+model.fit(X_scaled, y)
+joblib.dump({'model': model, 'scaler': scaler}, 'enhanced_sector_model.joblib')
