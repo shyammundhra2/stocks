@@ -1,0 +1,73 @@
+<div class="flex justify-end mb-4">
+    <img 
+        src="{{ url_for('static', filename='images/export.png') }}" 
+        alt="Export Dashboard" 
+        class="h-10 w-10 cursor-pointer hover:opacity-80"
+        onclick="exportDashboard()"
+    >
+</div>
+
+<script>
+function exportDashboard() {
+    let text = "";
+
+    // Market Regime
+    text += "Market Regime: {{ regime.status }}\n";
+    {% for m in regime.details %}
+    text += "- {{ m.label }}: {{ 'PASS' if m.pass else 'FAIL' }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // VIX
+    text += "VIX Signal: {{ vix_mr.signal.replace('_',' ') }}\n";
+    text += "VIX: {{ vix_mr.vix }}, Z-Score: {{ vix_mr.z }}\n\n";
+
+    // Tactical QQQ
+    text += "Tactical QQQ:\n";
+    text += "- Signal: {{ mr.signal }}\n";
+    text += "- RSI(2): {{ mr.rsi2 }}, Price: ${{ mr.price }}\n\n";
+
+    // Sector Rotation
+    text += "Sector Strength (Slope + R²):\n";
+    {% for s in sr.all_ranked %}
+    text += "- {{ s.name }}: Slope {{ s.slope }}%, R² {{ s.r2 }}, Gain {{ s.gain }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // Country Rotation
+    text += "Country Rotation (Slope vs R²):\n";
+    {% for c in countries %}
+    text += "- {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}%, R² {{ c.r2 }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // Commodity Rotation
+    text += "Commodity Rotation (Slope vs R²):\n";
+    {% for c in commodities %}
+    text += "- {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}%, R² {{ c.r2 }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // Currency Rotation
+    text += "Currency Rotation (Slope vs R²):\n";
+    {% for c in currencies %}
+    text += "- {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}%, R² {{ c.r2 }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // Momentum Trends
+    text += "Momentum Trends:\n";
+    {% for t in trends %}
+    text += "- {{ t.name }} ({{ t.sym }}): Status {{ t.status }}, Price ${{ t.price }}, RSI14 {{ t.rsi14 }}, Slope {{ t.slope }}%, Stop {{ t.stop }}\n";
+    {% endfor %}
+    text += "\n";
+
+    // Download as text file
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'macro_dashboard.txt';
+    a.click();
+}
+</script>
+
