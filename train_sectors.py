@@ -12,7 +12,7 @@ sector_tickers = ['VDE', 'XLB', 'VIS', 'XLY', 'XLF', 'XLC', 'VGT', 'XLV', 'XLP',
 macro_tickers = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD'] 
 
 # 2. Data Fetching
-data = yf.download(sector_tickers + macro_tickers, start="2015-01-01")['Close'].ffill()
+data = yf.download(sector_tickers + macro_tickers, start="2000-01-01")['Close'].ffill()
 
 # 3. Feature Engineering (The "Strategist" Layer)
 X_raw = pd.DataFrame(index=data.index)
@@ -60,4 +60,4 @@ print(f"Mean Predictive Accuracy: {np.mean(scores):.2%}")
 
 # 8. Final Fit and Export
 model.fit(X_scaled, y)
-joblib.dump({'model': model, 'scaler': scaler}, 'enhanced_sector_model.joblib')
+joblib.dump({'model': model, 'scaler': scaler}, 'sector_model.joblib')
