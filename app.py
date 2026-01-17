@@ -152,7 +152,7 @@ def get_country_rotation():
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        window = 20
+        window = 60
         results = []
 
         for sym, name in countries.items():
