@@ -1,0 +1,10 @@
+<div class="card">
+    <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-4">Tactical QQQ (RSI 2)</h2>
+    <div class="card-highlight">
+        <p class="{{ 'status-green' if 'BUY' in mr.signal else '' }} text-3xl font-black">
+            {{ mr.signal }}
+        </p>
+        <p class="label-small mt-2">RSI(2): {{ mr.rsi2 }} | QQQ: ${{ mr.price }}</p>
+    </div>
+</div>
+

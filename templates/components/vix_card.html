@@ -1,0 +1,19 @@
+<div class="card">
+    <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-4">VIX Fear Gauge (SPY)</h2>
+    <div class="card-highlight">
+        <p class="{{ 'status-green' if 'BUY' in vix_mr.signal else 'status-red' if 'TRIM' in vix_mr.signal else '' }}">
+            {{ vix_mr.signal.replace('_', ' ') }}
+        </p>
+        <div class="details-row mt-4">
+            <div>
+                <p class="label-small">VIX</p>
+                <p class="font-mono font-bold">{{ vix_mr.vix }}</p>
+            </div>
+            <div>
+                <p class="label-small">Z-Score</p>
+                <p class="font-mono font-bold">{{ vix_mr.z }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+

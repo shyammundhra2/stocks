@@ -1,0 +1,25 @@
+<div class="card">
+    <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (Linear Regression & RSI)</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {% for item in trends %}
+        <div class="trend-card card flex justify-between items-center">
+            <div>
+                <span class="label-small">{{ item.sym }} — ${{ item.price }}</span>
+                <p class="font-bold text-white leading-tight">{{ item.name }}</p>
+                <div class="flex gap-2 mt-1">
+                    <p class="label-small text-blue-400 font-mono">RSI: {{ item.rsi14 }}</p>
+                    <p class="label-small font-mono">R²: {{ item.r2 }}</p>
+                </div>
+                <p class="label-small font-mono italic">Slope: {{ item.slope }}%</p>
+            </div>
+            <div class="text-right">
+                <p class="text-xl font-black {{ 'status-green' if item.status=='BUY' else 'status-yellow' if 'Weakening' in item.status else 'status-red' }}">
+                    {{ item.status }}
+                </p>
+                <p class="label-small uppercase font-bold">Stop: ${{ item.stop }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+

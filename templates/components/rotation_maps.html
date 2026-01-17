@@ -1,0 +1,60 @@
+<!-- Sector Rotation -->
+<div class="card">
+    <h2 class="text-xs font-black text-green-400 uppercase tracking-widest mb-4 italic">Sector Rotation: Slope vs R²</h2>
+    <div id="rotationMap" class="plot-container"></div>
+</div>
+
+<!-- Country Rotation -->
+<div class="card">
+    <h2 class="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 italic">Country Rotation: Slope vs R²</h2>
+    <div id="countryRotation" class="plot-container"></div>
+</div>
+
+<!-- Commodity Rotation -->
+<div class="card">
+    <h2 class="text-xs font-black text-orange-400 uppercase tracking-widest mb-4 italic">Commodity Rotation: Slope vs R²</h2>
+    <div id="commodityRotation" class="plot-container"></div>
+</div>
+
+<!-- Currency Rotation -->
+<div class="card">
+    <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-4 italic">Currency Rotation (X → USD)</h2>
+    <div id="currencyRotation" class="plot-container"></div>
+</div>
+
+<script>
+    const annotations = [
+        {x:2, y:0.9, text:'LEADING', showarrow:false, font:{color:'#22c55e', size:10}},
+        {x:-2, y:0.9, text:'WEAKENING', showarrow:false, font:{color:'#eab308', size:10}},
+        {x:-2, y:0.1, text:'LAGGING', showarrow:false, font:{color:'#ef4444', size:10}},
+        {x:2, y:0.1, text:'IMPROVING', showarrow:false, font:{color:'#3b82f6', size:10}}
+    ];
+
+    function plotRotation(id, data) {
+        Plotly.newPlot(id,[{
+            x: data.map(d=>d.x),
+            y: data.map(d=>d.y),
+            text: data.map(d=>d.name),
+            mode:'markers+text',
+            textposition:'top center',
+            marker:{size:12,color:data.map(d=>d.x>0?'#22c55e':'#ef4444'),line:{color:'#fff',width:1}},
+            type:'scatter'
+        }],{
+            paper_bgcolor:'rgba(0,0,0,0)',
+            plot_bgcolor:'rgba(0,0,0,0)',
+            font:{color:'#94a3b8',size:10},
+            margin:{t:40,r:40,b:40,l:40},
+            xaxis:{title:'Slope (%)',gridcolor:'#334155',zerolinecolor:'#64748b',zerolinewidth:2},
+            yaxis:{title:'R²',range:[0,1],gridcolor:'#334155',zerolinecolor:'#64748b',zerolinewidth:2},
+            annotations:annotations,
+            responsive:true,
+            displayModeBar:false
+        });
+    }
+
+    plotRotation('rotationMap',[{% for s in sr.all_ranked %}{ name: "{{ s.name }}", x: {{ s.slope }}, y: {{ s.r2 }} },{% endfor %}]);
+    plotRotation('countryRotation',[{% for c in countries %}{ name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }} },{% endfor %}]);
+    plotRotation('commodityRotation',[{% for c in commodities %}{ name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }} },{% endfor %}]);
+    plotRotation('currencyRotation',[{% for c in currencies %}{ name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }} },{% endfor %}]);
+</script>
+

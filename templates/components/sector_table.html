@@ -1,0 +1,18 @@
+<div class="card">
+    <h2 class="text-xs font-black text-green-400 uppercase tracking-widest mb-4">Sector Strength (Slope + R²)</h2>
+    <div class="space-y-1">
+        {% for s in sr.all_ranked %}
+        <div class="flex flex-col py-2 border-b border-slate-700/30">
+            <div class="flex justify-between items-center table-small">
+                <span class="text-slate-300 font-bold">{{ s.name }}</span>
+                <span class="{{ 'status-green' if s.is_positive else 'status-red' }}">{{ s.slope }}%</span>
+            </div>
+            <div class="details-row">
+                <span>R²: {{ s.r2 }}</span>
+                <span>Slope: {{ s.slope }}%</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+

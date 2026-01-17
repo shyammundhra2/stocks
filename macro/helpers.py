@@ -1,10 +1,6 @@
-# macro/helpers.py
 import pandas as pd
 
 def compute_RSI(series: pd.Series, period: int = 2) -> pd.Series:
-    """
-    Compute RSI for a given series.
-    """
     delta = series.diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -14,9 +10,6 @@ def compute_RSI(series: pd.Series, period: int = 2) -> pd.Series:
     return (100 - (100 / (1 + rs))).fillna(50)
 
 def compute_ATR(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """
-    Compute Average True Range.
-    """
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift(1)).abs()
     low_close = (df['Low'] - df['Close'].shift(1)).abs()
