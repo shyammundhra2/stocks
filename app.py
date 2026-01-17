@@ -15,14 +15,12 @@ def compute_RSI(series, period=2):
     rs = avg_gain / avg_loss
     return (100 - (100 / (1 + rs))).fillna(50)
 
-
 def compute_ATR(df, period=14):
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift(1)).abs()
     low_close = (df['Low'] - df['Close'].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(period, min_periods=1).mean()
-
 
 # --- MODULES ---
 def get_risk_regime():
@@ -50,7 +48,6 @@ def get_risk_regime():
     except:
         return {"status": "UNKNOWN", "details": []}
 
-
 def get_vix_signal():
     try:
         vix = yf.download("^VIX", period="100d", progress=False)['Close']
@@ -72,7 +69,6 @@ def get_vix_signal():
     except:
         return {"vix": 0, "z": 0, "signal": "ERROR"}
 
-
 def get_mean_reversion():
     try:
         df = yf.download("QQQ", period="400d", auto_adjust=True, progress=False)
@@ -92,7 +88,6 @@ def get_mean_reversion():
         return {"price": round(p, 2), "rsi2": round(rsi2, 1), "signal": sig}
     except:
         return {"price": 0, "rsi2": 0, "signal": "ERROR"}
-
 
 def get_sector_rotation():
     try:
@@ -138,7 +133,6 @@ def get_sector_rotation():
     except:
         return {"top_3": [], "all_ranked": []}
 
-
 def get_country_rotation():
     try:
         countries = {
@@ -182,35 +176,25 @@ def get_country_rotation():
     except:
         return []
 
-
 def get_commodity_rotation():
     try:
         commodities = {
-            # Broad commodities ETF
-            "DBC": "Broad Commodities",  
-
-            # Metals
+            "DBC": "Broad Commodities",
             "GC=F": "Gold",
             "SI=F": "Silver",
             "HG=F": "Copper",
             "ALI=F": "Aluminium",
             "PL=F": "Platinum",
             "PA=F": "Palladium",
-
-            # Energy
             "CL=F": "Crude Oil (WTI)",
             "BZ=F": "Brent Oil",
             "NG=F": "Natural Gas",
-
-            # Agriculture
             "ZS=F": "Soybeans",
             "ZC=F": "Corn",
             "ZW=F": "Wheat",
             "KC=F": "Coffee",
             "SB=F": "Sugar",
             "CT=F": "Cotton",
-
-            # Soft metals/minor
             "LE=F": "Live Cattle",
             "HE=F": "Lean Hogs"
         }
@@ -244,19 +228,19 @@ def get_commodity_rotation():
     except:
         return []
 
-
 def get_currency_rotation():
     """
-    USD-normalized currency rotation: all slopes expressed as USD → X
+    X → USD: slope = foreign currency per USD
+    Positive slope = X strengthening vs USD
     """
     try:
         currencies = {
-            "EURUSD=X": "USD/EUR",
-            "JPY=X": "USD/JPY",
-            "GBPUSD=X": "USD/GBP",
-            "AUDUSD=X": "USD/AUD",
-            "USDCAD=X": "USD/CAD",
-            "INR=X": "USD/INR",
+            "EURUSD=X": "EUR",
+            "JPY=X": "JPY",
+            "GBPUSD=X": "GBP",
+            "AUDUSD=X": "AUD",
+            "USDCAD=X": "CAD",
+            "INR=X": "INR",
         }
 
         data = yf.download(list(currencies.keys()), period="1y", progress=False)['Close']
@@ -266,16 +250,18 @@ def get_currency_rotation():
         window = 60
         results = []
 
-        for sym, name in currencies.items():
+        for sym, curr in currencies.items():
             c = data[sym].dropna()
             if len(c) < window:
                 continue
 
-            # Invert pairs not directly USD-based
-            if name not in ["USD/JPY", "USD/CAD", "USD/INR"]:
-                c = 1 / c
+            # Convert all to X → USD
+            if sym in ["EURUSD=X", "GBPUSD=X", "AUDUSD=X"]:
+                c_x_to_usd = c  # already X/USD-like quote
+            else:
+                c_x_to_usd = 1 / c  # invert to get X → USD
 
-            y = np.log(c.tail(window).values)
+            y = np.log(c_x_to_usd.tail(window).values)
             x = np.arange(len(y))
             coeffs = np.polyfit(x, y, 1)
             slope = coeffs[0]
@@ -283,8 +269,8 @@ def get_currency_rotation():
 
             results.append({
                 "sym": sym,
-                "name": name,
-                "slope": round(slope * window * 100, 2),
+                "name": curr,
+                "slope": round(slope * window * 100, 4),
                 "r2": round(r2, 2),
             })
 
@@ -292,7 +278,6 @@ def get_currency_rotation():
     except Exception as e:
         print("Currency rotation error:", e)
         return []
-
 
 def get_trends():
     assets = {
@@ -361,7 +346,6 @@ def get_trends():
             continue
 
     return sorted(results, key=lambda x: x["slope"], reverse=True)
-
 
 # --- ROUTES ---
 @app.route("/")
