@@ -1,11 +1,10 @@
+# app.py
 from flask import Flask, render_template
 
 app = Flask(__name__)
 
-# --- ROUTES ---
 @app.route("/")
 def index():
-    # Move imports here to avoid circular import issues
     from macro.indicators import (
         get_risk_regime,
         get_vix_signal,
@@ -14,7 +13,8 @@ def index():
         get_country_rotation,
         get_commodity_rotation,
         get_currency_rotation,
-        get_trends
+        get_trends,
+        get_ml_sector_prediction # NEW
     )
 
     return render_template(
@@ -27,9 +27,8 @@ def index():
         commodities=get_commodity_rotation(),
         currencies=get_currency_rotation(),
         trends=get_trends(),
+        ml_sector=get_ml_sector_prediction() # NEW
     )
-
 
 if __name__ == "__main__":
     app.run(debug=True)
-

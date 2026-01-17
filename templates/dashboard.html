@@ -3,19 +3,16 @@
 {% block content %}
 
 {% include "components/header.html" %}
-
-{% include "components/export_button.html" %}  {# NEW #}
+{% include "components/export_button.html" %}
 
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-    <!-- LEFT COLUMN -->
     <div class="lg:col-span-4 space-y-6">
-        {% include "components/vix_card.html" %}
+        {% include "components/ml_sector.html" %} {% include "components/vix_card.html" %}
         {% include "components/tactical_qqq.html" %}
         {% include "components/sector_table.html" %}
     </div>
 
-    <!-- RIGHT COLUMN -->
     <div class="lg:col-span-8 space-y-6">
         {% include "components/momentum_trends.html" %}
         {% include "components/rotation_maps.html" %}
@@ -24,4 +21,3 @@
 </div>
 
 {% endblock %}
-
