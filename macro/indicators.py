@@ -139,7 +139,7 @@ def get_commodity_rotation():
     except: return []
 
 def get_currency_rotation():
-    currencies = {"EURUSD=X":"EUR","JPY=X":"JPY","GBPUSD=X":"GBP","AUDUSD=X":"AUD"}
+    currencies = {"EURUSD=X":"EUR","JPY=X":"JPY","GBPUSD=X":"GBP","AUDUSD=X":"AUD", "USDINR=X":"INR"}
     results = []
     try:
         data = yf.download(list(currencies.keys()), period="1y", progress=False, multi_level_index=False)['Close']
