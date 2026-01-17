@@ -34,7 +34,8 @@ def get_risk_regime():
         m3 = ratio.iloc[-1] > ratio.rolling(50).mean().iloc[-1]
         status = "RISK-ON" if (sum([m1, m2, m3]) >= 2) else "RISK-OFF"
         return {"status": status, "details": [{"label": "Trend", "pass": bool(m1)}, {"label": "Fear", "pass": bool(m2)}, {"label": "Breadth", "pass": bool(m3)}]}
-    except: return {"status": "UNKNOWN", "details": []}
+    except: 
+        return {"status": "UNKNOWN", "details": []}
 
 def get_vix_signal():
     try:
@@ -47,7 +48,8 @@ def get_vix_signal():
         elif z < -1.5: sig = "TRIM_PROFITS"
         else: sig = "NEUTRAL"
         return {"vix": round(vix_last, 2), "z": round(z, 2), "signal": sig}
-    except: return {"vix": 0, "z": 0, "signal": "ERROR"}
+    except: 
+        return {"vix": 0, "z": 0, "signal": "ERROR"}
 
 def get_mean_reversion():
     try:
@@ -59,7 +61,8 @@ def get_mean_reversion():
         elif rsi2 <= 10: sig = "BUY"
         else: sig = "HOLD"
         return {"price": round(p, 2), "rsi2": round(rsi2, 1), "signal": sig}
-    except: return {"price": 0, "rsi2": 0, "signal": "ERROR"}
+    except: 
+        return {"price": 0, "rsi2": 0, "signal": "ERROR"}
 
 def get_sector_rotation():
     try:
@@ -88,7 +91,8 @@ def get_sector_rotation():
         
         ranked = sorted(all_r, key=lambda x: float(x['gain'].strip('%')), reverse=True)
         return {"top_3": ranked[:3], "all_ranked": ranked}
-    except: return {"top_3": [], "all_ranked": []}
+    except: 
+        return {"top_3": [], "all_ranked": []}
 
 def get_trends():
     assets = {"VGT": "Tech", "VDE": "Energy", "VIS": "Industrials", "XME": "Metals", "GLD": "Gold", "IBIT": "Bitcoin", "TLT": "30yr Bond"}
@@ -128,12 +132,22 @@ def get_trends():
                 "status": status, "r2": round(r_squared, 2), "rsi14": round(last_rsi, 1),
                 "slope": round(pct_slope * 100, 2), "stop": round(trailing_stop, 2)
             })
-        except: continue
-    return sorted(results, key=lambda x: x['r2'], reverse=True)
+        except: 
+            continue
+    # Sort by slope (gradient) instead of R²
+    return sorted(results, key=lambda x: x['slope'], reverse=True)
 
 @app.route('/')
 def index():
-    return render_template('dashboard.html', regime=get_risk_regime(), vix_mr=get_vix_signal(), mr=get_mean_reversion(), sr=get_sector_rotation(), trends=get_trends())
+    return render_template(
+        'dashboard.html', 
+        regime=get_risk_regime(), 
+        vix_mr=get_vix_signal(), 
+        mr=get_mean_reversion(), 
+        sr=get_sector_rotation(), 
+        trends=get_trends()
+    )
 
 if __name__ == "__main__":
     app.run(debug=True)
+
