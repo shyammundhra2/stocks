@@ -88,19 +88,7 @@
 <!-- RIGHT COLUMN -->
 <div class="lg:col-span-8 space-y-6">
 
-<!-- Sector Rotation Map -->
-<div class="bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
-    <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-4 italic">The Great Rotation: Slope vs. R²</h2>
-    <div id="rotationMap" style="width:100%; height:400px;"></div>
-</div>
-
-<!-- Country Rotation Map -->
-<div class="bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
-    <h2 class="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 italic">Global Country Rotation: Slope vs. R²</h2>
-    <div id="countryRotation" style="width:100%; height:400px;"></div>
-</div>
-
-<!-- Momentum Trends -->
+<!-- Momentum Trends FIRST -->
 <div class="bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
     <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (Linear Regression & RSI)</h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -124,6 +112,18 @@
         </div>
         {% endfor %}
     </div>
+</div>
+
+<!-- Sector Rotation Map -->
+<div class="bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
+    <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-4 italic">The Great Rotation: Slope vs. R²</h2>
+    <div id="rotationMap" style="width:100%; height:400px;"></div>
+</div>
+
+<!-- Country Rotation Map -->
+<div class="bg-slate-800 p-6 rounded-3xl border border-slate-700 shadow-lg">
+    <h2 class="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 italic">Global Country Rotation: Slope vs. R²</h2>
+    <div id="countryRotation" style="width:100%; height:400px;"></div>
 </div>
 
 </div>
