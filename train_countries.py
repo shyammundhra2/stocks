@@ -72,7 +72,7 @@ def train_country_model_with_fx():
         'model': model,
         'scaler': scaler,
         'features': X_train.columns.tolist()
-    }, 'country_model_with_fx.joblib')
+    }, 'country_model.joblib')
 
     print("✅ Country model with FX trends trained!")
     print(f"Features: {X_train.columns.tolist()}")
