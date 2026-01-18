@@ -171,7 +171,7 @@ def get_country_rotation():
 # --- Commodity Rotation ---
 @ttl_cache(30)
 def get_commodity_rotation():
-    commodities = {"DBC":"Broad","GC=F":"Gold","SI=F":"Silver","HG=F":"Copper","CL=F":"Crude","NG=F":"NatGas"}
+    commodities = {"DBC":"Broad Commodities","GC=F":"Gold","SI=F":"Silver","HG=F":"Copper","ALI=F":"Aluminium","PL=F":"Platinum","PA=F":"Palladium","CL=F":"Crude Oil (WTI)","BZ=F":"Brent Oil","NG=F":"Natural Gas","ZS=F":"Soybeans","ZC=F":"Corn","ZW=F":"Wheat","KC=F":"Coffee","SB=F":"Sugar","CT=F":"Cotton","LE=F":"Live Cattle","HE=F":"Lean Hogs","LBR=F":"Lumber"}
     results = []
     try:
         data = yf.download(list(commodities.keys()), period="1y", progress=False, multi_level_index=False)['Close']
