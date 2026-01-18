@@ -6,24 +6,25 @@ import joblib
 import os
 from macro.helpers import compute_RSI, compute_ATR
 
-# --- ML SECTOR PREDICTOR ---
 def get_ml_sector_prediction():
     try:
         model_path = 'sector_model.joblib'
         if not os.path.exists(model_path):
-            return {"ticker": "N/A", "name": "Model Missing", "confidence": 0}
+            return {"top": {"name": "N/A", "ticker": "N/A", "confidence": 0}, 
+                    "bottom": {"name": "N/A", "ticker": "N/A", "confidence": 0}, 
+                    "spread": 0}
 
-        # Load the dictionary containing both model and scaler
+        # Load bundle
         data_bundle = joblib.load(model_path)
         model = data_bundle['model']
         scaler = data_bundle['scaler']
         
-        # 1. Fetch exact macro tickers used in training
+        # 1. Fetch live macro data
         macro_tickers = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD'] 
         raw_data = yf.download(macro_tickers, period="20d", progress=False, multi_level_index=False)['Close']
         raw_data = raw_data.ffill()
         
-        # 2. Replicate Feature Engineering from train_sectors.py
+        # 2. Feature Engineering
         X_live = pd.DataFrame(index=[raw_data.index[-1]])
         X_live['DXY_mom'] = float(raw_data['DX-Y.NYB'].pct_change(10).iloc[-1])
         X_live['VIX_level'] = float(raw_data['^VIX'].iloc[-1])
@@ -32,11 +33,10 @@ def get_ml_sector_prediction():
         X_live['Credit_Spread'] = float(raw_data['LQD'].iloc[-1] / raw_data['HYG'].iloc[-1])
         X_live['TNX_vol'] = float(raw_data['^TNX'].rolling(10).std().iloc[-1])
 
-        # 3. Scale and Predict
+        # 3. Predict Probabilities
         X_scaled = scaler.transform(X_live)
-        prediction = model.predict(X_scaled)[0]
         probs = model.predict_proba(X_scaled)[0]
-        confidence = round(max(probs) * 100, 1)
+        classes = model.classes_
         
         sector_names = {
             'VDE':'Energy', 'XLB':'Materials', 'VIS':'Industrials', 
@@ -45,66 +45,50 @@ def get_ml_sector_prediction():
             'XLU':'Utilities', 'XLRE':'Real Estate'
         }
 
+        # Map classes to their probabilities
+        results = []
+        for i, prob in enumerate(probs):
+            ticker = classes[i]
+            results.append({
+                "ticker": ticker,
+                "name": sector_names.get(ticker, ticker),
+                "confidence": round(prob * 100, 1)
+            })
+        
+        # Sort by confidence
+        ranked = sorted(results, key=lambda x: x['confidence'], reverse=True)
+
         return {
-            "ticker": prediction,
-            "name": sector_names.get(prediction, prediction),
-            "confidence": confidence
+            "top": ranked[0],
+            "bottom": ranked[-1],
+            "spread": round(ranked[0]['confidence'] - ranked[-1]['confidence'], 1),
+            "all": ranked
         }
     except Exception as e:
         print(f"ML Sector Error: {e}")
-        return {"ticker": "ERR", "name": "Error", "confidence": 0}
+        return {"top": {"name": "Error", "ticker": "ERR", "confidence": 0}, 
+                "bottom": {"name": "Error", "ticker": "ERR", "confidence": 0}, 
+                "spread": 0}
 
-# --- INTERNAL ML ENGINE (Heuristic) ---
-def get_ml_confidence(df: pd.DataFrame) -> float:
-    try:
-        if len(df) < 50: return 50.0
-        c = df['Close'].squeeze()
-        v = df['Volume'].squeeze()
-        
-        rsi = float(compute_RSI(c, 14).iloc[-1])
-        vol_z = float((v.iloc[-1] - v.rolling(20).mean().iloc[-1]) / v.rolling(20).std().iloc[-1])
-        sma200 = float(c.rolling(200).mean().iloc[-1])
-        dist_sma = (float(c.iloc[-1]) - sma200) / sma200 if sma200 else 0
-
-        score = 0.5 
-        if 40 < rsi < 70: score += 0.15
-        if vol_z > 1.2: score += 0.15
-        if dist_sma > 0: score += 0.10
-        
-        return round(min(max(score * 100, 0), 99), 1)
-    except: return 50.0
-
-# --- CORE INDICATORS ---
-
+# --- REMAINDER OF FILE (get_risk_regime, get_vix_signal, etc.) ---
 def get_risk_regime():
     try:
         data = yf.download(["SPY", "^VIX", "RSP"], period="300d", progress=False, multi_level_index=False)['Close']
         spy_last = float(data["SPY"].iloc[-1])
         spy_ma = float(data["SPY"].rolling(200).mean().iloc[-1])
         vix_last = float(data["^VIX"].iloc[-1])
-        
         m1 = spy_last > spy_ma
         m2 = vix_last < 20
         ratio = data["RSP"] / data["SPY"]
         m3 = float(ratio.iloc[-1]) > float(ratio.rolling(50).mean().iloc[-1])
-
         status = "RISK-ON" if sum([m1, m2, m3]) >= 2 else "RISK-OFF"
-        return {
-            "status": status,
-            "details": [
-                {"label": "Trend", "pass": bool(m1)},
-                {"label": "Fear", "pass": bool(m2)},
-                {"label": "Breadth", "pass": bool(m3)},
-            ],
-        }
+        return {"status": status, "details": [{"label": "Trend", "pass": bool(m1)}, {"label": "Fear", "pass": bool(m2)}, {"label": "Breadth", "pass": bool(m3)}]}
     except: return {"status": "UNKNOWN", "details": []}
 
 def get_vix_signal():
     try:
         vix = yf.download("^VIX", period="100d", progress=False, multi_level_index=False)['Close'].squeeze()
-        vix_last = float(vix.iloc[-1])
-        z = float((vix_last - vix.tail(50).mean()) / vix.tail(50).std())
-        
+        vix_last = float(vix.iloc[-1]); z = float((vix_last - vix.tail(50).mean()) / vix.tail(50).std())
         sig = "NEUTRAL"
         if z > 2.0: sig = "AGGRESSIVE_BUY"
         elif z > 1.0: sig = "SCALE_IN"
@@ -115,11 +99,8 @@ def get_vix_signal():
 def get_mean_reversion():
     try:
         df = yf.download("QQQ", period="400d", auto_adjust=True, progress=False, multi_level_index=False)
-        c = df["Close"].squeeze()
-        rsi2 = float(compute_RSI(c, 2).iloc[-1])
-        p = float(c.iloc[-1])
-        s200 = float(c.rolling(200).mean().iloc[-1])
-        
+        c = df["Close"].squeeze(); rsi2 = float(compute_RSI(c, 2).iloc[-1])
+        p = float(c.iloc[-1]); s200 = float(c.rolling(200).mean().iloc[-1])
         sig = "HOLD"
         if rsi2 >= 70: sig = "EXIT"
         elif p < s200: sig = "RISK OFF"
@@ -134,8 +115,7 @@ def get_sector_rotation():
         rel_mom = data[list(sectors.keys())].div(data["SPY"], axis=0).pct_change(63).iloc[-1]
         all_r = []
         for t, label in sectors.items():
-            y = np.log(data[t].dropna().tail(20).values)
-            coeffs = np.polyfit(np.arange(len(y)), y, 1)
+            y = np.log(data[t].dropna().tail(20).values); coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = 1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2))
             all_r.append({"name": label, "gain": f"{rel_mom[t]:+.2%}", "is_positive": rel_mom[t] > 0, "r2": round(float(r2),2), "slope": round(float(coeffs[0])*20*100,2)})
         return {"all_ranked": sorted(all_r, key=lambda x: float(x["gain"].strip("%")), reverse=True)}
@@ -147,9 +127,7 @@ def get_country_rotation():
     try:
         data = yf.download(list(countries.keys()), period="1y", progress=False, multi_level_index=False)['Close']
         for sym, name in countries.items():
-            c = data[sym].dropna().tail(60)
-            y = np.log(c.values)
-            coeffs = np.polyfit(np.arange(len(y)), y, 1)
+            c = data[sym].dropna().tail(60); y = np.log(c.values); coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = 1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2))
             results.append({"sym": sym, "name": name, "slope": round(float(coeffs[0])*60*100,2), "r2": round(float(r2),2)})
         return results
@@ -161,9 +139,7 @@ def get_commodity_rotation():
     try:
         data = yf.download(list(commodities.keys()), period="1y", progress=False, multi_level_index=False)['Close']
         for sym, name in commodities.items():
-            c = data[sym].dropna().tail(60)
-            y = np.log(c.values)
-            coeffs = np.polyfit(np.arange(len(y)), y, 1)
+            c = data[sym].dropna().tail(60); y = np.log(c.values); coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = 1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2))
             results.append({"sym": sym, "name": name, "slope": round(float(coeffs[0])*60*100,2), "r2": round(float(r2),2)})
         return results
@@ -175,10 +151,8 @@ def get_currency_rotation():
     try:
         data = yf.download(list(currencies.keys()), period="1y", progress=False, multi_level_index=False)['Close']
         for sym, curr in currencies.items():
-            c = data[sym].dropna().tail(60)
-            c_usd = c if sym in ["EURUSD=X","GBPUSD=X","AUDUSD=X"] else 1/c
-            y = np.log(c_usd.values)
-            coeffs = np.polyfit(np.arange(len(y)), y, 1)
+            c = data[sym].dropna().tail(60); c_usd = c if sym in ["EURUSD=X","GBPUSD=X","AUDUSD=X"] else 1/c
+            y = np.log(c_usd.values); coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = 1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2))
             results.append({"sym": sym, "name": curr, "slope": round(float(coeffs[0])*60*100,4), "r2": round(float(r2),2)})
         return results
@@ -187,33 +161,19 @@ def get_currency_rotation():
 def get_trends():
     assets = {"VGT":"Tech","VDE":"Energy","VIS":"Industrials","XME":"Metals","GLD":"Gold","IBIT":"Bitcoin","TLT":"30yr Bond"}
     results = []
+    from macro.ml_engine import get_ml_confidence
     for sym, name in assets.items():
         try:
             df = yf.download(sym, period="1y", progress=False, multi_level_index=False)
-            c = df["Close"].squeeze()
-            y = np.log(c.tail(10).values)
-            coeffs = np.polyfit(np.arange(len(y)), y, 1)
+            c = df["Close"].squeeze(); y = np.log(c.tail(10).values); coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = float(1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2)))
-            
-            ml_conf = get_ml_confidence(df)
-            atr = float(compute_ATR(df, 14).iloc[-1])
-            last_c = float(c.iloc[-1])
-            trailing_stop = float(c.tail(20).max()) - (2.5 * atr)
-            
-            s50 = float(c.rolling(50).mean().iloc[-1])
-            s200 = float(c.rolling(200).mean().iloc[-1])
-            
-            is_bullish = (s50 > s200) and (last_c > s50)
-            is_strong = (float(coeffs[0]) > 0) and (r2 > 0.6)
-            
+            ml_conf = get_ml_confidence(df); atr = float(compute_ATR(df, 14).iloc[-1])
+            last_c = float(c.iloc[-1]); trailing_stop = float(c.tail(20).max()) - (2.5 * atr)
+            s50 = float(c.rolling(50).mean().iloc[-1]); s200 = float(c.rolling(200).mean().iloc[-1])
+            is_bullish = (s50 > s200) and (last_c > s50); is_strong = (float(coeffs[0]) > 0) and (r2 > 0.6)
             if last_c < trailing_stop or r2 < 0.3: status = "SELL"
             elif is_bullish and is_strong: status = "STRONG BUY" if ml_conf > 75 else "BUY"
             else: status = "HOLD"
-
-            results.append({
-                "sym": sym, "name": name, "price": round(last_c, 2), "status": status,
-                "r2": round(r2, 2), "ml_conf": ml_conf, "rsi14": round(float(compute_RSI(c, 14).iloc[-1]), 1),
-                "slope": round(float(coeffs[0])*10*100, 2), "stop": round(trailing_stop, 2)
-            })
+            results.append({"sym": sym, "name": name, "price": round(last_c, 2), "status": status, "r2": round(r2, 2), "ml_conf": ml_conf, "rsi14": round(float(compute_RSI(c, 14).iloc[-1]), 1), "slope": round(float(coeffs[0])*10*100, 2), "stop": round(trailing_stop, 2)})
         except: continue
     return sorted(results, key=lambda x: x["ml_conf"], reverse=True)
