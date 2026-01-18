@@ -30,7 +30,7 @@ function exportDashboard() {
     text += "TOP UNDERWEIGHT: {{ ml_sector.bottom.name }} ({{ ml_sector.bottom.ticker }})\n";
     text += "MODEL CONFIDENCE: {{ ml_sector.top.confidence }}%\n";
     text += "PREDICTION SPREAD: {{ ml_sector.spread }}%\n";
-    text += "HORIZON: 5-Day Tactical Rotation\n\n";
+    text += "HORIZON: Rotation\n\n";
 
     text += "AI Probability Distribution:\n";
     {% for s in ml_sector.all %}
