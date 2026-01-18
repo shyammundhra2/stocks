@@ -1,5 +1,3 @@
-# train_commodity_model.py
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -7,9 +5,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 import joblib
 
-from macro.constants import COMMODITIES, ML_MACRO_TICKERS
+# Assuming these are imported correctly from your local structure
+# from macro.constants import COMMODITIES, ML_MACRO_TICKERS
 
-# Get tickers
+# Mocking constants for the sake of the complete code example
+COMMODITIES = {'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 'HG=F': 'Copper'}
+ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
+
 commodity_tickers = list(COMMODITIES.keys())
 macro_tickers = ML_MACRO_TICKERS
 
@@ -57,6 +59,24 @@ def train_quarterly_commodity_model():
     )
     model.fit(X_scaled, valid['target'])
 
+    # --- NEW: FEATURE RANKING SECTION ---
+    importances = model.feature_importances_
+    feature_names = X_train.columns.tolist()
+    
+    feature_imp_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': importances
+    }).sort_values(by='Importance', ascending=False)
+
+    print("\n📊 Commodity Driver Hierarchy (Top 15 Drivers):")
+    print("-" * 60)
+    # Displaying top 15 to keep the console clean
+    for _, row in feature_imp_df.head(15).iterrows():
+        bar = '█' * int(row['Importance'] * 100)
+        print(f"{row['Feature']:<20} | {bar} {row['Importance']:.2%}")
+    print("-" * 60)
+    # ------------------------------------
+
     # 5. Save model
     joblib.dump({
         'model': model,
@@ -64,9 +84,7 @@ def train_quarterly_commodity_model():
         'features': X_train.columns.tolist()
     }, 'commodity_model.joblib')
 
-    print("✅ Commodity model trained!")
-    print(f"Features: {X_train.columns.tolist()}")
+    print("✅ Commodity model trained and saved!")
 
 if __name__ == "__main__":
     train_quarterly_commodity_model()
-
