@@ -1,5 +1,13 @@
-Flask
-yfinance
-pandas
-numpy
-gunicorn
+# --- Web Stack ---
+Flask>=3.1.0
+gunicorn>=23.0.0
+
+# --- Macro Engine ---
+yfinance>=0.2.54
+pandas>=2.3.0
+numpy>=1.26.0
+
+# --- ML & Support ---
+scikit-learn>=1.6.0
+joblib>=1.4.0
+requests>=2.32.0
