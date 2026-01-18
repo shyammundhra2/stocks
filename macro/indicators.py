@@ -36,10 +36,9 @@ def ttl_cache(ttl_seconds=30):
 
 
 # =========================
-# Internal Helpers (NEW)
+# Internal Helpers
 # =========================
 def _safe_r2(y, coeffs):
-    """Compute R² safely."""
     if len(y) < 2:
         return 0.0
     y_hat = np.polyval(coeffs, np.arange(len(y)))
@@ -49,7 +48,6 @@ def _safe_r2(y, coeffs):
 
 
 def _trend_stats(series, window, scale):
-    """Shared trend regression logic."""
     c = series.dropna().tail(window)
     if len(c) < 5:
         return 0.0, 0.0
@@ -71,7 +69,8 @@ def get_ml_sector_prediction():
             return {
                 "top": {"name": "N/A", "ticker": "N/A", "confidence": 0},
                 "bottom": {"name": "N/A", "ticker": "N/A", "confidence": 0},
-                "spread": 0
+                "spread": 0,
+                "all": []
             }
 
         bundle = joblib.load(model_path)
@@ -121,7 +120,8 @@ def get_ml_sector_prediction():
         return {
             "top": {"name": "Error", "ticker": "ERR", "confidence": 0},
             "bottom": {"name": "Error", "ticker": "ERR", "confidence": 0},
-            "spread": 0
+            "spread": 0,
+            "all": []
         }
 
 
@@ -343,4 +343,68 @@ def get_trends():
             continue
 
     return sorted(results, key=lambda x: x["ml_conf"], reverse=True)
+
+
+# =========================
+# ML Country Prediction (FIXED)
+# =========================
+@ttl_cache(30)
+def get_ml_country_prediction():
+    from predict import predict_assets
+    try:
+        result = predict_assets(
+            model_path="country_model.joblib",
+            tickers=list(COUNTRIES.keys()) + ML_MACRO_TICKERS,
+            friendly_names=COUNTRIES,
+            model_type="country",
+            top_n=3
+        )
+        ranked = [{"ticker": k, "name": COUNTRIES.get(k, k), "confidence": round(v*100,1)} 
+                  for k,v in result["probabilities"].items()]
+        return {
+            "top": ranked[0],
+            "bottom": ranked[-1],
+            "spread": round(ranked[0]["confidence"] - ranked[-1]["confidence"],1),
+            "all": ranked
+        }
+    except Exception as e:
+        print(f"ML Country Error: {e}")
+        return {
+            "top": {"name": "N/A", "ticker": "N/A", "confidence": 0},
+            "bottom": {"name": "N/A", "ticker": "N/A", "confidence": 0},
+            "spread": 0,
+            "all": []
+        }
+
+
+# =========================
+# ML Commodity Prediction (FIXED)
+# =========================
+@ttl_cache(30)
+def get_ml_commodity_prediction():
+    from predict import predict_assets
+    try:
+        result = predict_assets(
+            model_path="commodity_model.joblib",
+            tickers=list(COMMODITIES.keys()) + ML_MACRO_TICKERS,
+            friendly_names=COMMODITIES,
+            model_type="commodity",
+            top_n=3
+        )
+        ranked = [{"ticker": k, "name": COMMODITIES.get(k, k), "confidence": round(v*100,1)} 
+                  for k,v in result["probabilities"].items()]
+        return {
+            "top": ranked[0],
+            "bottom": ranked[-1],
+            "spread": round(ranked[0]["confidence"] - ranked[-1]["confidence"],1),
+            "all": ranked
+        }
+    except Exception as e:
+        print(f"ML Commodity Error: {e}")
+        return {
+            "top": {"name": "N/A", "ticker": "N/A", "confidence": 0},
+            "bottom": {"name": "N/A", "ticker": "N/A", "confidence": 0},
+            "spread": 0,
+            "all": []
+        }
 
