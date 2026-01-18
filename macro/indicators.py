@@ -7,6 +7,7 @@ import os
 import time
 from functools import wraps
 from macro.helpers import compute_RSI, compute_ATR
+from macro.constants import SECTOR_NAMES, SECTORS, COUNTRIES, COMMODITIES, CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS
 
 # --- TTL Cache Decorator ---
 def ttl_cache(ttl_seconds=30):
@@ -41,12 +42,8 @@ def get_ml_sector_prediction():
         model = data_bundle['model']
         scaler = data_bundle['scaler']
         
-        # Fetch live macro data
-        macro_tickers = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD'] 
-        raw_data = yf.download(macro_tickers, period="20d", progress=False, multi_level_index=False)['Close']
-        raw_data = raw_data.ffill()
+        raw_data = yf.download(ML_MACRO_TICKERS, period="20d", progress=False, multi_level_index=False)['Close'].ffill()
         
-        # Feature Engineering
         X_live = pd.DataFrame(index=[raw_data.index[-1]])
         X_live['DXY_mom'] = float(raw_data['DX-Y.NYB'].pct_change(10).iloc[-1])
         X_live['VIX_level'] = float(raw_data['^VIX'].iloc[-1])
@@ -55,29 +52,20 @@ def get_ml_sector_prediction():
         X_live['Credit_Spread'] = float(raw_data['LQD'].iloc[-1] / raw_data['HYG'].iloc[-1])
         X_live['TNX_vol'] = float(raw_data['^TNX'].rolling(10).std().iloc[-1])
 
-        # Predict Probabilities
         X_scaled = scaler.transform(X_live)
         probs = model.predict_proba(X_scaled)[0]
         classes = model.classes_
         
-        sector_names = {
-            'VDE':'Energy', 'XLB':'Materials', 'VIS':'Industrials', 
-            'XLY':'Discr', 'XLF':'Financials', 'XLC':'Comm Serv', 
-            'VGT':'Tech', 'XLV':'Health', 'XLP':'Staples', 
-            'XLU':'Utilities', 'XLRE':'Real Estate'
-        }
-
         results = []
         for i, prob in enumerate(probs):
             ticker = classes[i]
             results.append({
                 "ticker": ticker,
-                "name": sector_names.get(ticker, ticker),
+                "name": SECTOR_NAMES.get(ticker, ticker),
                 "confidence": round(prob * 100, 1)
             })
         
         ranked = sorted(results, key=lambda x: x['confidence'], reverse=True)
-
         return {
             "top": ranked[0],
             "bottom": ranked[-1],
@@ -139,12 +127,11 @@ def get_mean_reversion():
 # --- Sector Rotation ---
 @ttl_cache(30)
 def get_sector_rotation():
-    sectors = {"XLC":"Comm Serv","XLY":"Discr","XLP":"Staples","XLE":"Energy","XLF":"Financials","XLV":"Health","XLI":"Industrials","XLB":"Materials","XLRE":"Real Estate","XLK":"Tech","XLU":"Utilities"}
     try:
-        data = yf.download(list(sectors.keys()) + ["SPY"], period="1y", progress=False, multi_level_index=False)['Close']
-        rel_mom = data[list(sectors.keys())].div(data["SPY"], axis=0).pct_change(63).iloc[-1]
+        data = yf.download(list(SECTORS.keys()) + ["SPY"], period="1y", progress=False, multi_level_index=False)['Close']
+        rel_mom = data[list(SECTORS.keys())].div(data["SPY"], axis=0).pct_change(63).iloc[-1]
         all_r = []
-        for t, label in sectors.items():
+        for t, label in SECTORS.items():
             y = np.log(data[t].dropna().tail(20).values)
             coeffs = np.polyfit(np.arange(len(y)), y, 1)
             r2 = 1 - (np.sum((y - np.polyval(coeffs, np.arange(len(y))))**2)/np.sum((y - np.mean(y))**2))
@@ -155,11 +142,10 @@ def get_sector_rotation():
 # --- Country Rotation ---
 @ttl_cache(30)
 def get_country_rotation():
-    countries = {"SPY":"USA","EFA":"Dev ex-US","EEM":"Emerging","EWJ":"Japan","EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany"}
     results = []
     try:
-        data = yf.download(list(countries.keys()), period="1y", progress=False, multi_level_index=False)['Close']
-        for sym, name in countries.items():
+        data = yf.download(list(COUNTRIES.keys()), period="1y", progress=False, multi_level_index=False)['Close']
+        for sym, name in COUNTRIES.items():
             c = data[sym].dropna().tail(60)
             y = np.log(c.values)
             coeffs = np.polyfit(np.arange(len(y)), y, 1)
@@ -171,11 +157,10 @@ def get_country_rotation():
 # --- Commodity Rotation ---
 @ttl_cache(30)
 def get_commodity_rotation():
-    commodities = {"DBC":"Broad Commodities","GC=F":"Gold","SI=F":"Silver","HG=F":"Copper","ALI=F":"Aluminium","PL=F":"Platinum","PA=F":"Palladium","CL=F":"Crude Oil (WTI)","BZ=F":"Brent Oil","NG=F":"Natural Gas","ZS=F":"Soybeans","ZC=F":"Corn","ZW=F":"Wheat","KC=F":"Coffee","SB=F":"Sugar","CT=F":"Cotton","LE=F":"Live Cattle","HE=F":"Lean Hogs","LBR=F":"Lumber"}
     results = []
     try:
-        data = yf.download(list(commodities.keys()), period="1y", progress=False, multi_level_index=False)['Close']
-        for sym, name in commodities.items():
+        data = yf.download(list(COMMODITIES.keys()), period="1y", progress=False, multi_level_index=False)['Close']
+        for sym, name in COMMODITIES.items():
             c = data[sym].dropna().tail(60)
             y = np.log(c.values)
             coeffs = np.polyfit(np.arange(len(y)), y, 1)
@@ -187,11 +172,10 @@ def get_commodity_rotation():
 # --- Currency Rotation ---
 @ttl_cache(30)
 def get_currency_rotation():
-    currencies = {"EURUSD=X":"EUR","JPY=X":"JPY","GBPUSD=X":"GBP","AUDUSD=X":"AUD", "USDINR=X":"INR"}
     results = []
     try:
-        data = yf.download(list(currencies.keys()), period="1y", progress=False, multi_level_index=False)['Close']
-        for sym, curr in currencies.items():
+        data = yf.download(list(CURRENCIES.keys()), period="1y", progress=False, multi_level_index=False)['Close']
+        for sym, curr in CURRENCIES.items():
             c = data[sym].dropna().tail(60)
             c_usd = c if sym in ["EURUSD=X","GBPUSD=X","AUDUSD=X"] else 1/c
             y = np.log(c_usd.values)
@@ -204,10 +188,9 @@ def get_currency_rotation():
 # --- Trends ---
 @ttl_cache(30)
 def get_trends():
-    assets = {"VGT":"Tech","VDE":"Energy","VIS":"Industrials","XME":"Metals","GLD":"Gold","IBIT":"Bitcoin","TLT":"30yr Bond"}
     results = []
     from macro.ml_engine import get_ml_confidence
-    for sym, name in assets.items():
+    for sym, name in TREND_ASSETS.items():
         try:
             df = yf.download(sym, period="1y", progress=False, multi_level_index=False)
             c = df["Close"].squeeze()
