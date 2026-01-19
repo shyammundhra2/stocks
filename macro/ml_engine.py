@@ -68,8 +68,16 @@ def get_dual_ml_confidence(df: pd.DataFrame, debug=False) -> dict:
         if debug: print(f"Error: {e}")
         return {'fast': 50.0, 'slow': 50.0, 'regime': 'Error'}
 
-# Backward compatibility alias
+
 def get_ml_confidence(df, debug=False):
     res = get_dual_ml_confidence(df, debug)
-    # Return the slow confidence as the default "confidence" score
-    return res.get('slow', 50.0)
+
+    # Extract both components
+    f_conf = res.get('fast', 50.0)
+    s_conf = res.get('slow', 50.0)
+
+    # Weighted Blend: 70% Structural (Slow) + 30% Tactical (Fast)
+    # This ensures the "one number" respects both timeframes.
+    blended_score = (s_conf * 0.7) + (f_conf * 0.3)
+
+    return round(blended_score, 1)

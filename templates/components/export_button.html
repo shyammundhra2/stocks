@@ -1,4 +1,16 @@
-<div class="flex justify-end mb-4">
+<div class="flex justify-end mb-4 gap-6">
+    <div class="flex flex-col items-center">
+        <img
+            src="{{ url_for('static', filename='images/copy.png') }}"
+            alt="Copy Dashboard"
+            class="h-10 w-10 cursor-pointer hover:opacity-80 transition-transform active:scale-95"
+            onclick="copyDashboard()"
+        >
+        <span id="copy-label" class="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
+            Copy Report
+        </span>
+    </div>
+
     <div class="flex flex-col items-center">
         <img
             src="{{ url_for('static', filename='images/export.png') }}"
@@ -13,23 +25,17 @@
 </div>
 
 <script>
-function exportDashboard() {
+function generateReportText() {
     let text = "";
     const now = new Date();
     const dateStr = now.toLocaleDateString();
     const timeStr = now.toLocaleTimeString();
 
-    // ======================================================
-    // HEADER
-    // ======================================================
     text += "==========================================\n";
     text += "       MACRO SYSTEM STRATEGY REPORT       \n";
     text += "       Generated: " + dateStr + " " + timeStr + "\n";
     text += "==========================================\n\n";
 
-    // ======================================================
-    // I. AI SECTOR ALLOCATION
-    // ======================================================
     text += "--- [I] AI SECTOR ALLOCATION ---\n";
     text += "REGIME: {{ regime.status }}\n";
     text += "TOP OVERWEIGHT:  {{ ml_sector.top.name }} ({{ ml_sector.top.ticker }})\n";
@@ -43,9 +49,6 @@ function exportDashboard() {
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // II. AI COUNTRY ALLOCATION
-    // ======================================================
     text += "--- [II] AI COUNTRY ALLOCATION ---\n";
     text += "TOP OVERWEIGHT:  {{ ml_country.top.name }} ({{ ml_country.top.ticker }})\n";
     text += "TOP UNDERWEIGHT: {{ ml_country.bottom.name }} ({{ ml_country.bottom.ticker }})\n";
@@ -58,9 +61,6 @@ function exportDashboard() {
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // III. AI COMMODITY ALLOCATION
-    // ======================================================
     text += "--- [III] AI COMMODITY ALLOCATION ---\n";
     text += "TOP OVERWEIGHT:  {{ ml_commodity.top.name }} ({{ ml_commodity.top.ticker }})\n";
     text += "TOP UNDERWEIGHT: {{ ml_commodity.bottom.name }} ({{ ml_commodity.bottom.ticker }})\n";
@@ -69,13 +69,10 @@ function exportDashboard() {
 
     text += "Commodity Probability Distribution:\n";
     {% for c in ml_commodity.all %}
-    text += "  - {{ c.name }} ({{ c.ticker }}): {{ c.confidence }}%\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.confidence }}%\n";
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // IV. VOLATILITY & RISK REGIME
-    // ======================================================
     text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
     {% for m in regime.details %}
     text += "  - {{ m.label }}: {{ 'PASS' if m.pass else 'FAIL' }}\n";
@@ -83,26 +80,17 @@ function exportDashboard() {
     text += "VIX Level: {{ vix_mr.vix }} (Z: {{ vix_mr.z }})\n";
     text += "VIX Signal: {{ vix_mr.signal.replace('_',' ') }}\n\n";
 
-    // ======================================================
-    // V. TACTICAL MEAN REVERSION (QQQ)
-    // ======================================================
     text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
     text += "Price: ${{ mr.price }}\n";
     text += "RSI(2): {{ mr.rsi2 }}\n";
     text += "Signal: {{ mr.signal }}\n\n";
 
-    // ======================================================
-    // VI. SECTOR ROTATION
-    // ======================================================
     text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
     {% for s in sr.all_ranked %}
     text += "  - {{ s.name }}: Slope {{ s.slope }}% | R2 {{ s.r2 }}\n";
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // VII. GLOBAL ROTATION MAPS
-    // ======================================================
     text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
     text += "Countries:\n";
     {% for c in countries %}
@@ -120,9 +108,6 @@ function exportDashboard() {
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // VIII. MOMENTUM TRENDS
-    // ======================================================
     text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
     {% for t in trends %}
     text += "{{ t.status.ljust(12) }} | {{ t.name.ljust(14) }} ({{ t.sym }}): "
@@ -130,18 +115,40 @@ function exportDashboard() {
     {% endfor %}
     text += "\n";
 
-    // ======================================================
-    // FOOTER
-    // ======================================================
     text += "==========================================\n";
     text += "        END OF STRATEGY EXPORT            \n";
     text += "==========================================\n";
 
+    return text;
+}
+
+function exportDashboard() {
+    const text = generateReportText();
+    const now = new Date();
     const blob = new Blob([text], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'Macro_Strategy_Report_' + now.toISOString().split('T')[0] + '.txt';
     a.click();
 }
-</script>
 
+function copyDashboard() {
+    const text = generateReportText();
+    const label = document.getElementById('copy-label');
+
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = label.innerText;
+        label.innerText = "COPIED";
+        label.classList.remove('text-slate-500');
+        label.classList.add('text-green-600');
+
+        setTimeout(() => {
+            label.innerText = originalText;
+            label.classList.remove('text-green-600');
+            label.classList.add('text-slate-500');
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy: ', err);
+    });
+}
+</script>

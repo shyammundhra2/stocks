@@ -254,7 +254,7 @@ def get_trends():
         except Exception as e:
             print(f"Error in trend loop for {sym}: {e}")
             continue
-    return sorted(results, key=lambda x: x["ml_conf"], reverse=True)
+    return sorted(results, key=lambda x: x["slope"], reverse=True)
 
 
 def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
