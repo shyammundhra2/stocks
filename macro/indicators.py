@@ -322,9 +322,23 @@ def get_trends():
     from macro.ml_engine import get_ml_confidence
     results = []
 
+    # --- Bulk Download Optimization ---
+    symbols = list(TREND_ASSETS.keys())
+    # Download all symbols at once; keep auto_adjust=False as per original
+    bulk_data = yf.download(symbols, period="1y", progress=False, auto_adjust=False, group_by='column')
+
     for sym, name in TREND_ASSETS.items():
         try:
-            df = yf.download(sym, period="1y", progress=False, auto_adjust=False)
+            # Extract symbol-specific dataframe from bulk object
+            # Handle both single-ticker and multi-ticker return structures
+            if len(symbols) > 1:
+                df = bulk_data.xs(sym, level=1, axis=1).dropna()
+            else:
+                df = bulk_data.dropna()
+
+            if df.empty:
+                continue
+
             c = df["Close"].squeeze()
 
             # --- Technical Metrics ---
@@ -339,7 +353,6 @@ def get_trends():
             s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
 
             # --- Gradient Z-Score (Trend Acceleration) ---
-            # Optimized: calculate slopes in vectorized manner where possible
             c_len = len(c)
             start_idx = max(0, c_len - 60)
             hist_slopes = [_trend_stats(c.iloc[i - 10:i], 10, 10)[0] for i in range(start_idx + 10, c_len)]
@@ -364,7 +377,6 @@ def get_trends():
 
             # --- Position Sizing ---
             pos_size = compute_kelly_size(ml_conf, last, stop)
-
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
             results.append({
@@ -386,7 +398,6 @@ def get_trends():
             continue
 
     return sorted(results, key=lambda x: x["slope"], reverse=True)
-
 
 def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
     """
