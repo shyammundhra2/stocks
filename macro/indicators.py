@@ -2,9 +2,9 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import joblib
-import os
+import threading
 import time
-from functools import wraps, lru_cache
+from functools import wraps
 
 from macro.helpers import compute_RSI, compute_ATR
 from macro.constants import (
@@ -13,30 +13,29 @@ from macro.constants import (
 )
 from predict import predict_assets
 
-
-# =========================
-# TTL Cache Decorator
-# =========================
+# TTL cache
 def ttl_cache(ttl_seconds=30):
     def decorator(func):
         cache = {}
+        lock = threading.Lock()
 
         @wraps(func)
         def wrapper(*args, **kwargs):
             key = (args, tuple(sorted(kwargs.items())))
             now = time.time()
-            if key in cache:
-                value, timestamp = cache[key]
-                if now - timestamp < ttl_seconds:
-                    return value
+            with lock:
+                if key in cache:
+                    value, timestamp = cache[key]
+                    if now - timestamp < ttl_seconds:
+                        return value
+            # Compute outside lock to avoid blocking other threads
             result = func(*args, **kwargs)
-            cache[key] = (result, now)
+            with lock:
+                cache[key] = (result, now)
             return result
 
         return wrapper
-
     return decorator
-
 
 # =========================
 # Internal Math Helpers (Optimized)
