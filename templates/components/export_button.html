@@ -1,12 +1,14 @@
 <div class="flex justify-end mb-4">
     <div class="flex flex-col items-center">
-        <img 
-            src="{{ url_for('static', filename='images/export.png') }}" 
-            alt="Export Dashboard" 
+        <img
+            src="{{ url_for('static', filename='images/export.png') }}"
+            alt="Export Dashboard"
             class="h-10 w-10 cursor-pointer hover:opacity-80 transition-transform active:scale-95"
             onclick="exportDashboard()"
         >
-        <span class="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">Export Report</span>
+        <span class="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
+            Export Report
+        </span>
     </div>
 </div>
 
@@ -17,80 +19,124 @@ function exportDashboard() {
     const dateStr = now.toLocaleDateString();
     const timeStr = now.toLocaleTimeString();
 
-    // 1. HEADER
+    // ======================================================
+    // HEADER
+    // ======================================================
     text += "==========================================\n";
     text += "       MACRO SYSTEM STRATEGY REPORT       \n";
     text += "       Generated: " + dateStr + " " + timeStr + "\n";
     text += "==========================================\n\n";
 
-    // 2. AI ALLOCATION STRATEGY (The ML "Alpha")
-    text += "--- [I] AI ALLOCATION SIGNAL ---\n";
+    // ======================================================
+    // I. AI SECTOR ALLOCATION
+    // ======================================================
+    text += "--- [I] AI SECTOR ALLOCATION ---\n";
     text += "REGIME: {{ regime.status }}\n";
     text += "TOP OVERWEIGHT:  {{ ml_sector.top.name }} ({{ ml_sector.top.ticker }})\n";
     text += "TOP UNDERWEIGHT: {{ ml_sector.bottom.name }} ({{ ml_sector.bottom.ticker }})\n";
-    text += "MODEL CONFIDENCE: {{ ml_sector.top.confidence }}%\n";
-    text += "PREDICTION SPREAD: {{ ml_sector.spread }}%\n";
-    text += "HORIZON: Rotation\n\n";
+    text += "TOP CONFIDENCE:  {{ ml_sector.top.confidence }}%\n";
+    text += "SPREAD:          {{ ml_sector.spread }}%\n\n";
 
-    text += "AI Probability Distribution:\n";
+    text += "Sector Probability Distribution:\n";
     {% for s in ml_sector.all %}
     text += "  - {{ s.name }} ({{ s.ticker }}): {{ s.confidence }}%\n";
     {% endfor %}
     text += "\n";
 
-    // 3. MARKET VOLATILITY & RISK
-    text += "--- [II] VOLATILITY & RISK REGIME ---\n";
-    text += "Market Regime Details:\n";
+    // ======================================================
+    // II. AI COUNTRY ALLOCATION
+    // ======================================================
+    text += "--- [II] AI COUNTRY ALLOCATION ---\n";
+    text += "TOP OVERWEIGHT:  {{ ml_country.top.name }} ({{ ml_country.top.ticker }})\n";
+    text += "TOP UNDERWEIGHT: {{ ml_country.bottom.name }} ({{ ml_country.bottom.ticker }})\n";
+    text += "TOP CONFIDENCE:  {{ ml_country.top.confidence }}%\n";
+    text += "SPREAD:          {{ ml_country.spread }}%\n\n";
+
+    text += "Country Probability Distribution:\n";
+    {% for c in ml_country.all %}
+    text += "  - {{ c.name }} ({{ c.ticker }}): {{ c.confidence }}%\n";
+    {% endfor %}
+    text += "\n";
+
+    // ======================================================
+    // III. AI COMMODITY ALLOCATION
+    // ======================================================
+    text += "--- [III] AI COMMODITY ALLOCATION ---\n";
+    text += "TOP OVERWEIGHT:  {{ ml_commodity.top.name }} ({{ ml_commodity.top.ticker }})\n";
+    text += "TOP UNDERWEIGHT: {{ ml_commodity.bottom.name }} ({{ ml_commodity.bottom.ticker }})\n";
+    text += "TOP CONFIDENCE:  {{ ml_commodity.top.confidence }}%\n";
+    text += "SPREAD:          {{ ml_commodity.spread }}%\n\n";
+
+    text += "Commodity Probability Distribution:\n";
+    {% for c in ml_commodity.all %}
+    text += "  - {{ c.name }} ({{ c.ticker }}): {{ c.confidence }}%\n";
+    {% endfor %}
+    text += "\n";
+
+    // ======================================================
+    // IV. VOLATILITY & RISK REGIME
+    // ======================================================
+    text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
     {% for m in regime.details %}
     text += "  - {{ m.label }}: {{ 'PASS' if m.pass else 'FAIL' }}\n";
     {% endfor %}
-    text += "VIX Level: {{ vix_mr.vix }} (Z-Score: {{ vix_mr.z }})\n";
+    text += "VIX Level: {{ vix_mr.vix }} (Z: {{ vix_mr.z }})\n";
     text += "VIX Signal: {{ vix_mr.signal.replace('_',' ') }}\n\n";
 
-    // 4. TACTICAL OVERLAY (QQQ)
-    text += "--- [III] TACTICAL MEAN REVERSION (QQQ) ---\n";
+    // ======================================================
+    // V. TACTICAL MEAN REVERSION (QQQ)
+    // ======================================================
+    text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
     text += "Price: ${{ mr.price }}\n";
     text += "RSI(2): {{ mr.rsi2 }}\n";
-    text += "Action Signal: {{ mr.signal }}\n\n";
+    text += "Signal: {{ mr.signal }}\n\n";
 
-    // 5. SECTOR ROTATION ANALYSIS
-    text += "--- [IV] SECTOR STRENGTH (3M SLOPE) ---\n";
+    // ======================================================
+    // VI. SECTOR ROTATION
+    // ======================================================
+    text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
     {% for s in sr.all_ranked %}
-    text += "  - {{ (s.name + ':').ljust(15) }} Slope: {{ (s.slope|string + '%').ljust(8) }} R2: {{ s.r2 }}\n";
+    text += "  - {{ s.name }}: Slope {{ s.slope }}% | R2 {{ s.r2 }}\n";
     {% endfor %}
     text += "\n";
 
-    // 6. GLOBAL ASSET ROTATION (Slope vs R2)
-    text += "--- [V] CROSS-ASSET MOMENTUM (60D) ---\n";
+    // ======================================================
+    // VII. GLOBAL ROTATION MAPS
+    // ======================================================
+    text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
     text += "Countries:\n";
     {% for c in countries %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% (R2: {{ c.r2 }})\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
-    
+
     text += "\nCommodities:\n";
     {% for c in commodities %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% (R2: {{ c.r2 }})\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
 
-    text += "\nCurrencies (vs USD):\n";
+    text += "\nCurrencies vs USD:\n";
     {% for c in currencies %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% (R2: {{ c.r2 }})\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
     text += "\n";
 
-    // 7. SPECIFIC ASSET TRENDS
-    text += "--- [VI] MOMENTUM TREND AUDIT ---\n";
+    // ======================================================
+    // VIII. MOMENTUM TRENDS
+    // ======================================================
+    text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
     {% for t in trends %}
-    text += "{{ t.status.ljust(10) }} | {{ t.name.ljust(12) }} ({{ t.sym }}): ${{ (t.price|string).ljust(8) }} [ML Conf: {{ t.ml_conf }}%]\n";
+    text += "{{ t.status.ljust(12) }} | {{ t.name.ljust(14) }} ({{ t.sym }}): "
+         + "${{ t.price }} | ML {{ t.ml_conf }}% | Stop {{ t.stop }}\n";
     {% endfor %}
     text += "\n";
 
-    // 8. FOOTER
+    // ======================================================
+    // FOOTER
+    // ======================================================
     text += "==========================================\n";
-    text += "        END OF STRATEGY EXPORT           \n";
+    text += "        END OF STRATEGY EXPORT            \n";
     text += "==========================================\n";
 
-    // DOWNLOAD BLOB
     const blob = new Blob([text], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -98,3 +144,4 @@ function exportDashboard() {
     a.click();
 }
 </script>
+
