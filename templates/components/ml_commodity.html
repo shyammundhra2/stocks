@@ -16,7 +16,7 @@
             <ul class="space-y-1 font-mono text-sm">
                 {% for s in ml_commodity.all[:3] %}
                 <li class="flex justify-between">
-                    <span>{{ s.name }} ({{ s.ticker }})</span>
+                    <span>{{ s.name }}</span>
                     <span class="font-bold">{{ s.confidence }}%</span>
                 </li>
                 {% endfor %}
@@ -27,7 +27,7 @@
             <ul class="space-y-1 font-mono text-sm">
                 {% for s in ml_commodity.all[-3:] %}
                 <li class="flex justify-between">
-                    <span>{{ s.name }} ({{ s.ticker }})</span>
+                    <span>{{ s.name }}</span>
                     <span class="font-bold">{{ s.confidence }}%</span>
                 </li>
                 {% endfor %}
