@@ -194,7 +194,6 @@ def get_currency_rotation():
             out.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2})
         return out
     except: return []
-
 @ttl_cache(30)
 def get_trends():
     from macro.ml_engine import get_ml_confidence
@@ -203,21 +202,81 @@ def get_trends():
         try:
             df = yf.download(sym, period="1y", progress=False, auto_adjust=False)
             c = df["Close"].squeeze()
+            
+            # --- Technical Metrics ---
             slope, r2 = _trend_stats(c, 10, 10)
             ml_conf = get_ml_confidence(df)
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
+            
+            # --- Structural Levels ---
             stop = float(c.tail(20).max()) - (2.5 * atr)
-            s50, s200 = float(c.rolling(50).mean().iloc[-1]), float(c.rolling(200).mean().iloc[-1])
+            s50 = float(c.rolling(50).mean().iloc[-1])
+            s200 = float(c.rolling(200).mean().iloc[-1])
             
-            if last < stop or r2 < 0.3: status = "SELL"
-            elif (s50 > s200) and (last > s50) and (slope > 0) and (r2 > 0.6): status = "STRONG BUY" if ml_conf > 75 else "BUY"
-            else: status = "HOLD"
+            # --- Gradient Z-Score (Trend Acceleration) ---
+            # Baseline: the last 60 days of 10-day slopes
+            hist_slopes = [ _trend_stats(c.iloc[i-10:i], 10, 10)[0] for i in range(len(c)-60, len(c)) ]
+            slope_std = np.std(hist_slopes)
+            slope_z = (slope - np.mean(hist_slopes)) / slope_std if slope_std > 0 else 0
+
+            # --- Multi-Tiered Decision Logic ---
+            if last < stop:
+                status = "SELL (STOP)"
+            elif last < s50:
+                status = "SELL (MA50)" # Structural trend break
+            elif slope_z > 2.0 and r2 > 0.8:
+                status = "TRIM (GRADIENT)" # Parabolic exhaustion
+            elif ml_conf < 45 and last > s50:
+                status = "TRIM (ML FADE)" # Macro internal decay
+            elif (s50 > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
+                status = "STRONG BUY" if ml_conf > 75 else "BUY"
+            else:
+                status = "HOLD"
             
+            # --- Position Sizing ---
+            pos_size = compute_kelly_size(ml_conf, last, stop)
+
             results.append({
-                "sym": sym, "name": name, "price": round(last, 2), "status": status, 
-                "r2": round(r2, 2), "ml_conf": ml_conf, "rsi14": round(float(compute_RSI(c, 14).iloc[-1]), 1), 
-                "slope": round(slope, 2), "stop": round(stop, 2)
+                "sym": sym,
+                "name": name,
+                "price": round(last, 2),
+                "status": status,
+                "r2": round(r2, 2),
+                "ml_conf": ml_conf,
+                "rsi14": round(float(compute_RSI(c, 14).iloc[-1]), 1),
+                "slope": round(slope, 2),
+                "slope_z": round(slope_z, 1),  # Pass Z-score to UI
+                "stop": round(stop, 2),
+                "pos_size": f"${pos_size:,.0f}"  # Formats 12500 as $12,500
             })
-        except: continue
+
+        except Exception as e:
+            print(f"Error in trend loop for {sym}: {e}")
+            continue
     return sorted(results, key=lambda x: x["ml_conf"], reverse=True)
+
+
+def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
+    """
+    Quarter Kelly sizing logic: f* = (p - q/b) / 4
+    b (odds) is set to 2.0 based on a conservative 2:1 Reward/Risk.
+    """
+    if ml_conf <= 50: return 0.0  # Statistical edge is zero
+    
+    # 1. Winning Probability
+    p = ml_conf / 100.0
+    q = 1.0 - p
+    
+    # 2. Risk/Reward (b)
+    # Using a standard 2.0 multiplier for target upside vs downside stop
+    b = 2.0 
+    
+    # 3. Kelly Calculation
+    full_kelly = p - (q / b)
+    
+    # 4. Apply Quarter Kelly Fraction & Cap at 15% per position for diversification
+    fractional_kelly = (full_kelly / 4.0)
+    final_allocation = min(fractional_kelly, 0.15) 
+    
+    return round(portfolio_value * max(0, final_allocation), 2)
