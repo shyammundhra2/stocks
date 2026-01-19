@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import joblib
 import argparse
-from datetime import timedelta
+from datetime import timedelta, datetime
 from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS
 
 # ----------------- Helper Functions -----------------
@@ -13,7 +13,10 @@ def compute_features(data, model_type):
     X = pd.DataFrame(index=data.index)
     cols = data.columns
 
-    # --- Macro features (Standard for all) ---
+    # Forward fill once
+    data = data.ffill().fillna(method='bfill')
+
+    # --- Macro features ---
     if 'DX-Y.NYB' in cols:
         X['DXY_mom'] = data['DX-Y.NYB'].pct_change(horizon_q)
         X['DXY_Mom'] = data['DX-Y.NYB'].pct_change(horizon_1m)
@@ -21,16 +24,16 @@ def compute_features(data, model_type):
         X['VIX_level'] = data['^VIX'].rolling(21).mean()
         X['VIX_Level'] = data['^VIX']
     if '^MOVE' in cols:
-        X['MOVE_level'] = data['^MOVE'].ffill().fillna(data['^MOVE'].mean())
+        X['MOVE_level'] = data['^MOVE']
         X['MOVE_Level'] = data['^MOVE']
     if '^TYX' in cols and '^TNX' in cols:
         X['Yield_Curve'] = data['^TYX'] - data['^TNX']
         X['TNX_vol'] = data['^TNX'].rolling(horizon_q).std()
     if 'LQD' in cols and 'HYG' in cols:
         X['Credit_Spread'] = data['LQD'] / data['HYG']
-        X['Credit_Spread_Proxy'] = data['LQD'] / data['HYG']
+        X['Credit_Spread_Proxy'] = X['Credit_Spread']
 
-    # --- Risk-specific features (Macro regime) ---
+    # --- Risk-specific features ---
     if model_type == 'risk':
         if 'RSP' in cols and 'SPY' in cols:
             X['Breadth_Ratio'] = data['RSP'] / data['SPY']
@@ -40,7 +43,7 @@ def compute_features(data, model_type):
         required_rot = ['XLU', 'XLP', 'XLK', 'XLY']
         if all(s in cols for s in required_rot):
             X['Defensive_Rotation'] = (data['XLU'] + data['XLP']) / (data['XLK'] + data['XLY'])
-        
+
         if 'XLF' in cols and 'SPY' in cols:
             X['XLF_Relative_Strength'] = data['XLF'] / data['SPY']
 
@@ -49,7 +52,7 @@ def compute_features(data, model_type):
                 X[f'{s}_3M_Mom'] = data[s].pct_change(63)
 
         if 'Yield_Curve' in X.columns and 'Defensive_Rotation' in X.columns:
-            X['Labor_Stress_Proxy'] = ((X['Yield_Curve'] < 0.1) & 
+            X['Labor_Stress_Proxy'] = ((X['Yield_Curve'] < 0.1) &
                                        (X['Defensive_Rotation'] > X['Defensive_Rotation'].rolling(126).mean())).astype(int)
 
     # --- Commodity and Country specific features ---
@@ -64,43 +67,42 @@ def compute_features(data, model_type):
 
     return X
 
-def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, start_date="2010-01-01"):
+def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None):
     """Fetch data, compute features, and run prediction bundle"""
     if as_of_date is None:
         as_of_date = pd.Timestamp.today()
     else:
         as_of_date = pd.Timestamp(as_of_date)
 
-    # yfinance end is exclusive; +1 day to include requested date
-    fetch_end = as_of_date + timedelta(days=1)
-
-    # Load Model Bundle
+    # Load model bundle
     bundle = joblib.load(model_path)
     model, scaler, feature_names = bundle['model'], bundle['scaler'], bundle['features']
 
-    # Download Data
-    raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False)
-    
-    # Handle MultiIndex logic
-    data = raw_data['Close'].ffill() if isinstance(raw_data.columns, pd.MultiIndex) else raw_data.ffill()
+    # Determine minimal start date for rolling windows
+    max_rolling = 200  # largest rolling window used in compute_features
+    buffer_days = 10   # safety buffer
+    start_date = as_of_date - pd.Timedelta(days=int(max_rolling * 1.5 + buffer_days))
 
-    # Compute & Align Features
+    # yfinance end is exclusive
+    fetch_end = as_of_date + timedelta(days=1)
+
+    # Download data in parallel
+    raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False, threads=True)
+    data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
+
     X = compute_features(data, model_type)
     for feat in feature_names:
         if feat not in X.columns:
             X[feat] = 0
 
-    X_pred = X.tail(1)[feature_names]
-    X_scaled = scaler.transform(X_pred)
-
-    # Predict
+    X_scaled = scaler.transform(X.tail(1)[feature_names])
     proba = model.predict_proba(X_scaled)[0]
-    
+
     if model_type == 'risk':
         proba_dict = {f"Class {c}": p for c, p in zip(model.classes_, proba)}
     else:
         proba_dict = {friendly_names.get(c, c): p for c, p in zip(model.classes_, proba)}
-        
+
     return {
         'date': as_of_date.strftime('%Y-%m-%d'),
         'probabilities': dict(sorted(proba_dict.items(), key=lambda x: x[1], reverse=True))
@@ -123,8 +125,6 @@ if __name__ == "__main__":
     parser.add_argument("--date", type=str, default=None, help="Date to predict (YYYY-MM-DD)")
     args = parser.parse_args()
 
-    # Define model configurations
-    # Format: (Title, Filename, Ticker List, Friendly Name Map, Model Type)
     model_configs = [
         ("Risk Regime", "risk_model.joblib", list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))), {}, 'risk'),
         ("Sector Rotation", "sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS, SECTOR_NAMES, 'sector'),
