@@ -69,6 +69,10 @@ def _trend_stats(series, window, scale):
 @ttl_cache(30)
 def get_risk_regime():
     try:
+        # Single combined download for all needed tickers
+        all_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY', '^VIX', '^MOVE'] + list(SECTOR_NAMES.keys())))
+        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False)
+
         # 1. ML Logic via predict.py
         risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
         ml_res = predict_assets(
@@ -82,8 +86,7 @@ def get_risk_regime():
         is_risk_on = probs.get('Class 1', 0) > probs.get('Class 0', 0)
         confidence = round(max(probs.values()) * 100, 1) if probs else 0
 
-        # 2. Heuristic Logic for UI Display
-        raw = yf.download(['SPY', 'RSP', '^VIX', '^MOVE'], period="300d", progress=False, auto_adjust=False)
+        # 2. Heuristic Logic for UI Display (using already downloaded data)
         data = raw['Close'].ffill()
 
         # Pre-calculate values
@@ -123,8 +126,8 @@ def get_risk_regime():
 @ttl_cache(30)
 def get_ml_sector_prediction():
     try:
-        res = predict_assets("sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS, SECTOR_NAMES,
-                             "sector")
+        tickers = list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS
+        res = predict_assets("sector_model.joblib", tickers, SECTOR_NAMES, "sector")
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": SECTOR_NAMES.get(k, k), "confidence": round(v * 100, 1)}
@@ -145,7 +148,8 @@ def get_ml_sector_prediction():
 @ttl_cache(30)
 def get_ml_country_prediction():
     try:
-        res = predict_assets("country_model.joblib", list(COUNTRIES.keys()) + ML_MACRO_TICKERS, COUNTRIES, "country")
+        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS
+        res = predict_assets("country_model.joblib", tickers, COUNTRIES, "country")
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": COUNTRIES.get(k, k), "confidence": round(v * 100, 1)}
