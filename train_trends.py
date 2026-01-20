@@ -3,98 +3,208 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.inspection import permutation_importance
+from sklearn.model_selection import TimeSeriesSplit
 import joblib
-from macro.helpers import compute_RSI, compute_ATR
 
+# ===============================
+# 1️⃣ Setup & Asset Universe
+# ===============================
 from macro.constants import TREND_ASSETS
 
+MACRO_TICKERS = {
+    "DX-Y.NYB": "DXY",     # Dollar Index
+    "^VIX": "VIX",         # Equity Volatility
+    "^MOVE": "MOVE",       # Bond Volatility
+    "^TNX": "10Y_Yield",   # 10Y Treasury
+    "^IRX": "3M_Yield",    # 3M T-Bill
+    "HYG": "High_Yield",   # Credit Risk
+    "IEF": "Treasuries",   # Risk-Free Proxy
+    "XLY": "Disc",         # Consumer Discretionary
+    "XLP": "Staples",       # Consumer Staples
+    "SPY": "SP500"
+}
 
-# 1️⃣ Setup
-trend_tickers = list(TREND_ASSETS.keys())
-FEATURE_COLS = ['RSI14', 'ATR14', 'SMA50_dist', 'SMA200_dist', 'mom_5d', 'mom_10d', 'vol_z']
+ALL_TICKERS = list(set(list(TREND_ASSETS.keys()) + list(MACRO_TICKERS.keys())))
 
-all_features = []
-all_targets_fast = []
-all_targets_slow = []
+# ===============================
+# 2️⃣ Helper Functions
+# ===============================
+def compute_RSI(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0).rolling(period).mean()
+    loss = -delta.where(delta < 0, 0.0).rolling(period).mean()
+    rs = gain / (loss + 1e-9)
+    return 100 - (100 / (1 + rs))
 
-for ticker in trend_tickers:
-    print(f"Downloading {ticker}...")
-    df = yf.download(ticker, period="25y", auto_adjust=True, progress=False)
-    if df.empty or len(df) < 250:
-        print(f"Skipping {ticker}, not enough data.")
-        continue
 
-    close = df['Close'].squeeze()
-    vol = df['Volume'].squeeze()
+def rank_features(model, X, y, label, n_splits=5):
+    """
+    Time-series aware permutation importance
+    """
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    importances = []
 
-    # --- Feature Engineering ---
-    ticker_df = pd.DataFrame(index=df.index)
-    ticker_df['RSI14'] = compute_RSI(close, 14)
-    ticker_df['ATR14'] = compute_ATR(df, 14)
+    for _, test_idx in tscv.split(X):
+        X_test = X.iloc[test_idx]
+        y_test = y.iloc[test_idx]
 
-    sma50 = close.rolling(50).mean()
-    sma200 = close.rolling(200).mean()
-    ticker_df['SMA50_dist'] = (close - sma50) / sma50
-    ticker_df['SMA200_dist'] = (close - sma200) / sma200
+        result = permutation_importance(
+            model,
+            X_test,
+            y_test,
+            n_repeats=10,
+            random_state=42,
+            n_jobs=-1
+        )
 
-    ticker_df['mom_5d'] = close.pct_change(5)
-    ticker_df['mom_10d'] = close.pct_change(10)
-    ticker_df['vol_z'] = (vol - vol.rolling(20).mean()) / (vol.rolling(20).std() + 1e-6)
+        importances.append(result.importances_mean)
 
-    # --- Dual Targets ---
-    target_fast = (close.shift(-5) > close).astype(int)  # 1-Week
-    target_slow = (close.shift(-21) > close).astype(int)  # 1-Month
+    mean_importance = np.mean(importances, axis=0)
 
-    ticker_df['target_f'] = target_fast
-    ticker_df['target_s'] = target_slow
-    ticker_df = ticker_df.dropna()
+    ranking = (
+        pd.DataFrame({
+            "Feature": X.columns,
+            "Importance": mean_importance
+        })
+        .sort_values("Importance", ascending=False)
+        .reset_index(drop=True)
+    )
 
-    all_features.append(ticker_df[FEATURE_COLS])
-    all_targets_fast.append(ticker_df['target_f'])
-    all_targets_slow.append(ticker_df['target_s'])
+    print(f"\n📊 Feature Importance — {label}")
+    print(ranking.to_string(index=False))
 
-# 2️⃣ Combine & Scale
-X = pd.concat(all_features)
-y_f = pd.concat(all_targets_fast)
-y_s = pd.concat(all_targets_slow)
+    return ranking
 
+
+# ===============================
+# 3️⃣ Data Acquisition
+# ===============================
+print("📡 Downloading market & macro data (25y)...")
+
+raw_data = yf.download(
+    ALL_TICKERS,
+    period="25y",
+    interval="1d",
+    auto_adjust=True,
+    progress=False
+)
+
+if isinstance(raw_data.columns, pd.MultiIndex):
+    close_prices = raw_data["Close"]
+else:
+    close_prices = raw_data
+
+# ===============================
+# 4️⃣ Feature Engineering
+# ===============================
+print("🛠️ Engineering features...")
+
+df = pd.DataFrame(index=close_prices.index)
+
+spy = close_prices["SPY"]
+
+# --- Trend / Technical ---
+df["RSI14"] = compute_RSI(spy, 14)
+df["SMA50_dist"] = (spy - spy.rolling(50).mean()) / spy.rolling(50).mean()
+df["SMA200_dist"] = (spy - spy.rolling(200).mean()) / spy.rolling(200).mean()
+
+# --- Macro / Regime ---
+df["DXY_mom"] = close_prices["DX-Y.NYB"].pct_change(63)
+df["VIX_level"] = close_prices["^VIX"].rolling(21).mean()
+df["MOVE_level"] = close_prices["^MOVE"].ffill()
+df["Yield_Curve"] = close_prices["^TNX"] - close_prices["^IRX"]
+df["Credit_Stress"] = close_prices["HYG"] / close_prices["IEF"]
+df["Consumer_Health"] = close_prices["XLY"] / close_prices["XLP"]
+
+# ===============================
+# 5️⃣ Targets
+# ===============================
+df["target_f"] = (spy.shift(-5) > spy).astype(int)
+df["target_s"] = (spy.shift(-21) > spy).astype(int)
+
+df.dropna(inplace=True)
+
+FEATURE_COLS = [
+    "RSI14",
+    "SMA50_dist",
+    "SMA200_dist",
+    "DXY_mom",
+    "VIX_level",
+    "MOVE_level",
+    "Yield_Curve",
+    "Credit_Stress",
+    "Consumer_Health"
+]
+
+X = df[FEATURE_COLS]
+y_f = df["target_f"]
+y_s = df["target_s"]
+
+# ===============================
+# 6️⃣ Scaling
+# ===============================
 scaler = StandardScaler()
-X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+X_scaled = pd.DataFrame(
+    scaler.fit_transform(X),
+    columns=X.columns,
+    index=X.index
+)
 
-# 3️⃣ Train Dual Models
-print("Training Fast Model (5d)...")
+# ===============================
+# 7️⃣ Model Training
+# ===============================
+print("🚀 Training FAST model (5d)...")
 model_fast = RandomForestClassifier(
-    n_estimators=500, max_depth=4, class_weight='balanced', random_state=42
+    n_estimators=500,
+    max_depth=4,
+    class_weight="balanced",
+    random_state=42,
+    n_jobs=-1
 )
 model_fast.fit(X_scaled, y_f)
 
-print("Training Slow Model (21d)...")
+print("🚀 Training SLOW model (21d)...")
 model_slow = RandomForestClassifier(
-    n_estimators=500, max_depth=5, class_weight='balanced', random_state=42
+    n_estimators=500,
+    max_depth=5,
+    class_weight="balanced",
+    random_state=42,
+    n_jobs=-1
 )
 model_slow.fit(X_scaled, y_s)
 
-# 4️⃣ Save Bundle
-joblib.dump({
-    'model_fast': model_fast,
-    'model_slow': model_slow,
-    'scaler': scaler,
-    'features': FEATURE_COLS
-}, 'trend_model.joblib')
+# ===============================
+# 8️⃣ Feature Ranking
+# ===============================
+fast_rank = rank_features(model_fast, X_scaled, y_f, "FAST (5D)")
+slow_rank = rank_features(model_slow, X_scaled, y_s, "SLOW (21D)")
 
-print("✅ Dual-Horizon Models Saved.")
+# ===============================
+# 9️⃣ Save Bundle
+# ===============================
+joblib.dump(
+    {
+        "model_fast": model_fast,
+        "model_slow": model_slow,
+        "scaler": scaler,
+        "features": FEATURE_COLS,
+        "fast_feature_rank": fast_rank,
+        "slow_feature_rank": slow_rank
+    },
+    "trend_model.joblib"
+)
 
+print("\n✅ trend_model.joblib saved with macro-aware feature rankings.")
 
-# --- Feature Importance ---
-def print_feature_importance(model, feature_names, label):
-    importances = model.feature_importances_
-    fi_df = pd.DataFrame({
-        'feature': feature_names,
-        'importance': importances
-    }).sort_values('importance', ascending=False)
-    print(f"\n📊 Feature Importance for {label} Model:")
-    print(fi_df.to_string(index=False))
+# ===============================
+# 🔟 Macro Danger Zone Alert
+# ===============================
+current_curve = df["Yield_Curve"].iloc[-1]
 
-
-print_feature_importance(model_fast, FEATURE_COLS, 'Fast (5d)')
-print_feature_importance(model_slow, FEATURE_COLS, 'Slow (21d)')
+if current_curve < 0:
+    print("\n🚨 DANGER ZONE: Yield Curve Inverted")
+elif 0 < current_curve < 0.2:
+    print("\n⚠️ WARNING: Curve De-Inverting — Sahm Watch Active")
+else:
+    print("\n🟢 Curve Normal — No Macro Stress Signal")
