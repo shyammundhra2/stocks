@@ -87,24 +87,24 @@ function generateReportText() {
 
     text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
     {% for s in sr.all_ranked %}
-    text += "  - {{ s.name }}: Slope {{ s.slope }}% | R2 {{ s.r2 }}\n";
+    text += "  - {{ s.name }}: Slope {{ s.slope }}% | ΔSlope {{ s.slope_change|default('0') }}% | R2 {{ s.r2 }}\n";
     {% endfor %}
     text += "\n";
 
     text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
     text += "Countries:\n";
     {% for c in countries %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
 
     text += "\nCommodities:\n";
     {% for c in commodities %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
 
     text += "\nCurrencies vs USD:\n";
     {% for c in currencies %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.slope }}% | R2 {{ c.r2 }}\n";
+    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
     {% endfor %}
     text += "\n";
 
