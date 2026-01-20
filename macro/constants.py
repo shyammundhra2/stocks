@@ -37,7 +37,7 @@ CURRENCIES = {
 # --- Trend Assets ---
 TREND_ASSETS = {
     "VGT":"Tech","VDE":"Energy","VIS":"Industrials","XME":"Metals",
-    "GLD":"Gold","IBIT":"Bitcoin","TLT":"30yr Bond"
+    "GLD":"Gold","IBIT":"Bitcoin","TLT":"30yr Bond", "RKT": "Rocket"
 }
 
 # --- ML Macro Tickers ---
