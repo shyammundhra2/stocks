@@ -243,29 +243,75 @@ def get_mean_reversion():
 # =========================
 # IV. Rotation & Trends (Optimized)
 # =========================
+import math
+
+# -------------------------
+# Helper to compute gradient angle
+# -------------------------
+def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
+    """
+    Compute gradient (angle in degrees) of R2 vs slope over last `window` slices.
+    - x-axis: slope
+    - y-axis: R2
+    Returns 0-360 degrees.
+    """
+    if len(series) < window + slice_len:
+        return 0.0
+
+    slopes = []
+    r2s = []
+
+    # Compute slope and R2 for rolling slices
+    for i in range(-window, 0):
+        start_idx = i - slice_len
+        end_idx = i
+        slice_series = series.iloc[start_idx:end_idx]
+        if len(slice_series) < 2:
+            continue
+        slope, r2 = _trend_stats(slice_series, len(slice_series), scale)
+        slopes.append(slope)
+        r2s.append(r2)
+
+    if len(slopes) < 2:
+        return 0.0
+
+    coeffs = np.polyfit(slopes, r2s, 1)
+    angle_rad = math.atan(coeffs[0])
+    angle_deg = math.degrees(angle_rad)
+
+    if angle_deg < 0:
+        angle_deg += 360
+
+    return round(angle_deg, 1)
+
+
+# =========================
+# Rotation Functions with Gradient
+# =========================
+
 @ttl_cache(30)
 def get_sector_rotation():
     try:
         tickers = list(SECTORS.keys()) + ["SPY"]
         data = yf.download(tickers, period="1y", progress=False, auto_adjust=False)['Close']
 
-        # Vectorized relative performance calculation
         sector_data = data[list(SECTORS.keys())]
         rel = sector_data.div(data["SPY"], axis=0).pct_change(63).iloc[-1]
 
         out = []
         for t, name in SECTORS.items():
             slope, r2 = _trend_stats(data[t], 20, 20)
+            gradient = _compute_gradient(data[t].tail(20))
             rel_gain = rel[t]
             out.append({
                 "name": name,
                 "gain": f"{rel_gain:+.2%}",
                 "is_positive": rel_gain > 0,
                 "r2": r2,
-                "slope": slope
+                "slope": slope,
+                "gradient": gradient  # <-- NEW
             })
 
-        # Single sort operation
         return {"all_ranked": sorted(out, key=lambda x: float(x["gain"].strip("%+")), reverse=True)}
     except:
         return {"all_ranked": []}
@@ -278,7 +324,14 @@ def get_country_rotation():
         results = []
         for s, n in COUNTRIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
-            results.append({"sym": s, "name": n, "slope": slope, "r2": r2})
+            gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
+            results.append({
+                "sym": s,
+                "name": n,
+                "slope": slope,
+                "r2": r2,
+                "gradient": gradient
+            })
         return results
     except:
         return []
@@ -291,7 +344,14 @@ def get_commodity_rotation():
         results = []
         for s, n in COMMODITIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
-            results.append({"sym": s, "name": n, "slope": slope, "r2": r2})
+            gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
+            results.append({
+                "sym": s,
+                "name": n,
+                "slope": slope,
+                "r2": r2,
+                "gradient": gradient
+            })
         return results
     except:
         return []
@@ -309,7 +369,14 @@ def get_currency_rotation():
             if s not in invert_set:
                 c = 1 / c
             slope, r2 = _trend_stats(c, 60, 60)
-            results.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2})
+            gradient = _compute_gradient(c.tail(20), window=5, slice_len=10, scale=60)
+            results.append({
+                "sym": s,
+                "name": n,
+                "slope": round(slope, 4),
+                "r2": r2,
+                "gradient": gradient
+            })
 
         return results
     except:
