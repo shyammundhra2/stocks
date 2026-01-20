@@ -48,30 +48,35 @@ document.addEventListener("DOMContentLoaded", function() {
             type: 'scatter'
         };
 
-        // Arrow annotations scaled by slope_change
-        const maxArrowLength = 0.3; // max arrow length
-        const maxSlopeChange = Math.max(...data.map(d => Math.abs(d.slope_change || 0)), 1);
+        const minArrowLength = 0.05; // minimum arrow length
+const maxArrowLength = 0.3;  // maximum arrow length (you already had this)
 
-        const arrowAnnotations = data.map(d => {
-            if (!d.gradient || d.gradient === null || d.y == null || d.y <= 0 || !d.slope_change) return null;
+const maxSlopeChange = Math.max(...data.map(d => Math.abs(d.slope_change || 0)), 1);
 
-            const angleRad = d.gradient * Math.PI / 180;
-            const length = maxArrowLength * Math.abs(d.slope_change) / maxSlopeChange;
+    const arrowAnnotations = data.map(d => {
+        // Skip if essential data is missing
+        if (d.gradient == null || d.slope_change == null || d.y == null || d.y < 0) return null;
 
-            return {
-                x: d.x,
-                y: d.y,
-                ax: d.x - length * Math.cos(angleRad),
-                ay: d.y - length * Math.sin(angleRad),
-                xref: 'x', yref: 'y',
-                axref: 'x', ayref: 'y',
-                showarrow: true,
-                arrowhead: 3,
-                arrowsize: 1,
-                arrowwidth: 1.5,
-                arrowcolor: '#facc15'
-            };
-        }).filter(a => a);
+        // Convert slope gradient to radians
+        const angleRad = d.gradient * Math.PI / 180;
+
+        // Scale length with min length
+        const length = minArrowLength + (maxArrowLength - minArrowLength) * Math.abs(d.slope_change) / maxSlopeChange;
+
+        return {
+            x: d.x,
+            y: d.y,
+            ax: d.x - length * Math.cos(angleRad),
+            ay: d.y - length * Math.sin(angleRad),
+            xref: 'x', yref: 'y',
+            axref: 'x', ayref: 'y',
+            showarrow: true,
+            arrowhead: 3,
+            arrowsize: 1,
+            arrowwidth: 1.5,
+            arrowcolor: '#facc15'
+        };
+    }).filter(a => a);
 
         Plotly.newPlot(id, [markerTrace], {
             paper_bgcolor:'rgba(0,0,0,0)',
