@@ -262,28 +262,24 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
     r2s = []
 
     # Compute slope and R2 for rolling slices
-    for i in range(-window, 0):
-        start_idx = i - slice_len
-        end_idx = i
-        slice_series = series.iloc[start_idx:end_idx]
-        if len(slice_series) < 2:
-            continue
-        slope, r2 = _trend_stats(slice_series, len(slice_series), scale)
-        slopes.append(slope)
-        r2s.append(r2)
+    """
+       Compute movement vector (slope, R²) from last week.
+       - series: price series (pd.Series)
+       - returns: gradient angle in degrees 0-360
+       """
+    # Current week
+    slope_now, r2_now = _trend_stats(series.tail(window), window, scale)
+    # Last week
+    slope_prev, r2_prev = _trend_stats(series.tail(window + 5).iloc[:-5], window, scale)
 
-    if len(slopes) < 2:
-        return 0.0
+    dx = slope_now - slope_prev
+    dy = r2_now - r2_prev
 
-    coeffs = np.polyfit(slopes, r2s, 1)
-    angle_rad = math.atan(coeffs[0])
+    angle_rad = math.atan2(dy, dx)
     angle_deg = math.degrees(angle_rad)
-
     if angle_deg < 0:
         angle_deg += 360
-
     return round(angle_deg, 1)
-
 
 # =========================
 # Rotation Functions with Gradient
