@@ -45,7 +45,6 @@ def analyze_asset_cycles(ticker, start_date="1970-01-01", extend_months=48):
     t_future = np.arange(len(df_m) + extend_months)
     predicted_cycle_future = np.sin(2 * np.pi * t_future / (peak_cycle * 12))
     predicted_cycle_future = np.roll(predicted_cycle_future, shift_idx) * df_m['Cycle_Dev'].std()
-    # Create future datetime index
     last_date = df_m.index[-1]
     future_dates = pd.date_range(start=last_date + pd.offsets.MonthEnd(1), periods=extend_months, freq='M')
     future_index = df_m.index.append(future_dates)
@@ -59,6 +58,7 @@ def plot_assets_with_forecast(assets_data):
                              gridspec_kw={'width_ratios':[2,1]})
 
     for i, (name, (df_m, predicted_full, full_index, peak_cycle)) in enumerate(assets_data.items()):
+        # Left: Price
         ax1 = axes[i,0] if n_assets > 1 else axes[0]
         ax1.plot(df_m.index, df_m['Close'], color='black', label='Price')
         ax1.set_yscale('log')
@@ -66,7 +66,7 @@ def plot_assets_with_forecast(assets_data):
         ax1.set_ylabel('Price')
         ax1.grid(True, alpha=0.2)
 
-        # Bottom subplot: cycle + forecast
+        # Right: Cycles + forecast
         ax2 = axes[i,1] if n_assets > 1 else axes[1]
         ax2.plot(df_m.index, df_m['Cycle_Dev'], color='teal', linewidth=1, label='HP Cycle')
         ax2.plot(full_index, predicted_full, color='blue', linestyle='--', alpha=0.8, label='Predicted Cycle')
@@ -76,10 +76,20 @@ def plot_assets_with_forecast(assets_data):
         ax2.set_title(f"{name} Cyclical Deviation + 4-Year Forecast")
         ax2.set_ylabel('Log Deviation')
         ax2.grid(True, alpha=0.2)
-        ax2.legend(loc='upper right')
+        ax2.legend(loc='upper left')
+
+        # --- Cycle duration annotation ---
+        ax2.annotate(
+            f"Dominant Cycle: {peak_cycle:.2f} yrs",
+            xy=(0.98, 0.95), xycoords='axes fraction',
+            ha='right', va='top',
+            fontsize=12, fontweight='bold',
+            bbox=dict(facecolor='yellow', alpha=0.4, edgecolor='black')
+        )
 
     plt.tight_layout()
     plt.show()
+
 
 if __name__ == "__main__":
     assets = {
