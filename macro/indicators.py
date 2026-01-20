@@ -282,8 +282,19 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
     return round(angle_deg, 1)
 
 # =========================
-# Rotation Functions with Gradient
+# Rotation Functions with Gradient & Slope Change
 # =========================
+
+def _compute_slope_change(series, window=20):
+    """
+    Compute slope change from last week.
+    """
+    if len(series) < window + 5:
+        return 0.0
+    slope_this_week, _ = _trend_stats(series.tail(window), window, window)
+    slope_last_week, _ = _trend_stats(series.tail(window + 5)[:-5], window, window)
+    return round(slope_this_week - slope_last_week, 2)
+
 
 @ttl_cache(30)
 def get_sector_rotation():
@@ -298,6 +309,7 @@ def get_sector_rotation():
         for t, name in SECTORS.items():
             slope, r2 = _trend_stats(data[t], 20, 20)
             gradient = _compute_gradient(data[t].tail(20))
+            slope_change = _compute_slope_change(data[t])
             rel_gain = rel[t]
             out.append({
                 "name": name,
@@ -305,7 +317,8 @@ def get_sector_rotation():
                 "is_positive": rel_gain > 0,
                 "r2": r2,
                 "slope": slope,
-                "gradient": gradient  # <-- NEW
+                "gradient": gradient,
+                "slope_change": slope_change
             })
 
         return {"all_ranked": sorted(out, key=lambda x: float(x["gain"].strip("%+")), reverse=True)}
@@ -321,12 +334,14 @@ def get_country_rotation():
         for s, n in COUNTRIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
+            slope_change = _compute_slope_change(data[s])
             results.append({
                 "sym": s,
                 "name": n,
                 "slope": slope,
                 "r2": r2,
-                "gradient": gradient
+                "gradient": gradient,
+                "slope_change": slope_change
             })
         return results
     except:
@@ -341,12 +356,14 @@ def get_commodity_rotation():
         for s, n in COMMODITIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
+            slope_change = _compute_slope_change(data[s])
             results.append({
                 "sym": s,
                 "name": n,
                 "slope": slope,
                 "r2": r2,
-                "gradient": gradient
+                "gradient": gradient,
+                "slope_change": slope_change
             })
         return results
     except:
@@ -366,19 +383,21 @@ def get_currency_rotation():
                 c = 1 / c
             slope, r2 = _trend_stats(c, 60, 60)
             gradient = _compute_gradient(c.tail(20), window=5, slice_len=10, scale=60)
+            slope_change = _compute_slope_change(c)
             results.append({
                 "sym": s,
                 "name": n,
                 "slope": round(slope, 4),
                 "r2": r2,
-                "gradient": gradient
+                "gradient": gradient,
+                "slope_change": slope_change
             })
 
         return results
     except:
         return []
 
-
+# Trends
 @ttl_cache(30)
 def get_trends():
     from macro.ml_engine import get_ml_confidence

@@ -48,17 +48,21 @@ document.addEventListener("DOMContentLoaded", function() {
             type: 'scatter'
         };
 
-        // Very short arrows for gradient (0-360°)
-        const arrowLength = 0.15; // shorter arrow length
+        // Arrow annotations scaled by slope_change
+        const maxArrowLength = 0.3; // max arrow length
+        const maxSlopeChange = Math.max(...data.map(d => Math.abs(d.slope_change || 0)), 1);
+
         const arrowAnnotations = data.map(d => {
-            if (d.gradient === undefined || d.gradient === null) return null;
+            if (!d.gradient || d.gradient === null || d.y == null || d.y <= 0 || !d.slope_change) return null;
 
             const angleRad = d.gradient * Math.PI / 180;
+            const length = maxArrowLength * Math.abs(d.slope_change) / maxSlopeChange;
+
             return {
                 x: d.x,
                 y: d.y,
-                ax: d.x - arrowLength * Math.cos(angleRad),
-                ay: d.y - arrowLength * Math.sin(angleRad),
+                ax: d.x - length * Math.cos(angleRad),
+                ay: d.y - length * Math.sin(angleRad),
                 xref: 'x', yref: 'y',
                 axref: 'x', ayref: 'y',
                 showarrow: true,
@@ -82,28 +86,28 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // Plot all rotations with short arrows
+    // Plot all rotations with slope-change scaled arrows
     plotRotation('rotationMap', [
         {% for s in sr.all_ranked %}
-        { name: "{{ s.name }}", x: {{ s.slope }}, y: {{ s.r2 }}, gradient: {{ s.gradient|default('0') }} },
+        { name: "{{ s.name }}", x: {{ s.slope }}, y: {{ s.r2 }}, gradient: {{ s.gradient|default('0') }}, slope_change: {{ s.slope_change|default('0') }} },
         {% endfor %}
     ]);
 
     plotRotation('countryRotation', [
         {% for c in countries %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }} },
+        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
         {% endfor %}
     ]);
 
     plotRotation('commodityRotation', [
         {% for c in commodities %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }} },
+        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
         {% endfor %}
     ]);
 
     plotRotation('currencyRotation', [
         {% for c in currencies %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }} },
+        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
         {% endfor %}
     ]);
 });
