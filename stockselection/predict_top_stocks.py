@@ -9,7 +9,7 @@ MODEL_NAME = "macro_model_2027.json"
 LOCAL_FILE = "sp500.csv"
 
 
-def predict_top_20():
+def predict_top():
     base_path = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(base_path, MODEL_NAME)
 
@@ -85,16 +85,16 @@ def predict_top_20():
             continue
 
     # Create DataFrame and sort
-    top_20 = pd.DataFrame(results).sort_values('Score', ascending=False).head(20)
+    top = pd.DataFrame(results).sort_values('Score', ascending=False).head(50)
 
     # Format the output for a clean terminal look
     print("\n" + "=" * 75)
     print(f"{'TICKER':<10} {'NAME':<45} {'PROBABILITY'}")
     print("=" * 75)
-    for _, row in top_20.iterrows():
+    for _, row in top.iterrows():
         print(f"{row['Ticker']:<10} {row['Name'][:43]:<45} {row['Score']:.2%}")
     print("=" * 75)
 
 
 if __name__ == "__main__":
-    predict_top_20()
+    predict_top()
