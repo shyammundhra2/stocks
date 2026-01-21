@@ -4,6 +4,7 @@ import xgboost as xgb
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
+import time
 
 warnings.filterwarnings('ignore')
 
@@ -22,11 +23,12 @@ BUFFER_DAYS = LOOKBACK_3M * 2
 
 # Performance settings
 MAX_WORKERS = 10  # For parallel name fetching
-BATCH_SIZE = 100  # Bulk download batch size (yfinance supports up to ~100)
+BATCH_SIZE = 50  # Reduced batch size to avoid rate limits
+RETRY_DELAY = 2  # Seconds between retries
 
 
 def download_stocks_batch(tickers, start, end, batch_size=50):
-    """Download stocks in bulk batches for maximum speed."""
+    """Download stocks in bulk batches with retry logic for 401 errors."""
     all_results = []
     total_batches = (len(tickers) + batch_size - 1) // batch_size
 
@@ -35,62 +37,73 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
         batch_num = (i // batch_size) + 1
         print(f"  📦 Batch {batch_num}/{total_batches}: downloading {len(batch)} stocks...")
 
-        try:
-            # Bulk download entire batch at once
-            data = yf.download(batch, start=start, end=end,
-                               auto_adjust=True, progress=False,
-                               group_by='ticker', threads=True)
+        # Retry logic for 401 errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Add small delay between batches to avoid rate limiting
+                if i > 0:
+                    time.sleep(RETRY_DELAY)
 
-            # Process each stock in the batch
-            for ticker in batch:
-                try:
-                    # Handle single vs multi-ticker dataframe structure
-                    if len(batch) == 1:
-                        stock_data = data
+                # Bulk download entire batch at once
+                data = yf.download(batch, start=start, end=end,
+                                   auto_adjust=True, progress=False,
+                                   group_by='ticker', threads=True)
+
+                # Process each stock in the batch
+                for ticker in batch:
+                    try:
+                        # Handle single vs multi-ticker dataframe structure
+                        if len(batch) == 1:
+                            stock_data = data
+                        else:
+                            stock_data = data[ticker] if ticker in data.columns.get_level_values(0) else pd.DataFrame()
+
+                        if stock_data.empty or len(stock_data) < LOOKBACK_3M:
+                            continue
+
+                        mom_3m = stock_data['Close'].pct_change(LOOKBACK_3M, fill_method=None).iloc[-1]
+                        if pd.isna(mom_3m):
+                            continue
+
+                        all_results.append({
+                            'ticker': ticker,
+                            'mom_3m': float(mom_3m)
+                        })
+                    except Exception:
+                        continue
+
+                # Success - break retry loop
+                break
+
+            except Exception as e:
+                if '401' in str(e) or 'Unauthorized' in str(e):
+                    if attempt < max_retries - 1:
+                        wait_time = RETRY_DELAY * (attempt + 1)
+                        print(
+                            f"  ⚠️  401 error on batch {batch_num}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
                     else:
-                        stock_data = data[ticker] if ticker in data.columns.get_level_values(0) else pd.DataFrame()
-
-                    if stock_data.empty or len(stock_data) < LOOKBACK_3M:
-                        continue
-
-                    mom_3m = stock_data['Close'].pct_change(LOOKBACK_3M, fill_method=None).iloc[-1]
-                    if pd.isna(mom_3m):
-                        continue
-
-                    all_results.append({
-                        'ticker': ticker,
-                        'mom_3m': float(mom_3m)
-                    })
-                except Exception:
-                    continue
-
-        except Exception as e:
-            print(f"  ⚠️  Batch {batch_num} failed, skipping...")
-            continue
+                        print(f"  ❌ Batch {batch_num} failed after {max_retries} attempts, skipping...")
+                else:
+                    print(f"  ⚠️  Batch {batch_num} error: {str(e)[:50]}, skipping...")
+                    break
 
     return all_results
 
 
-def get_company_names_batch(tickers):
-    """Fetch company names in parallel."""
-    names = {}
-
-    def fetch_name(t):
-        try:
-            return t, yf.Ticker(t).info.get('shortName', t)
-        except Exception:
-            return t, t
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(fetch_name, t): t for t in tickers}
-        for future in as_completed(futures):
-            ticker, name = future.result()
-            names[ticker] = name
-
-    return names
+def load_company_names_from_csv():
+    """Load company names directly from CSV - no API calls needed."""
+    try:
+        df = pd.read_csv(LOCAL_FILE)
+        # Create dictionary mapping Symbol -> Company
+        return dict(zip(df['Symbol'], df['Company']))
+    except Exception as e:
+        print(f"⚠️  Could not load names from CSV: {e}")
+        return {}
 
 
-def infer_today(top_n=15, avoid_n=15):
+def infer_today(top_n=25, avoid_n=25):
     print("🚀 Starting optimized inference pipeline...")
 
     # ---------------- LOAD MODEL ----------------
@@ -127,17 +140,23 @@ def infer_today(top_n=15, avoid_n=15):
 
     # ---------------- STOCK FEATURES (Bulk Download) ----------------
     print("📈 Bulk downloading stock data...")
-    symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
+    symbols_df = pd.read_csv(LOCAL_FILE)
+    symbols = symbols_df['Symbol'].tolist()
+
+    # Load company names from CSV (no API calls!)
+    ticker_to_name = load_company_names_from_csv()
+    print(f"✅ Loaded {len(ticker_to_name)} company names from CSV")
 
     stock_results = download_stocks_batch(symbols, start, end, batch_size=BATCH_SIZE)
 
     print(f"✅ Downloaded {len(stock_results)}/{len(symbols)} valid stocks")
 
     # ---------------- GET COMPANY NAMES (Parallel) ----------------
-    print("🏢 Fetching company names...")
-    valid_tickers = [r['ticker'] for r in stock_results]
-    ticker_to_name = get_company_names_batch(valid_tickers)
-    print("✅ Company names retrieved")
+    # Names already loaded from CSV - skip API calls!
+    # print("🏢 Fetching company names...")
+    # valid_tickers = [r['ticker'] for r in stock_results]
+    # ticker_to_name = get_company_names_batch(valid_tickers)
+    # print("✅ Company names retrieved")
 
     # ---------------- BUILD DATAFRAME ----------------
     print("🔧 Building feature matrix...")
@@ -146,7 +165,8 @@ def infer_today(top_n=15, avoid_n=15):
         row = macro_latest.copy()
         row['Stock_Mom_3M'] = result['mom_3m']
         row['Ticker'] = result['ticker']
-        row['Name'] = ticker_to_name[result['ticker']]
+        # Use CSV company name, fallback to ticker if not found
+        row['Name'] = ticker_to_name.get(result['ticker'], result['ticker'])
         rows.append(row)
 
     df = pd.DataFrame(rows)
