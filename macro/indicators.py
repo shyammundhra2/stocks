@@ -124,11 +124,8 @@ def get_risk_regime():
         carry_pass = bool(
             data['JPY=X'].iloc[-1] > data['JPY=X'].rolling(50).mean().iloc[-1] and jpy_vol.iloc[-1] < 0.15)
 
-        # D. Global Growth (Copper/Gold Ratio)
-        cu_au_ratio = data['HG=F'] / data['GC=F']
-        growth_pass = bool(cu_au_ratio.iloc[-1] > cu_au_ratio.rolling(50).mean().iloc[-1])
 
-        # E. Existing Technicals
+        # Existing Technicals
         spy_trend = bool(data['SPY'].iloc[-1] > data['SPY'].rolling(200).mean().iloc[-1])
         vix_low = bool(data['^VIX'].iloc[-1] < 20 and data['^MOVE'].iloc[-1] < 110)
 
@@ -139,14 +136,11 @@ def get_risk_regime():
             {"label": "Credit (HYG/IEF Ratio)", "pass": credit_pass},
             {"label": "Curve (10Y-3M Spread)", "pass": curve_pass},
             {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
-            {"label": "Growth (Cu/Au Ratio)", "pass": growth_pass}
         ]
 
-        pass_count = sum(1 for d in details if d['pass'])
-        macro_score = (pass_count / len(details)) * 100
 
         return {
-            "status": "RISK-ON" if (is_risk_on_ml and macro_score >= 50) else "RISK-OFF",
+            "status": "RISK-ON" if (is_risk_on_ml) else "RISK-OFF",
             "confidence": current_conf,
             "history": history_points,  # 20 real data points from your ML model
             "details": details
