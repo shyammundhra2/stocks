@@ -56,7 +56,6 @@ def infer_today(top_n=15, avoid_n=15):
             continue
 
         try:
-            # ✅ Use .item() to convert single-element Series to float
             mom_3m = s['Close'].pct_change(LOOKBACK_3M, fill_method=None).iloc[-1].item()
         except (IndexError, TypeError, ValueError):
             continue
@@ -64,9 +63,16 @@ def infer_today(top_n=15, avoid_n=15):
         if pd.isna(mom_3m):
             continue
 
+        # Get company name safely
+        try:
+            name = yf.Ticker(t).info.get('shortName', t)
+        except Exception:
+            name = t
+
         row = macro_latest.copy()
         row['Stock_Mom_3M'] = mom_3m
         row['Ticker'] = t
+        row['Name'] = name
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -92,19 +98,19 @@ def infer_today(top_n=15, avoid_n=15):
     df = df.sort_values(['Prob','Margin'], ascending=False)
 
     # ---------------- OUTPUT ----------------
-    print("\n" + "="*60)
+    print("\n" + "="*80)
     print("TOP 2027 STRATEGIC HOLDS")
-    print("="*60)
-    print(df[['Ticker','Prob','Confidence']].head(top_n).to_string(index=False))
+    print("="*80)
+    print(df[['Ticker','Name','Prob','Confidence']].head(top_n).to_string(index=False))
 
-    print("\n" + "="*60)
+    print("\n" + "="*80)
     print("AVOID / UNDERWEIGHT")
-    print("="*60)
-    print(df[['Ticker','Prob','Confidence']].tail(avoid_n).to_string(index=False))
+    print("="*80)
+    print(df[['Ticker','Name','Prob','Confidence']].tail(avoid_n).to_string(index=False))
 
     # Optional CSV output
-    df[['Ticker','Prob','Confidence']].to_csv('macro_2027_ranking_fast.csv', index=False)
-    print("\n✅ Ranking CSV saved → macro_2027_ranking_fast.csv")
+    df[['Ticker','Name','Prob','Confidence']].to_csv('macro_2027_ranking_fast_with_names.csv', index=False)
+    print("\n✅ Ranking CSV saved → macro_2027_ranking_fast_with_names.csv")
 
 
 if __name__ == "__main__":
