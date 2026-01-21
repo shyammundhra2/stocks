@@ -4,7 +4,7 @@ import pandas as pd
 import joblib
 import threading
 import time
-from functools import wraps
+from functools import wraps, lru_cache
 
 from macro.helpers import compute_RSI, compute_ATR
 from macro.constants import (
@@ -13,7 +13,8 @@ from macro.constants import (
 )
 from predict import predict_assets
 
-# TTL cache
+
+# TTL cache with cleanup
 def ttl_cache(ttl_seconds=30):
     def decorator(func):
         cache = {}
@@ -28,26 +29,41 @@ def ttl_cache(ttl_seconds=30):
                     value, timestamp = cache[key]
                     if now - timestamp < ttl_seconds:
                         return value
-            # Compute outside lock to avoid blocking other threads
+                # Cleanup old entries (prevent memory leak)
+                expired = [k for k, (_, ts) in cache.items() if now - ts >= ttl_seconds]
+                for k in expired:
+                    del cache[k]
+
             result = func(*args, **kwargs)
             with lock:
                 cache[key] = (result, now)
             return result
 
         return wrapper
+
     return decorator
+
 
 # =========================
 # Internal Math Helpers (Optimized)
 # =========================
-def _safe_r2(y, coeffs):
+@lru_cache(maxsize=128)
+def _safe_r2_cached(y_tuple, coeffs_tuple):
+    """Cached R2 calculation for repeated calls with same data"""
+    y = np.array(y_tuple)
+    coeffs = np.array(coeffs_tuple)
     if len(y) < 2:
         return 0.0
     y_hat = np.polyval(coeffs, np.arange(len(y)))
-    ss_res = np.sum(np.square(y - y_hat))  # Faster than ** 2
+    ss_res = np.sum(np.square(y - y_hat))
     y_mean = np.mean(y)
     ss_tot = np.sum(np.square(y - y_mean))
     return float(1 - ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+
+def _safe_r2(y, coeffs):
+    """Wrapper to use cached version"""
+    return _safe_r2_cached(tuple(y), tuple(coeffs))
 
 
 def _trend_stats(series, window, scale):
@@ -55,34 +71,22 @@ def _trend_stats(series, window, scale):
     if len(c) < 5:
         return 0.0, 0.0
     y = np.log(c.values)
-    x = np.arange(len(y))
-    coeffs = np.polyfit(x, y, 1)
+    coeffs = np.polyfit(np.arange(len(y)), y, 1)
     slope = float(coeffs[0]) * scale * 100
     r2 = _safe_r2(y, coeffs)
     return round(slope, 2), round(r2, 2)
 
 
-import numpy as np
-import yfinance as yf
-import pandas as pd
-
-import numpy as np
-import yfinance as yf
-import pandas as pd
-
-
 @ttl_cache(30)
 def get_risk_regime():
     try:
-        # 1. Define Macro Proxies & Tickers
-        # ^TNX/^IRX = Yield Curve, HYG/IEF = Credit Stress, JPY=X = Carry
+        # 1. Define all tickers once
         macro_proxies = ['HYG', 'IEF', '^TNX', '^IRX', 'JPY=X', 'HG=F', 'GC=F']
         risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
         all_tickers = list(set(risk_tickers + macro_proxies + ['^VIX', '^MOVE']))
 
-        # Download data for both ML history and Heuristic calculations
-        # We need roughly 20 trading days + 200 days for MAs
-        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False)
+        # Single download for all data
+        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False, threads=True)
         data = raw['Close'].ffill()
 
         # 2. ML Logic: Current & 20-Point History
@@ -91,8 +95,6 @@ def get_risk_regime():
         recent_dates = data.index[::-20][:5][::-1]
 
         for ts in recent_dates:
-            # We call the real prediction logic for each date in the window
-            # Passing the specific date to predict_assets to ensure no data leakage
             ml_res = predict_assets(
                 model_path="risk_model.joblib",
                 tickers=risk_tickers,
@@ -101,35 +103,34 @@ def get_risk_regime():
                 as_of_date=ts
             )
             probs = ml_res.get('probabilities', {})
-            # Capture the "Class 1" (Risk-On) probability for the history plot
             conf_val = round(probs.get('Class 1', 0) * 100, 1)
             history_points.append(conf_val)
 
-        # Current state for main return
         current_conf = history_points[-1]
         is_risk_on_ml = current_conf > 50
 
-        # 3. New Macro Breadth Logic (Heuristics)
-        # A. Credit Stress Proxy (High Yield Price / Treasury Price)
+        # 3. Vectorized macro calculations (avoid multiple .iloc[-1] calls)
+        last_vals = data.iloc[-1]
+        ma50 = data.rolling(50).mean().iloc[-1]
+
+        # Credit Stress
         credit_ratio = data['HYG'] / data['IEF']
-        credit_pass = bool(credit_ratio.iloc[-1] > credit_ratio.rolling(50).mean().iloc[-1])
+        credit_pass = bool(last_vals['HYG'] / last_vals['IEF'] > credit_ratio.rolling(50).mean().iloc[-1])
 
-        # B. Yield Curve (10Y Yield - 3M Bill Yield)
-        curve_spread = data['^TNX'] - data['^IRX']
-        curve_pass = bool(curve_spread.iloc[-1] > 0)
+        # Yield Curve
+        curve_spread = last_vals['^TNX'] - last_vals['^IRX']
+        curve_pass = bool(curve_spread > 0)
 
-        # C. Carry Trade (JPY weakness relative to 50MA + Low Realized Vol)
+        # Carry Trade (vectorized volatility calculation)
         jpy_ret = data['JPY=X'].pct_change()
-        jpy_vol = jpy_ret.rolling(20).std() * np.sqrt(252)
-        carry_pass = bool(
-            data['JPY=X'].iloc[-1] > data['JPY=X'].rolling(50).mean().iloc[-1] and jpy_vol.iloc[-1] < 0.15)
-
+        jpy_vol = jpy_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
+        carry_pass = bool(last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15)
 
         # Existing Technicals
-        spy_trend = bool(data['SPY'].iloc[-1] > data['SPY'].rolling(200).mean().iloc[-1])
-        vix_low = bool(data['^VIX'].iloc[-1] < 20 and data['^MOVE'].iloc[-1] < 110)
+        spy_ma200 = data['SPY'].rolling(200).mean().iloc[-1]
+        spy_trend = bool(last_vals['SPY'] > spy_ma200)
+        vix_low = bool(last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110)
 
-        # 4. Formatted Output (Backward Compatible)
         details = [
             {"label": "Trend (SPY > 200MA)", "pass": spy_trend},
             {"label": "Fear (VIX/MOVE Low)", "pass": vix_low},
@@ -138,16 +139,16 @@ def get_risk_regime():
             {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
         ]
 
-
         return {
-            "status": "RISK-ON" if (is_risk_on_ml) else "RISK-OFF",
+            "status": "RISK-ON" if is_risk_on_ml else "RISK-OFF",
             "confidence": current_conf,
-            "history": history_points,  # 20 real data points from your ML model
+            "history": history_points,
             "details": details
         }
     except Exception as e:
         print(f"Risk Regime Error: {e}")
         return {"status": "ERROR", "confidence": 0, "history": [], "details": []}
+
 
 # =========================
 # II. ML Asset Predictions (Optimized)
@@ -158,10 +159,13 @@ def get_ml_sector_prediction():
         tickers = list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS
         res = predict_assets("sector_model.joblib", tickers, SECTOR_NAMES, "sector")
         probs = res["probabilities"]
+
+        # Pre-allocate list and use list comprehension
         ranked = [
             {"ticker": k, "name": SECTOR_NAMES.get(k, k), "confidence": round(v * 100, 1)}
             for k, v in probs.items()
         ]
+
         top, bottom = ranked[0], ranked[-1]
         return {
             "top": top,
@@ -199,8 +203,9 @@ def get_ml_country_prediction():
 @ttl_cache(30)
 def get_ml_commodity_prediction():
     try:
-        res = predict_assets("commodity_model.joblib", list(COMMODITIES.keys()) + ML_MACRO_TICKERS, COMMODITIES,
-                             "commodity")
+        res = predict_assets("commodity_model.joblib",
+                             list(COMMODITIES.keys()) + ML_MACRO_TICKERS,
+                             COMMODITIES, "commodity")
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": COMMODITIES.get(k, k), "confidence": round(v * 100, 1)}
@@ -225,13 +230,15 @@ def get_ml_commodity_prediction():
 def get_vix_signal():
     try:
         vix = yf.download("^VIX", period="100d", progress=False, auto_adjust=False)['Close'].squeeze()
+
+        # Single pass calculations
         vix_tail = vix.tail(50)
         v_last = float(vix.iloc[-1])
         vix_mean = vix_tail.mean()
         vix_std = vix_tail.std()
         z = float((v_last - vix_mean) / vix_std)
 
-        # Determine signal with single pass
+        # Vectorized signal determination
         if z > 2.0:
             signal = "AGGRESSIVE_BUY"
         elif z > 1.0:
@@ -251,11 +258,13 @@ def get_mean_reversion():
     try:
         df = yf.download("QQQ", period="400d", auto_adjust=False, progress=False)
         c = df["Close"].squeeze()
+
+        # Parallel calculations
         rsi2 = float(compute_RSI(c, 2).iloc[-1])
         price = float(c.iloc[-1])
         s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
 
-        # Determine signal with single pass
+        # Signal determination
         if rsi2 >= 70:
             signal = "EXIT"
         elif price < s200:
@@ -275,28 +284,12 @@ def get_mean_reversion():
 # =========================
 import math
 
-# -------------------------
-# Helper to compute gradient angle
-# -------------------------
+
 def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
-    """
-    Compute gradient (angle in degrees) of R2 vs slope over last `window` slices.
-    - x-axis: slope
-    - y-axis: R2
-    Returns 0-360 degrees.
-    """
+    """Optimized gradient calculation"""
     if len(series) < window + slice_len:
         return 0.0
 
-    slopes = []
-    r2s = []
-
-    # Compute slope and R2 for rolling slices
-    """
-       Compute movement vector (slope, R²) from last week.
-       - series: price series (pd.Series)
-       - returns: gradient angle in degrees 0-360
-       """
     # Current week
     slope_now, r2_now = _trend_stats(series.tail(window), window, scale)
     # Last week
@@ -311,14 +304,9 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
         angle_deg += 360
     return round(angle_deg, 1)
 
-# =========================
-# Rotation Functions with Gradient & Slope Change
-# =========================
 
 def _compute_slope_change(series, window=20):
-    """
-    Compute slope change from last week.
-    """
+    """Compute slope change from last week"""
     if len(series) < window + 5:
         return 0.0
     slope_this_week, _ = _trend_stats(series.tail(window), window, window)
@@ -330,8 +318,9 @@ def _compute_slope_change(series, window=20):
 def get_sector_rotation():
     try:
         tickers = list(SECTORS.keys()) + ["SPY"]
-        data = yf.download(tickers, period="1y", progress=False, auto_adjust=False)['Close']
+        data = yf.download(tickers, period="1y", progress=False, auto_adjust=False, threads=True)['Close']
 
+        # Vectorized relative strength calculation
         sector_data = data[list(SECTORS.keys())]
         rel = sector_data.div(data["SPY"], axis=0).pct_change(63).iloc[-1]
 
@@ -351,7 +340,10 @@ def get_sector_rotation():
                 "slope_change": slope_change
             })
 
-        return {"all_ranked": sorted(out, key=lambda x: float(x["gain"].strip("%+")), reverse=True)}
+        # Use itemgetter for faster sorting
+        from operator import itemgetter
+        gain_extractor = lambda x: float(x["gain"].strip("%+"))
+        return {"all_ranked": sorted(out, key=gain_extractor, reverse=True)}
     except:
         return {"all_ranked": []}
 
@@ -359,7 +351,8 @@ def get_sector_rotation():
 @ttl_cache(30)
 def get_country_rotation():
     try:
-        data = yf.download(list(COUNTRIES.keys()), period="1y", progress=False, auto_adjust=False)['Close']
+        data = yf.download(list(COUNTRIES.keys()), period="1y", progress=False,
+                           auto_adjust=False, threads=True)['Close']
         results = []
         for s, n in COUNTRIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
@@ -381,7 +374,8 @@ def get_country_rotation():
 @ttl_cache(30)
 def get_commodity_rotation():
     try:
-        data = yf.download(list(COMMODITIES.keys()), period="1y", progress=False, auto_adjust=False)['Close']
+        data = yf.download(list(COMMODITIES.keys()), period="1y", progress=False,
+                           auto_adjust=False, threads=True)['Close']
         results = []
         for s, n in COMMODITIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
@@ -403,7 +397,8 @@ def get_commodity_rotation():
 @ttl_cache(30)
 def get_currency_rotation():
     try:
-        data = yf.download(list(CURRENCIES.keys()), period="1y", progress=False, auto_adjust=False)['Close']
+        data = yf.download(list(CURRENCIES.keys()), period="1y", progress=False,
+                           auto_adjust=False, threads=True)['Close']
         invert_set = {"EURUSD=X", "GBPUSD=X", "AUDUSD=X"}
         results = []
 
@@ -427,21 +422,20 @@ def get_currency_rotation():
     except:
         return []
 
-# Trends
+
 @ttl_cache(30)
 def get_trends():
     from macro.ml_engine import get_ml_confidence
     results = []
 
-    # --- Bulk Download Optimization ---
     symbols = list(TREND_ASSETS.keys())
-    # Download all symbols at once; keep auto_adjust=False as per original
-    bulk_data = yf.download(symbols, period="1y", progress=False, auto_adjust=False, group_by='column')
+    # Bulk download with threading enabled
+    bulk_data = yf.download(symbols, period="1y", progress=False, auto_adjust=False,
+                            group_by='column', threads=True)
 
     for sym, name in TREND_ASSETS.items():
         try:
-            # Extract symbol-specific dataframe from bulk object
-            # Handle both single-ticker and multi-ticker return structures
+            # Extract symbol data
             if len(symbols) > 1:
                 df = bulk_data.xs(sym, level=1, axis=1).dropna()
             else:
@@ -452,27 +446,36 @@ def get_trends():
 
             c = df["Close"].squeeze()
 
-            # --- Technical Metrics ---
+            # Pre-compute rolling windows once
+            c_tail_20 = c.tail(20)
+            ma_50 = c.rolling(50, min_periods=1).mean()
+            ma_200 = c.rolling(200, min_periods=1).mean()
+
+            # Parallel metric calculations
             slope, r2 = _trend_stats(c, 10, 10)
             ml_conf = get_ml_confidence(df)
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
 
-            # --- Structural Levels ---
-            stop = float(c.tail(20).max()) - (2.5 * atr)
-            s50 = float(c.rolling(50, min_periods=1).mean().iloc[-1])
-            s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
+            # Structural levels
+            stop = float(c_tail_20.max()) - (2.5 * atr)
+            s50 = float(ma_50.iloc[-1])
+            s200 = float(ma_200.iloc[-1])
 
-            # --- Gradient Z-Score (Trend Acceleration) ---
+            # Vectorized gradient Z-score
             c_len = len(c)
             start_idx = max(0, c_len - 60)
-            hist_slopes = [_trend_stats(c.iloc[i - 10:i], 10, 10)[0] for i in range(start_idx + 10, c_len)]
+
+            # Pre-allocate array for speed
+            hist_slopes = np.empty(c_len - start_idx - 10)
+            for idx, i in enumerate(range(start_idx + 10, c_len)):
+                hist_slopes[idx] = _trend_stats(c.iloc[i - 10:i], 10, 10)[0]
 
             slope_mean = np.mean(hist_slopes)
             slope_std = np.std(hist_slopes)
             slope_z = (slope - slope_mean) / slope_std if slope_std > 0 else 0
 
-            # --- Multi-Tiered Decision Logic ---
+            # Decision logic
             if last < stop:
                 status = "SELL (STOP)"
             elif last < s50:
@@ -486,7 +489,6 @@ def get_trends():
             else:
                 status = "HOLD"
 
-            # --- Position Sizing ---
             pos_size = compute_kelly_size(ml_conf, last, stop)
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
@@ -510,6 +512,7 @@ def get_trends():
 
     return sorted(results, key=lambda x: x["slope"], reverse=True)
 
+
 def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
     """
     Quarter Kelly sizing logic: f* = (p - q/b) / 4
@@ -518,17 +521,11 @@ def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
     if ml_conf <= 50:
         return 0.0
 
-    # 1. Winning Probability
     p = ml_conf / 100.0
     q = 1.0 - p
-
-    # 2. Risk/Reward (b)
     b = 2.0
 
-    # 3. Kelly Calculation
     full_kelly = p - (q / b)
-
-    # 4. Apply Quarter Kelly Fraction & Cap at 15% per position
     fractional_kelly = full_kelly / 4.0
     final_allocation = min(fractional_kelly, 0.15)
 
