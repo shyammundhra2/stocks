@@ -31,6 +31,44 @@ def get_models():
 
 
 # ----------------------
+# Use predict_trends for batch processing
+# ----------------------
+def get_ml_predictions_batch(tickers, friendly_names, use_cache=True):
+    """
+    Batch predict using predict_trends from predict.py.
+    This is more efficient than calling get_ml_confidence repeatedly.
+
+    Args:
+        tickers: List of ticker symbols
+        friendly_names: Dict mapping tickers to names
+        use_cache: Whether to use shared data cache
+
+    Returns:
+        Dict mapping ticker to blended confidence score
+    """
+    try:
+        from predict import predict_trends
+
+        result = predict_trends(
+            MODEL_PATH,
+            tickers,
+            friendly_names,
+            as_of_date=None,
+            use_cache=use_cache
+        )
+
+        # Extract just the blended scores
+        predictions = result.get('predictions', {})
+        return {
+            ticker: data.get('blended', 50.0)
+            for ticker, data in predictions.items()
+        }
+    except Exception as e:
+        print(f"Error in batch predictions: {e}")
+        return {friendly_names.get(t, t): 50.0 for t in tickers}
+
+
+# ----------------------
 # Feature Engineering (Optimized)
 # ----------------------
 def _compute_features_fast(df: pd.DataFrame):

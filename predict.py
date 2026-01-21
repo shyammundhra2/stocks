@@ -2,9 +2,15 @@ import yfinance as yf
 import pandas as pd
 import joblib
 import argparse
+import warnings
 from datetime import timedelta, datetime
 from functools import lru_cache
-from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS
+from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS, TREND_ASSETS
+from macro.helpers import compute_RSI, compute_ATR
+
+# Suppress sklearn warnings about feature names
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+warnings.filterwarnings('ignore', category=ResourceWarning)
 
 # ----------------- Shared Data Cache -----------------
 _PREDICT_CACHE = {}
@@ -45,14 +51,15 @@ def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
             for k in expired:
                 del _PREDICT_CACHE[k]
 
-    # Download outside lock
-    raw_data = yf.download(tickers, start=start_date, end=end_date, progress=False, threads=True)
-    data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
+    # Download outside lock - use auto_adjust=False and group_by='column'
+    raw_data = yf.download(tickers, start=start_date, end=end_date, progress=False,
+                           auto_adjust=False, group_by='column')
 
+    # Return raw data with MultiIndex intact
     with lock:
-        _PREDICT_CACHE[cache_key] = (data, now)
+        _PREDICT_CACHE[cache_key] = (raw_data, now)
 
-    return data
+    return raw_data
 
 
 # ----------------- Helper Functions -----------------
@@ -141,6 +148,240 @@ def compute_features(data, model_type):
     return X
 
 
+def compute_trend_features(df, model_type='trend'):
+    """
+    Compute features for trend prediction models.
+    Uses the same logic as ml_engine.py for consistency.
+    """
+    if len(df) < 200:
+        return pd.DataFrame()
+
+    close = df['Close'].squeeze()
+
+    # Pre-compute rolling means
+    rolling_50 = close.rolling(50, min_periods=1).mean()
+    rolling_200 = close.rolling(200, min_periods=1).mean()
+
+    # Get last values
+    last_close = close.iloc[-1]
+    s50 = rolling_50.iloc[-1]
+    s200 = rolling_200.iloc[-1]
+
+    # Compute indicators
+    rsi = compute_RSI(close, 14).iloc[-1]
+    atr = compute_ATR(df, 14).iloc[-1]
+
+    # Build feature dataframe
+    X = pd.DataFrame(index=[df.index[-1]])
+    X['RSI14'] = rsi
+    X['SMA50_dist'] = (last_close - s50) / s50
+    X['SMA200_dist'] = (last_close - s200) / s200
+
+    return X
+
+
+def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cache=True):
+    """
+    Predict trend confidence for multiple assets using dual model approach.
+
+    Args:
+        model_path: Path to the trend model file (trend_model.joblib)
+        tickers: List of ticker symbols to analyze
+        friendly_names: Dict mapping tickers to friendly names
+        as_of_date: Date to predict for (None = today)
+        use_cache: Whether to use shared data cache
+
+    Returns:
+        Dict with predictions for each asset
+    """
+    if as_of_date is None:
+        as_of_date = pd.Timestamp.today()
+    else:
+        as_of_date = pd.Timestamp(as_of_date)
+
+    # Load trend model bundle (cached)
+    try:
+        bundle = _get_model_bundle(model_path)
+        m_fast = bundle.get('model_fast', None)
+        m_slow = bundle.get('model_slow', None)
+        scaler = bundle.get('scaler', None)
+        features = bundle.get('features', None)
+
+        if not all([m_fast, m_slow, scaler, features]):
+            return {
+                'date': as_of_date.strftime('%Y-%m-%d'),
+                'predictions': {
+                    friendly_names.get(t, t): {'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'No Model'} for t
+                    in tickers}
+            }
+    except FileNotFoundError:
+        return {
+            'date': as_of_date.strftime('%Y-%m-%d'),
+            'predictions': {
+                friendly_names.get(t, t): {'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'No Model'} for t in
+                tickers}
+        }
+
+    # Determine date range
+    max_rolling = 200
+    buffer_days = 10
+    start_date = as_of_date - pd.Timedelta(days=int(max_rolling * 1.5 + buffer_days))
+    fetch_end = as_of_date + timedelta(days=1)
+
+    # Download data - use cache if enabled
+    if use_cache:
+        raw_data = _get_shared_predict_data(tickers, start_date, fetch_end)
+    else:
+        raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False, auto_adjust=False,
+                               group_by='column')
+
+    # Handle MultiIndex properly
+    if isinstance(raw_data.columns, pd.MultiIndex):
+        # Multi-ticker download - columns are (metric, ticker)
+        data = raw_data
+    else:
+        # Single ticker or already processed - wrap it
+        if len(tickers) == 1:
+            # Single ticker case
+            data = raw_data
+        else:
+            data = raw_data
+
+    # Process each ticker
+    predictions = {}
+
+    for ticker in tickers:
+        try:
+            # Extract ticker data based on structure
+            if isinstance(data.columns, pd.MultiIndex):
+                # MultiIndex: (Price, Ticker) format
+                if 'Close' in data.columns.get_level_values(0):
+                    # Standard yfinance format
+                    try:
+                        ticker_data = pd.DataFrame({
+                            'Close': data['Close'][ticker],
+                            'High': data['High'][ticker] if 'High' in data.columns.get_level_values(0) else
+                            data['Close'][ticker],
+                            'Low': data['Low'][ticker] if 'Low' in data.columns.get_level_values(0) else data['Close'][
+                                ticker],
+                            'Volume': data['Volume'][ticker] if 'Volume' in data.columns.get_level_values(
+                                0) else pd.Series(0, index=data.index)
+                        }).dropna()
+                    except KeyError:
+                        # Ticker not found in data
+                        predictions[friendly_names.get(ticker, ticker)] = {
+                            'fast': 50.0,
+                            'slow': 50.0,
+                            'blended': 50.0,
+                            'regime': 'No Data'
+                        }
+                        continue
+                else:
+                    # Alternative format: extract ticker slice
+                    try:
+                        ticker_data = data.xs(ticker, level=1, axis=1).dropna()
+                    except KeyError:
+                        predictions[friendly_names.get(ticker, ticker)] = {
+                            'fast': 50.0,
+                            'slow': 50.0,
+                            'blended': 50.0,
+                            'regime': 'No Data'
+                        }
+                        continue
+            else:
+                # Non-MultiIndex (single ticker)
+                if len(tickers) == 1:
+                    ticker_data = data
+                else:
+                    # Multi-ticker but no MultiIndex (shouldn't happen)
+                    predictions[friendly_names.get(ticker, ticker)] = {
+                        'fast': 50.0,
+                        'slow': 50.0,
+                        'blended': 50.0,
+                        'regime': 'Data Error'
+                    }
+                    continue
+
+            if len(ticker_data) < 200:
+                predictions[friendly_names.get(ticker, ticker)] = {
+                    'fast': 50.0,
+                    'slow': 50.0,
+                    'blended': 50.0,
+                    'regime': 'Insufficient Data'
+                }
+                continue
+
+            # Compute features
+            X = compute_trend_features(ticker_data, 'trend')
+
+            if X.empty:
+                predictions[friendly_names.get(ticker, ticker)] = {
+                    'fast': 50.0,
+                    'slow': 50.0,
+                    'blended': 50.0,
+                    'regime': 'Error'
+                }
+                continue
+
+            # Fill missing features
+            X_live_dict = {f: X[f].iloc[0] if f in X.columns else 0.0 for f in features}
+            X_live = pd.DataFrame([X_live_dict], columns=features)  # Ensure proper column names
+
+            # Scale and predict
+            X_scaled = scaler.transform(X_live)
+
+            fast_idx = list(m_fast.classes_).index(1)
+            slow_idx = list(m_slow.classes_).index(1)
+
+            p_fast = m_fast.predict_proba(X_scaled)[0][fast_idx] * 100
+            p_slow = m_slow.predict_proba(X_scaled)[0][slow_idx] * 100
+
+            # Volatility adjustment
+            close = ticker_data['Close'].squeeze()
+            atr = compute_ATR(ticker_data, 14).iloc[-1]
+            last_close = close.iloc[-1]
+            vol_adj = 1 - min(atr / last_close, 0.1)
+
+            f_conf = round(p_fast * vol_adj, 1)
+            s_conf = round(p_slow * vol_adj, 1)
+
+            # Blended score: 70% Slow, 30% Fast
+            blended = round(s_conf * 0.7 + f_conf * 0.3, 1)
+
+            # Determine regime
+            if f_conf > 60 and s_conf > 60:
+                regime = "Aggressive Bull" if f_conf > s_conf else "Structural Bull"
+            elif f_conf < 40 and s_conf < 40:
+                regime = "Capitulation/Bear"
+            elif f_conf > 60 and s_conf < 45:
+                regime = "Dead Cat Bounce"
+            else:
+                regime = "Neutral/Chop"
+
+            predictions[friendly_names.get(ticker, ticker)] = {
+                'fast': f_conf,
+                'slow': s_conf,
+                'blended': blended,
+                'regime': regime
+            }
+
+        except Exception as e:
+            print(f"Error processing {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
+            predictions[friendly_names.get(ticker, ticker)] = {
+                'fast': 50.0,
+                'slow': 50.0,
+                'blended': 50.0,
+                'regime': 'Error'
+            }
+
+    return {
+        'date': as_of_date.strftime('%Y-%m-%d'),
+        'predictions': dict(sorted(predictions.items(), key=lambda x: x[1]['blended'], reverse=True))
+    }
+
+
 def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, use_cache=True):
     """
     Fetch data, compute features, and run prediction bundle.
@@ -172,10 +413,13 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
 
     # Download data - use cache if enabled
     if use_cache:
-        data = _get_shared_predict_data(tickers, start_date, fetch_end)
+        raw_data = _get_shared_predict_data(tickers, start_date, fetch_end)
     else:
-        raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False, threads=True)
-        data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
+        raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False,
+                               auto_adjust=False, group_by='column')
+
+    # Extract Close prices for standard predict_assets
+    data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
 
     X = compute_features(data, model_type)
 
@@ -184,6 +428,7 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         if feat not in X.columns:
             X[feat] = 0
 
+    # Create properly formatted DataFrame with explicit column names
     X_scaled = scaler.transform(X.tail(1)[feature_names])
     proba = model.predict_proba(X_scaled)[0]
 
@@ -202,12 +447,21 @@ def print_prediction(title, result):
     """Pretty-print every asset and its associated probability"""
     print(f"\n📊 {title.upper()} FULL PROBABILITIES ({result['date']})")
     print("-" * 60)
-    for name, p in result['probabilities'].items():
-        if "Class" in name:
-            label = "Risk-On (Positive Outcome)" if "1" in name else "Risk-Off (Negative Outcome)"
-            print(f"  {label:<35} {round(float(p) * 100, 2):>6}%")
-        else:
-            print(f"  {name:<35} {round(float(p) * 100, 2):>6}%")
+
+    # Check if this is a trend prediction result
+    if 'predictions' in result:
+        for name, data in result['predictions'].items():
+            blended = data.get('blended', 0)
+            regime = data.get('regime', 'N/A')
+            print(f"  {name:<25} {blended:>6.1f}%  [{regime}]")
+    else:
+        # Standard probability output
+        for name, p in result['probabilities'].items():
+            if "Class" in name:
+                label = "Risk-On (Positive Outcome)" if "1" in name else "Risk-Off (Negative Outcome)"
+                print(f"  {label:<35} {round(float(p) * 100, 2):>6}%")
+            else:
+                print(f"  {name:<35} {round(float(p) * 100, 2):>6}%")
 
 
 # ----------------- Main Execution -----------------
@@ -238,3 +492,21 @@ if __name__ == "__main__":
             print(f"\n⚠️ File '{path}' not found. Skipping {title}.")
         except Exception as e:
             print(f"\n❌ Error processing {title}: {e}")
+
+    # Add trend predictions
+    print("\n" + "=" * 60)
+    print("TREND ANALYSIS")
+    print("=" * 60)
+    try:
+        trend_res = predict_trends(
+            "trend_model.joblib",
+            list(TREND_ASSETS.keys()),
+            TREND_ASSETS,
+            args.date,
+            use_cache=use_cache
+        )
+        print_prediction("Trend Predictions", trend_res)
+    except FileNotFoundError:
+        print(f"\n⚠️ File 'trend_model.joblib' not found. Skipping trend predictions.")
+    except Exception as e:
+        print(f"\n❌ Error processing trend predictions: {e}")
