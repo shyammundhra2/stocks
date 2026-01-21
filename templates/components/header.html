@@ -1,30 +1,44 @@
-<div class="flex flex-col md:flex-row justify-between items-center card mb-8">
+<div class="flex flex-col md:flex-row justify-between items-center bg-gray-900 p-8 rounded-xl border border-gray-800 mb-8 shadow-2xl">
     <div class="flex-1">
-        <h1 class="text-4xl font-black uppercase">
+        <h1 class="text-4xl font-black uppercase text-white">
             Macro<span class="text-blue-500">System</span>
         </h1>
-        <div class="flex flex-wrap gap-4 mt-3">
+        <div class="flex flex-wrap gap-4 mt-4">
             {% for m in regime.details %}
-            <div class="badge">
-                <div class="badge-dot {{ 'green' if m.pass else 'red' }}"></div>
-                <span class="label-small">{{ m.label }}</span>
+            <div class="flex items-center space-x-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                <div class="w-2 h-2 rounded-full {{ 'bg-green-500 shadow-[0_0_8px_#22c55e]' if m.pass else 'bg-red-500 shadow-[0_0_8px_#ef4444]' }}"></div>
+                <span class="text-[10px] uppercase font-bold tracking-wider text-gray-400">{{ m.label }}</span>
             </div>
             {% endfor %}
         </div>
     </div>
 
-    <div class="flex-1 flex flex-col items-center px-8">
-        <p class="label-small uppercase tracking-widest mb-1">ML Confidence</p>
-        <div class="w-full max-w-[150px] bg-gray-800 rounded-full h-2 mb-2">
-            <div class="h-2 rounded-full {{ 'bg-green-500' if regime.status == 'RISK-ON' else 'bg-red-500' }}" 
+    <div class="flex-1 flex flex-col items-center px-8 my-6 md:my-0">
+        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">ML Confidence History</p>
+
+        <svg class="w-full max-w-[160px] h-12 overflow-visible mb-3" viewBox="0 0 100 40">
+            <defs>
+                <linearGradient id="lineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stop-color="{{ '#22c55e' if regime.status == 'RISK-ON' else '#ef4444' }}" stop-opacity="0.4" />
+                    <stop offset="100%" stop-color="transparent" />
+                </linearGradient>
+            </defs>
+            <polyline fill="url(#lineGrad)" points="0,40 {% for p in regime.history %}{{ loop.index0 * 25 }},{{ 40 - (p/100 * 40) }} {% endfor %} 100,40" />
+            <polyline fill="none" stroke="{{ '#22c55e' if regime.status == 'RISK-ON' else '#ef4444' }}" stroke-width="2.5" stroke-linejoin="round"
+                points="{% for p in regime.history %}{{ loop.index0 * 25 }},{{ 40 - (p/100 * 40) }} {% endfor %}" />
+            <circle cx="100" cy="{{ 40 - (regime.confidence/100 * 40) }}" r="3" fill="white" />
+        </svg>
+
+        <div class="w-full max-w-[150px] bg-gray-800 rounded-full h-1.5 mb-2">
+            <div class="h-1.5 rounded-full {{ 'bg-green-500' if regime.status == 'RISK-ON' else 'bg-red-500' }}"
                  style="width: {{ regime.confidence }}%"></div>
         </div>
-        <div class="text-2xl font-bold">{{ regime.confidence }}%</div>
+        <div class="text-2xl font-black text-white">{{ regime.confidence }}%</div>
     </div>
 
     <div class="flex-1 text-right">
-        <p class="label-small uppercase tracking-widest">Market Regime</p>
-        <div class="text-6xl font-black italic {{ 'status-green' if regime.status == 'RISK-ON' else 'status-red' }}">
+        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Market Regime</p>
+        <div class="text-6xl font-black italic tracking-tighter {{ 'text-green-500' if regime.status == 'RISK-ON' else 'text-red-500' }}">
             {{ regime.status }}
         </div>
     </div>
