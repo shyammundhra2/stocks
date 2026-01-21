@@ -5,18 +5,19 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 import joblib
 
+from macro.constants import  ML_MACRO_TICKERS
+
+
 # ----------------- 1. Configuration -----------------
 # Sector tickers (ETFs)
 SECTOR_TICKERS = ['VDE', 'XLB', 'VIS', 'XLY', 'XLF', 'XLC', 'VGT', 'XLV', 'XLP', 'XLU', 'XLRE']
 
-# Macro context tickers used as "Features"
-MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD'] 
 
 def train_quarterly_model():
     print("🚀 Initializing Institutional-Grade Quarterly Model Training...")
     
     # 2. Data Acquisition (25 Years of History)
-    tickers = SECTOR_TICKERS + MACRO_TICKERS
+    tickers = SECTOR_TICKERS + list(ML_MACRO_TICKERS)
     raw_data = yf.download(tickers, start="2000-01-01")['Close'].ffill()
 
     # 3. Feature Engineering (Matches Live Dashboard Names)

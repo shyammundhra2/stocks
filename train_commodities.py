@@ -9,8 +9,7 @@ import joblib
 # from macro.constants import COMMODITIES, ML_MACRO_TICKERS
 
 # Mocking constants for the sake of the complete code example
-COMMODITIES = {'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 'HG=F': 'Copper'}
-ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
+from macro.constants import  ML_MACRO_TICKERS, COMMODITIES
 
 commodity_tickers = list(COMMODITIES.keys())
 macro_tickers = ML_MACRO_TICKERS
