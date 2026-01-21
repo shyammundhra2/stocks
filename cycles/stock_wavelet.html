@@ -9,67 +9,66 @@ from scipy.optimize import leastsq
 from scipy.stats import norm
 from datetime import datetime
 
-
 def run_seamless_macro_model():
     """
     Enhanced economic cycle forecasting model with seamless extrapolation.
     Uses wavelet decomposition to extract Kitchin and Kuznets cycles.
     """
-
+    
     print("Economic Cycle Analysis Starting...")
     print("=" * 60)
-
+    
     # ========================================================================
     # 1. DATA PREPARATION
     # ========================================================================
     print("\n1. Downloading S&P 500 data...")
     ticker = "^GSPC"
     df = yf.download(ticker, start="1973-01-01", progress=False)
-
+    
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-
+    
     # Monthly log returns, centered
     data = np.log(df['Close'].resample('ME').last().ffill())
     data_centered = (data - data.rolling(window=200).mean()).dropna()
-
+    
     print(f"   Data range: {data_centered.index[0].date()} to {data_centered.index[-1].date()}")
     print(f"   Total months: {len(data_centered)}")
-
+    
     # ========================================================================
     # 2. WAVELET EXTRACTION
     # ========================================================================
     print("\n2. Extracting cycles via wavelet transform...")
-
+    
     # Kitchin cycle: ~42 months (business inventory cycle)
     c_kitchin, _ = pywt.cwt(data_centered.values, np.arange(30, 60), 'cmor1.5-1.0')
     k_wave_raw = np.real(c_kitchin.mean(axis=0))
-
+    
     # Kuznets cycle: ~200 months (infrastructure investment cycle)
     c_kuznets, _ = pywt.cwt(data_centered.values, np.arange(180, 240), 'cmor1.5-1.0')
     z_wave_raw = np.real(c_kuznets.mean(axis=0))
-
+    
     print(f"   Kitchin cycle extracted (42-month)")
     print(f"   Kuznets cycle extracted (200-month)")
-
+    
     # ========================================================================
     # 3. SEAMLESS JOIN LOGIC
     # ========================================================================
     print("\n3. Preparing seamless extrapolation...")
-
+    
     # Trim last 12 months to avoid edge effects
     trim = 12
     k_hist = k_wave_raw[:-trim]
     z_hist = z_wave_raw[:-trim]
     hist_dates = data_centered.index[:-trim]
-
+    
     print(f"   Trimmed {trim} months from end (edge effects)")
     print(f"   Historical data ends: {hist_dates[-1].date()}")
-
+    
     def project_cycle(wave, freq, periods=72, fit_window=180):
         """
         Project cycle forward using sinusoidal fit.
-
+        
         Parameters:
         -----------
         wave : array
@@ -80,7 +79,7 @@ def run_seamless_macro_model():
             Number of months to forecast
         fit_window : int
             Number of months to use for fitting (default: 15 years)
-
+        
         Returns:
         --------
         projection : array
@@ -89,36 +88,36 @@ def run_seamless_macro_model():
         x = np.arange(len(wave))
         x_fit = x[-fit_window:]
         y_fit = wave[-fit_window:]
-
+        
         # Fit sinusoid to recent data
         optimize_func = lambda p: p[0] * np.sin(2 * np.pi * freq * x_fit + p[1]) - y_fit
         p_est, _ = leastsq(optimize_func, [np.std(y_fit), 0])
-
+        
         # Project forward from the last historical point
         x_proj = np.arange(len(wave), len(wave) + periods)
         projection = p_est[0] * np.sin(2 * np.pi * freq * x_proj + p_est[1])
-
+        
         return projection
-
+    
     # Generate 6-year forecasts
     forecast_months = 72
-    k_proj = project_cycle(k_hist, 1 / 42, periods=forecast_months)
-    z_proj = project_cycle(z_hist, 1 / 200, periods=forecast_months)
-
+    k_proj = project_cycle(k_hist, 1/42, periods=forecast_months)
+    z_proj = project_cycle(z_hist, 1/200, periods=forecast_months)
+    
     # Create seamless date range
     proj_dates = pd.date_range(
         start=hist_dates[-1] + pd.DateOffset(months=1),
         periods=forecast_months,
         freq='ME'
     )
-
+    
     print(f"   Forecast generated: {proj_dates[0].date()} to {proj_dates[-1].date()}")
-
+    
     # ========================================================================
     # 4. RECESSION PROBABILITY CALCULATION
     # ========================================================================
     print("\n4. Calculating recession probabilities...")
-
+    
     def calc_recession_risk(k, z):
         """
         Calculate recession probability from cycle amplitudes.
@@ -127,157 +126,157 @@ def run_seamless_macro_model():
         # Normalize cycles
         k_norm = k / np.std(k_hist)  # Use historical std for consistency
         z_norm = z / np.std(z_hist)
-
+        
         # Combined score (negative cycles = higher risk)
         score = k_norm + z_norm
-
+        
         # Transform to probability using normal CDF
         probability = 100 * norm.cdf(-score / 1.6)
-
+        
         return np.clip(probability, 0, 100)
-
+    
     hist_risk = calc_recession_risk(k_hist, z_hist)
     proj_risk = calc_recession_risk(k_proj, z_proj)
-
+    
     # Find peak risk in forecast
     peak_idx = np.argmax(proj_risk)
     peak_risk = proj_risk[peak_idx]
     peak_date = proj_dates[peak_idx]
-
+    
     print(f"   Current risk level: {proj_risk[0]:.1f}%")
     print(f"   Peak forecast risk: {peak_risk:.1f}% on {peak_date.date()}")
-
+    
     # ========================================================================
     # 5. ENHANCED VISUALIZATION
     # ========================================================================
     print("\n5. Creating visualizations...")
-
+    
     fig = plt.figure(figsize=(16, 10))
     gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.25, height_ratios=[1, 1, 1.2])
-
+    
     # Define colors
     color_kitchin = '#0d9488'
     color_kuznets = '#dc2626'
     color_risk_hist = '#374151'
     color_risk_proj = '#ef4444'
-
+    
     # -----------------------------------------------------------------------
     # Panel 1: Kitchin Cycle
     # -----------------------------------------------------------------------
     ax1 = fig.add_subplot(gs[0, :])
-
+    
     # Historical
-    ax1.plot(hist_dates, k_hist, color=color_kitchin, linewidth=2,
+    ax1.plot(hist_dates, k_hist, color=color_kitchin, linewidth=2, 
              label='Kitchin Cycle (Historical)', zorder=3)
-
+    
     # Seamless forecast - connect to last historical point
     forecast_dates_connected = pd.DatetimeIndex([hist_dates[-1]] + list(proj_dates))
     k_proj_connected = np.concatenate([[k_hist[-1]], k_proj])
-
-    ax1.plot(forecast_dates_connected, k_proj_connected,
-             color=color_kitchin, linewidth=2, linestyle='--',
+    
+    ax1.plot(forecast_dates_connected, k_proj_connected, 
+             color=color_kitchin, linewidth=2, linestyle='--', 
              label='Kitchin Forecast', alpha=0.8, zorder=3)
-
+    
     # Join point marker
-    ax1.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-',
+    ax1.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-', 
                 linewidth=1.5, label='Forecast Start', zorder=2)
-
+    
     ax1.fill_between(proj_dates, -0.05, 0.05, alpha=0.1, color='gray', zorder=1)
     ax1.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
     ax1.set_ylabel('Amplitude', fontsize=11, fontweight='bold')
-    ax1.set_title('Kitchin Cycle (42-Month Business Inventory Cycle)',
+    ax1.set_title('Kitchin Cycle (42-Month Business Inventory Cycle)', 
                   fontsize=13, fontweight='bold', pad=10)
     ax1.legend(loc='upper left', framealpha=0.9)
     ax1.grid(True, alpha=0.3)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
+    
     # -----------------------------------------------------------------------
     # Panel 2: Kuznets Cycle
     # -----------------------------------------------------------------------
     ax2 = fig.add_subplot(gs[1, :])
-
+    
     # Historical
-    ax2.plot(hist_dates, z_hist, color=color_kuznets, linewidth=2.5,
+    ax2.plot(hist_dates, z_hist, color=color_kuznets, linewidth=2.5, 
              label='Kuznets Cycle (Historical)', zorder=3)
-
+    
     # Seamless forecast
     z_proj_connected = np.concatenate([[z_hist[-1]], z_proj])
-
-    ax2.plot(forecast_dates_connected, z_proj_connected,
-             color=color_kuznets, linewidth=2.5, linestyle='--',
+    
+    ax2.plot(forecast_dates_connected, z_proj_connected, 
+             color=color_kuznets, linewidth=2.5, linestyle='--', 
              label='Kuznets Forecast', alpha=0.8, zorder=3)
-
-    ax2.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-',
+    
+    ax2.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-', 
                 linewidth=1.5, label='Forecast Start', zorder=2)
-
+    
     ax2.fill_between(proj_dates, -0.05, 0.05, alpha=0.1, color='gray', zorder=1)
     ax2.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
     ax2.set_ylabel('Amplitude', fontsize=11, fontweight='bold')
-    ax2.set_title('Kuznets Cycle (200-Month Infrastructure Investment Cycle)',
+    ax2.set_title('Kuznets Cycle (200-Month Infrastructure Investment Cycle)', 
                   fontsize=13, fontweight='bold', pad=10)
     ax2.legend(loc='upper left', framealpha=0.9)
     ax2.grid(True, alpha=0.3)
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
+    
     # -----------------------------------------------------------------------
     # Panel 3: Recession Probability
     # -----------------------------------------------------------------------
     ax3 = fig.add_subplot(gs[2, :])
-
+    
     # Historical risk
-    ax3.fill_between(hist_dates, 0, hist_risk, color=color_risk_hist,
+    ax3.fill_between(hist_dates, 0, hist_risk, color=color_risk_hist, 
                      alpha=0.3, label='Historical Risk')
-    ax3.plot(hist_dates, hist_risk, color=color_risk_hist,
+    ax3.plot(hist_dates, hist_risk, color=color_risk_hist, 
              linewidth=1.5, alpha=0.6)
-
+    
     # Seamless forecast risk
     risk_proj_connected = np.concatenate([[hist_risk[-1]], proj_risk])
-
-    ax3.fill_between(forecast_dates_connected, 0, risk_proj_connected,
+    
+    ax3.fill_between(forecast_dates_connected, 0, risk_proj_connected, 
                      color=color_risk_proj, alpha=0.25, label='Forecast Risk')
-    ax3.plot(forecast_dates_connected, risk_proj_connected,
+    ax3.plot(forecast_dates_connected, risk_proj_connected, 
              color=color_risk_proj, linewidth=2.5)
-
+    
     # Danger zones
-    ax3.axhline(80, color='#7f1d1d', linestyle='--', linewidth=2,
+    ax3.axhline(80, color='#7f1d1d', linestyle='--', linewidth=2, 
                 label='Critical Threshold (80%)', alpha=0.7)
-    ax3.axhline(50, color='#6b7280', linestyle=':', linewidth=1.5,
+    ax3.axhline(50, color='#6b7280', linestyle=':', linewidth=1.5, 
                 label='Neutral (50%)', alpha=0.5)
-
+    
     # Highlight high-risk periods in forecast
     high_risk_mask = proj_risk > 50
     if high_risk_mask.any():
         ax3.fill_between(proj_dates, 50, proj_risk, where=high_risk_mask,
-                         color='red', alpha=0.15, interpolate=True)
-
+                        color='red', alpha=0.15, interpolate=True)
+    
     # Join point
-    ax3.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-',
+    ax3.axvline(hist_dates[-1], color='black', alpha=0.3, linestyle='-', 
                 linewidth=1.5, zorder=2)
-
+    
     # Peak risk annotation
     ax3.plot(peak_date, peak_risk, 'ro', markersize=10, zorder=5)
     ax3.annotate(f'Peak Risk: {peak_risk:.1f}%\n{peak_date.strftime("%b %Y")}',
-                 xy=(peak_date, peak_risk), xytext=(20, 20),
-                 textcoords='offset points', fontsize=10, fontweight='bold',
-                 bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7),
-                 arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.3',
-                                 color='red', lw=2))
-
+                xy=(peak_date, peak_risk), xytext=(20, 20),
+                textcoords='offset points', fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7),
+                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.3',
+                              color='red', lw=2))
+    
     ax3.set_ylabel('Recession Probability (%)', fontsize=11, fontweight='bold')
     ax3.set_xlabel('Year', fontsize=11, fontweight='bold')
-    ax3.set_title('Recession Probability (Historical + 6-Year Forecast)',
+    ax3.set_title('Recession Probability (Historical + 6-Year Forecast)', 
                   fontsize=13, fontweight='bold', pad=10)
     ax3.set_ylim(0, 100)
     ax3.legend(loc='upper left', framealpha=0.9)
     ax3.grid(True, alpha=0.3)
     ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
+    
     # -----------------------------------------------------------------------
     # Overall styling
     # -----------------------------------------------------------------------
     fig.suptitle('Economic Cycle Forecast Dashboard\nWavelet-Based Recession Risk Analysis (1973-2031)',
                  fontsize=16, fontweight='bold', y=0.995)
-
+    
     # Add methodology note
     note_text = (
         'Methodology: Complex Morlet wavelet decomposition of S&P 500 monthly log returns\n'
@@ -285,15 +284,15 @@ def run_seamless_macro_model():
         'Risk Model: CDF transformation of normalized cycle amplitudes | '
         f'Last update: {hist_dates[-1].strftime("%B %Y")}'
     )
-    fig.text(0.5, 0.01, note_text, ha='center', fontsize=9,
+    fig.text(0.5, 0.01, note_text, ha='center', fontsize=9, 
              style='italic', color='#374151',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
-
+    
     plt.savefig('economic_cycle_forecast.png', dpi=300, bbox_inches='tight')
     print(f"   Chart saved as 'economic_cycle_forecast.png'")
-
+    
     plt.show()
-
+    
     # ========================================================================
     # 6. SUMMARY STATISTICS
     # ========================================================================
@@ -306,7 +305,7 @@ def run_seamless_macro_model():
     print(f"Months above 50% threshold: {(proj_risk > 50).sum()}/{len(proj_risk)}")
     print(f"Months above 80% threshold: {(proj_risk > 80).sum()}/{len(proj_risk)}")
     print("=" * 60)
-
+    
     # Risk level classification
     if proj_risk[0] >= 80:
         risk_level = "CRITICAL"
@@ -316,10 +315,10 @@ def run_seamless_macro_model():
         risk_level = "ELEVATED"
     else:
         risk_level = "LOW"
-
+    
     print(f"\nCurrent Risk Level: {risk_level}")
     print("\nAnalysis complete!\n")
-
+    
     return {
         'historical_dates': hist_dates,
         'forecast_dates': proj_dates,
