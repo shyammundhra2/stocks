@@ -452,8 +452,11 @@ def print_prediction(title, result):
     if 'predictions' in result:
         for name, data in result['predictions'].items():
             blended = data.get('blended', 0)
+            slow = data.get('slow', 0)
+            fast = data.get('fast', 0)
+
             regime = data.get('regime', 'N/A')
-            print(f"  {name:<25} {blended:>6.1f}%  [{regime}]")
+            print(f"  {name:<25} {blended:>3.1f}%  slow:{slow:>3.1f}% fast:{fast:>3.1f}% [{regime}]")
     else:
         # Standard probability output
         for name, p in result['probabilities'].items():
