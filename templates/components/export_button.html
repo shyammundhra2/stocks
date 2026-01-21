@@ -32,6 +32,20 @@ const REPORT_DATA = {{ all_data_json|safe }};
 function formatJsonAsReadableText(data) {
     if (!data) return "Error: Could not generate report";
 
+    // Helper to safely get nested values
+    const get = (obj, path, defaultVal = 'N/A') => {
+        try {
+            return path.split('.').reduce((o, p) => o?.[p], obj) ?? defaultVal;
+        } catch {
+            return defaultVal;
+        }
+    };
+
+    // Helper to safely iterate arrays
+    const forEach = (arr, callback) => {
+        if (Array.isArray(arr)) arr.forEach(callback);
+    };
+
     let text = "";
     const timestamp = new Date().toLocaleString();
 
@@ -41,93 +55,106 @@ function formatJsonAsReadableText(data) {
     text += "==========================================\n\n";
 
     // AI SECTOR ALLOCATION
-    const mlSector = data.ml_sector;
-    text += "--- [I] AI SECTOR ALLOCATION ---\n";
-    text += `REGIME: ${data.regime.status}\n`;
-    text += `TOP OVERWEIGHT:  ${mlSector.top.name} (${mlSector.top.ticker})\n`;
-    text += `TOP UNDERWEIGHT: ${mlSector.bottom.name} (${mlSector.bottom.ticker})\n`;
-    text += `TOP CONFIDENCE:  ${mlSector.top.confidence}%\n`;
-    text += `SPREAD:          ${mlSector.spread}%\n\n`;
-    text += "Sector Probability Distribution:\n";
-    mlSector.all.forEach(s => {
-        text += `  - ${s.name} (${s.ticker}): ${s.confidence}%\n`;
-    });
-    text += "\n";
+    if (data.ml_sector) {
+        text += "--- [I] AI SECTOR ALLOCATION ---\n";
+        text += `REGIME: ${get(data, 'regime.status')}\n`;
+        text += `TOP OVERWEIGHT:  ${get(data, 'ml_sector.top.name')} (${get(data, 'ml_sector.top.ticker')})\n`;
+        text += `TOP UNDERWEIGHT: ${get(data, 'ml_sector.bottom.name')} (${get(data, 'ml_sector.bottom.ticker')})\n`;
+        text += `TOP CONFIDENCE:  ${get(data, 'ml_sector.top.confidence')}%\n`;
+        text += `SPREAD:          ${get(data, 'ml_sector.spread')}%\n\n`;
+        text += "Sector Probability Distribution:\n";
+        forEach(data.ml_sector.all, s => {
+            text += `  - ${get(s, 'name')} (${get(s, 'ticker')}): ${get(s, 'confidence')}%\n`;
+        });
+        text += "\n";
+    }
 
     // AI COUNTRY ALLOCATION
-    const mlCountry = data.ml_country;
-    text += "--- [II] AI COUNTRY ALLOCATION ---\n";
-    text += `TOP OVERWEIGHT:  ${mlCountry.top.name} (${mlCountry.top.ticker})\n`;
-    text += `TOP UNDERWEIGHT: ${mlCountry.bottom.name} (${mlCountry.bottom.ticker})\n`;
-    text += `TOP CONFIDENCE:  ${mlCountry.top.confidence}%\n`;
-    text += `SPREAD:          ${mlCountry.spread}%\n\n`;
-    text += "Country Probability Distribution:\n";
-    mlCountry.all.forEach(c => {
-        text += `  - ${c.name} (${c.ticker}): ${c.confidence}%\n`;
-    });
-    text += "\n";
+    if (data.ml_country) {
+        text += "--- [II] AI COUNTRY ALLOCATION ---\n";
+        text += `TOP OVERWEIGHT:  ${get(data, 'ml_country.top.name')} (${get(data, 'ml_country.top.ticker')})\n`;
+        text += `TOP UNDERWEIGHT: ${get(data, 'ml_country.bottom.name')} (${get(data, 'ml_country.bottom.ticker')})\n`;
+        text += `TOP CONFIDENCE:  ${get(data, 'ml_country.top.confidence')}%\n`;
+        text += `SPREAD:          ${get(data, 'ml_country.spread')}%\n\n`;
+        text += "Country Probability Distribution:\n";
+        forEach(data.ml_country.all, c => {
+            text += `  - ${get(c, 'name')} (${get(c, 'ticker')}): ${get(c, 'confidence')}%\n`;
+        });
+        text += "\n";
+    }
 
     // AI COMMODITY ALLOCATION
-    const mlCommodity = data.ml_commodity;
-    text += "--- [III] AI COMMODITY ALLOCATION ---\n";
-    text += `TOP OVERWEIGHT:  ${mlCommodity.top.name} (${mlCommodity.top.ticker})\n`;
-    text += `TOP UNDERWEIGHT: ${mlCommodity.bottom.name} (${mlCommodity.bottom.ticker})\n`;
-    text += `TOP CONFIDENCE:  ${mlCommodity.top.confidence}%\n`;
-    text += `SPREAD:          ${mlCommodity.spread}%\n\n`;
-    text += "Commodity Probability Distribution:\n";
-    mlCommodity.all.forEach(c => {
-        text += `  - ${c.name} (${c.sym}): ${c.confidence}%\n`;
-    });
-    text += "\n";
+    if (data.ml_commodity) {
+        text += "--- [III] AI COMMODITY ALLOCATION ---\n";
+        text += `TOP OVERWEIGHT:  ${get(data, 'ml_commodity.top.name')} (${get(data, 'ml_commodity.top.ticker')})\n`;
+        text += `TOP UNDERWEIGHT: ${get(data, 'ml_commodity.bottom.name')} (${get(data, 'ml_commodity.bottom.ticker')})\n`;
+        text += `TOP CONFIDENCE:  ${get(data, 'ml_commodity.top.confidence')}%\n`;
+        text += `SPREAD:          ${get(data, 'ml_commodity.spread')}%\n\n`;
+        text += "Commodity Probability Distribution:\n";
+        forEach(data.ml_commodity.all, c => {
+            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): ${get(c, 'confidence')}%\n`;
+        });
+        text += "\n";
+    }
 
     // VOLATILITY & RISK REGIME
-    const regime = data.regime;
-    text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
-    regime.details.forEach(m => {
-        text += `  - ${m.label}: ${m.pass ? 'PASS' : 'FAIL'}\n`;
-    });
-    const vixMr = data.vix_mr;
-    text += `VIX Level: ${vixMr.vix} (Z: ${vixMr.z})\n`;
-    text += `VIX Signal: ${vixMr.signal.replace(/_/g, ' ')}\n\n`;
+    if (data.regime) {
+        text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
+        forEach(data.regime.details, m => {
+            text += `  - ${get(m, 'label')}: ${get(m, 'pass') === true ? 'PASS' : 'FAIL'}\n`;
+        });
+        text += `VIX Level: ${get(data, 'vix_mr.vix')} (Z: ${get(data, 'vix_mr.z')})\n`;
+        text += `VIX Signal: ${get(data, 'vix_mr.signal', '').replace(/_/g, ' ')}\n\n`;
+    }
 
     // TACTICAL MEAN REVERSION
-    const mr = data.mr;
-    text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
-    text += `Price: $${mr.price}\n`;
-    text += `RSI(2): ${mr.rsi2}\n`;
-    text += `Signal: ${mr.signal}\n\n`;
+    if (data.mr) {
+        text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
+        text += `Price: ${get(data, 'mr.price')}\n`;
+        text += `RSI(2): ${get(data, 'mr.rsi2')}\n`;
+        text += `Signal: ${get(data, 'mr.signal')}\n\n`;
+    }
 
     // SECTOR ROTATION
-    const sr = data.sr;
-    text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
-    sr.all_ranked.forEach(s => {
-        text += `  - ${s.name}: Slope ${s.slope}% | ΔSlope ${s.slope_change || '0'}% | R2 ${s.r2}\n`;
-    });
-    text += "\n";
+    if (data.sr?.all_ranked) {
+        text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
+        forEach(data.sr.all_ranked, s => {
+            text += `  - ${get(s, 'name')}: Slope ${get(s, 'slope')}% | ΔSlope ${get(s, 'slope_change', '0')}% | R2 ${get(s, 'r2')}\n`;
+        });
+        text += "\n";
+    }
 
     // GLOBAL ROTATION
     text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
-    text += "Countries:\n";
-    data.countries.forEach(c => {
-        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
-    });
-    text += "\nCommodities:\n";
-    data.commodities.forEach(c => {
-        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
-    });
-    text += "\nCurrencies vs USD:\n";
-    data.currencies.forEach(c => {
-        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
-    });
+    if (data.countries) {
+        text += "Countries:\n";
+        forEach(data.countries, c => {
+            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
+        });
+    }
+    if (data.commodities) {
+        text += "\nCommodities:\n";
+        forEach(data.commodities, c => {
+            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
+        });
+    }
+    if (data.currencies) {
+        text += "\nCurrencies vs USD:\n";
+        forEach(data.currencies, c => {
+            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
+        });
+    }
     text += "\n";
 
     // MOMENTUM TREND AUDIT
-    text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
-    data.trends.forEach(t => {
-        text += `${(t.status || '').padEnd(12)} | ${(t.name || '').padEnd(14)} (${t.sym}): `;
-        text += `$${t.price} | ML ${t.ml_conf}% | Stop ${t.stop}\n`;
-    });
-    text += "\n";
+    if (data.trends) {
+        text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
+        forEach(data.trends, t => {
+            text += `${(get(t, 'status', '') + '').padEnd(12)} | ${(get(t, 'name', '') + '').padEnd(14)} (${get(t, 'sym')}): `;
+            text += `${get(t, 'price')} | ML ${get(t, 'ml_conf')}% | Stop ${get(t, 'stop')}\n`;
+        });
+        text += "\n";
+    }
 
     text += "==========================================\n";
     text += "        END OF STRATEGY EXPORT            \n";
