@@ -45,6 +45,49 @@ def ttl_cache(ttl_seconds=30):
 
 
 # =========================
+# SHARED DATA MANAGER (BIGGEST OPTIMIZATION)
+# =========================
+@ttl_cache(30)
+def _get_shared_market_data():
+    """
+    Single bulk download for all tickers used across functions.
+    This eliminates redundant yfinance calls and is the biggest performance win.
+    """
+    # Collect all unique tickers from all functions
+    all_tickers = list(set(
+        list(SECTORS.keys()) +
+        list(COUNTRIES.keys()) +
+        list(COMMODITIES.keys()) +
+        list(CURRENCIES.keys()) +
+        list(TREND_ASSETS.keys()) +
+        list(SECTOR_NAMES.keys()) +
+        ['SPY', 'RSP', '^VIX', '^MOVE', 'HYG', 'IEF', '^TNX', '^IRX',
+         'JPY=X', 'HG=F', 'GC=F', 'QQQ']
+    ))
+
+    # Single bulk download with threading
+    raw = yf.download(all_tickers, period="1y", progress=False,
+                      auto_adjust=False, threads=True, group_by='column')
+
+    return raw
+
+
+@ttl_cache(30)
+def _get_extended_data():
+    """
+    Extended data for risk regime (needs 300d history for ML)
+    """
+    macro_proxies = ['HYG', 'IEF', '^TNX', '^IRX', 'JPY=X', 'HG=F', 'GC=F']
+    risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
+    all_tickers = list(set(risk_tickers + macro_proxies + ['^VIX', '^MOVE']))
+
+    raw = yf.download(all_tickers, period="300d", progress=False,
+                      auto_adjust=False, threads=True)
+
+    return raw, risk_tickers
+
+
+# =========================
 # Internal Math Helpers (Optimized)
 # =========================
 @lru_cache(maxsize=128)
@@ -77,16 +120,14 @@ def _trend_stats(series, window, scale):
     return round(slope, 2), round(r2, 2)
 
 
+# =========================
+# I. Risk Regime (Uses Extended Data)
+# =========================
 @ttl_cache(30)
 def get_risk_regime():
     try:
-        # 1. Define all tickers once
-        macro_proxies = ['HYG', 'IEF', '^TNX', '^IRX', 'JPY=X', 'HG=F', 'GC=F']
-        risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
-        all_tickers = list(set(risk_tickers + macro_proxies + ['^VIX', '^MOVE']))
-
-        # Single download for all data
-        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False, threads=True)
+        # Get extended data for ML history
+        raw, risk_tickers = _get_extended_data()
         data = raw['Close'].ffill()
 
         # 2. ML Logic: Current & 20-Point History
@@ -109,7 +150,7 @@ def get_risk_regime():
         current_conf = history_points[-1]
         is_risk_on_ml = current_conf > 50
 
-        # 3. Vectorized macro calculations (avoid multiple .iloc[-1] calls)
+        # 3. Vectorized macro calculations
         last_vals = data.iloc[-1]
         ma50 = data.rolling(50).mean().iloc[-1]
 
@@ -151,7 +192,7 @@ def get_risk_regime():
 
 
 # =========================
-# II. ML Asset Predictions (Optimized)
+# II. ML Asset Predictions (Uses Shared Data)
 # =========================
 @ttl_cache(30)
 def get_ml_sector_prediction():
@@ -160,7 +201,6 @@ def get_ml_sector_prediction():
         res = predict_assets("sector_model.joblib", tickers, SECTOR_NAMES, "sector")
         probs = res["probabilities"]
 
-        # Pre-allocate list and use list comprehension
         ranked = [
             {"ticker": k, "name": SECTOR_NAMES.get(k, k), "confidence": round(v * 100, 1)}
             for k, v in probs.items()
@@ -224,12 +264,14 @@ def get_ml_commodity_prediction():
 
 
 # =========================
-# III. Traditional Technical Signals
+# III. Traditional Technical Signals (Optimized with Shared Data)
 # =========================
 @ttl_cache(30)
 def get_vix_signal():
     try:
-        vix = yf.download("^VIX", period="100d", progress=False, auto_adjust=False)['Close'].squeeze()
+        # Use shared data instead of separate download
+        shared_data = _get_shared_market_data()
+        vix = shared_data['Close']['^VIX'].dropna()
 
         # Single pass calculations
         vix_tail = vix.tail(50)
@@ -256,8 +298,9 @@ def get_vix_signal():
 @ttl_cache(30)
 def get_mean_reversion():
     try:
-        df = yf.download("QQQ", period="400d", auto_adjust=False, progress=False)
-        c = df["Close"].squeeze()
+        # Use shared data instead of separate download
+        shared_data = _get_shared_market_data()
+        c = shared_data['Close']['QQQ'].dropna()
 
         # Parallel calculations
         rsi2 = float(compute_RSI(c, 2).iloc[-1])
@@ -280,7 +323,7 @@ def get_mean_reversion():
 
 
 # =========================
-# IV. Rotation & Trends (Optimized)
+# IV. Rotation & Trends (Uses Shared Data)
 # =========================
 import math
 
@@ -317,8 +360,9 @@ def _compute_slope_change(series, window=20):
 @ttl_cache(30)
 def get_sector_rotation():
     try:
-        tickers = list(SECTORS.keys()) + ["SPY"]
-        data = yf.download(tickers, period="1y", progress=False, auto_adjust=False, threads=True)['Close']
+        # Use shared data - no separate download needed
+        shared_data = _get_shared_market_data()
+        data = shared_data['Close']
 
         # Vectorized relative strength calculation
         sector_data = data[list(SECTORS.keys())]
@@ -351,8 +395,10 @@ def get_sector_rotation():
 @ttl_cache(30)
 def get_country_rotation():
     try:
-        data = yf.download(list(COUNTRIES.keys()), period="1y", progress=False,
-                           auto_adjust=False, threads=True)['Close']
+        # Use shared data
+        shared_data = _get_shared_market_data()
+        data = shared_data['Close']
+
         results = []
         for s, n in COUNTRIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
@@ -374,8 +420,10 @@ def get_country_rotation():
 @ttl_cache(30)
 def get_commodity_rotation():
     try:
-        data = yf.download(list(COMMODITIES.keys()), period="1y", progress=False,
-                           auto_adjust=False, threads=True)['Close']
+        # Use shared data
+        shared_data = _get_shared_market_data()
+        data = shared_data['Close']
+
         results = []
         for s, n in COMMODITIES.items():
             slope, r2 = _trend_stats(data[s], 60, 60)
@@ -397,8 +445,10 @@ def get_commodity_rotation():
 @ttl_cache(30)
 def get_currency_rotation():
     try:
-        data = yf.download(list(CURRENCIES.keys()), period="1y", progress=False,
-                           auto_adjust=False, threads=True)['Close']
+        # Use shared data
+        shared_data = _get_shared_market_data()
+        data = shared_data['Close']
+
         invert_set = {"EURUSD=X", "GBPUSD=X", "AUDUSD=X"}
         results = []
 
@@ -426,20 +476,20 @@ def get_currency_rotation():
 @ttl_cache(30)
 def get_trends():
     from macro.ml_engine import get_ml_confidence
-    results = []
 
+    # Use shared data - no separate download needed!
+    shared_data = _get_shared_market_data()
+
+    results = []
     symbols = list(TREND_ASSETS.keys())
-    # Bulk download with threading enabled
-    bulk_data = yf.download(symbols, period="1y", progress=False, auto_adjust=False,
-                            group_by='column', threads=True)
 
     for sym, name in TREND_ASSETS.items():
         try:
-            # Extract symbol data
+            # Extract symbol data from shared download
             if len(symbols) > 1:
-                df = bulk_data.xs(sym, level=1, axis=1).dropna()
+                df = shared_data.xs(sym, level=1, axis=1).dropna()
             else:
-                df = bulk_data.dropna()
+                df = shared_data.dropna()
 
             if df.empty:
                 continue
