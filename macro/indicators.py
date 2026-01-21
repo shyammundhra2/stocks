@@ -62,62 +62,98 @@ def _trend_stats(series, window, scale):
     return round(slope, 2), round(r2, 2)
 
 
-# =========================
-# I. Risk Regime (ML Core + Heuristic Display)
-# =========================
+import numpy as np
+import yfinance as yf
+import pandas as pd
+
+import numpy as np
+import yfinance as yf
+import pandas as pd
+
+
 @ttl_cache(30)
 def get_risk_regime():
     try:
-        # Single combined download for all needed tickers
-        all_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY', '^VIX', '^MOVE'] + list(SECTOR_NAMES.keys())))
-        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False)
-
-        # 1. ML Logic via predict.py
+        # 1. Define Macro Proxies & Tickers
+        # ^TNX/^IRX = Yield Curve, HYG/IEF = Credit Stress, JPY=X = Carry
+        macro_proxies = ['HYG', 'IEF', '^TNX', '^IRX', 'JPY=X', 'HG=F', 'GC=F']
         risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
-        ml_res = predict_assets(
-            model_path="risk_model.joblib",
-            tickers=risk_tickers,
-            friendly_names={},
-            model_type="risk"
-        )
+        all_tickers = list(set(risk_tickers + macro_proxies + ['^VIX', '^MOVE']))
 
-        probs = ml_res.get('probabilities', {})
-        is_risk_on = probs.get('Class 1', 0) > probs.get('Class 0', 0)
-        confidence = round(max(probs.values()) * 100, 1) if probs else 0
-
-        # 2. Heuristic Logic for UI Display (using already downloaded data)
+        # Download data for both ML history and Heuristic calculations
+        # We need roughly 20 trading days + 200 days for MAs
+        raw = yf.download(all_tickers, period="300d", progress=False, auto_adjust=False)
         data = raw['Close'].ffill()
 
-        # Pre-calculate values
-        spy = data['SPY']
-        spy_last = spy.iloc[-1]
-        spy_200ma = spy.rolling(200, min_periods=1).mean().iloc[-1]
+        # 2. ML Logic: Current & 20-Point History
+        # We use the logic from your predict.py by iterating over the last 20 valid trading dates
+        history_points = []
+        recent_dates = data.index[-5:]
 
-        vix_last = data['^VIX'].iloc[-1]
-        move_last = data['^MOVE'].iloc[-1]
+        for ts in recent_dates:
+            # We call the real prediction logic for each date in the window
+            # Passing the specific date to predict_assets to ensure no data leakage
+            ml_res = predict_assets(
+                model_path="risk_model.joblib",
+                tickers=risk_tickers,
+                friendly_names={},
+                model_type="risk",
+                as_of_date=ts
+            )
+            probs = ml_res.get('probabilities', {})
+            # Capture the "Class 1" (Risk-On) probability for the history plot
+            conf_val = round(probs.get('Class 1', 0) * 100, 1)
+            history_points.append(conf_val)
 
-        breadth_ratio = data['RSP'] / spy
-        breadth_ma = breadth_ratio.rolling(50, min_periods=1).mean().iloc[-1]
-        breadth_last = breadth_ratio.iloc[-1]
+        # Current state for main return
+        current_conf = history_points[-1]
+        is_risk_on_ml = current_conf > 50
 
-        # Boolean conversions
-        trend_pass = bool(spy_last > spy_200ma)
-        fear_pass = bool(vix_last < 20 and move_last < 110)
-        breadth_pass = bool(breadth_last > breadth_ma)
+        # 3. New Macro Breadth Logic (Heuristics)
+        # A. Credit Stress Proxy (High Yield Price / Treasury Price)
+        credit_ratio = data['HYG'] / data['IEF']
+        credit_pass = bool(credit_ratio.iloc[-1] > credit_ratio.rolling(50).mean().iloc[-1])
+
+        # B. Yield Curve (10Y Yield - 3M Bill Yield)
+        curve_spread = data['^TNX'] - data['^IRX']
+        curve_pass = bool(curve_spread.iloc[-1] > 0)
+
+        # C. Carry Trade (JPY weakness relative to 50MA + Low Realized Vol)
+        jpy_ret = data['JPY=X'].pct_change()
+        jpy_vol = jpy_ret.rolling(20).std() * np.sqrt(252)
+        carry_pass = bool(
+            data['JPY=X'].iloc[-1] > data['JPY=X'].rolling(50).mean().iloc[-1] and jpy_vol.iloc[-1] < 0.15)
+
+        # D. Global Growth (Copper/Gold Ratio)
+        cu_au_ratio = data['HG=F'] / data['GC=F']
+        growth_pass = bool(cu_au_ratio.iloc[-1] > cu_au_ratio.rolling(50).mean().iloc[-1])
+
+        # E. Existing Technicals
+        spy_trend = bool(data['SPY'].iloc[-1] > data['SPY'].rolling(200).mean().iloc[-1])
+        vix_low = bool(data['^VIX'].iloc[-1] < 20 and data['^MOVE'].iloc[-1] < 110)
+
+        # 4. Formatted Output (Backward Compatible)
+        details = [
+            {"label": "Trend (SPY > 200MA)", "pass": spy_trend},
+            {"label": "Fear (VIX/MOVE Low)", "pass": vix_low},
+            {"label": "Credit (HYG/IEF Ratio)", "pass": credit_pass},
+            {"label": "Curve (10Y-3M Spread)", "pass": curve_pass},
+            {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
+            {"label": "Growth (Cu/Au Ratio)", "pass": growth_pass}
+        ]
+
+        pass_count = sum(1 for d in details if d['pass'])
+        macro_score = (pass_count / len(details)) * 100
 
         return {
-            "status": "RISK-ON" if is_risk_on else "RISK-OFF",
-            "confidence": confidence,
-            "details": [
-                {"label": "Trend (SPY > 200MA)", "pass": trend_pass},
-                {"label": "Fear (VIX/MOVE Low)", "pass": fear_pass},
-                {"label": "Breadth (RSP > MA)", "pass": breadth_pass}
-            ]
+            "status": "RISK-ON" if (is_risk_on_ml and macro_score >= 50) else "RISK-OFF",
+            "confidence": current_conf,
+            "history": history_points,  # 20 real data points from your ML model
+            "details": details
         }
     except Exception as e:
         print(f"Risk Regime Error: {e}")
-        return {"status": "ERROR", "details": []}
-
+        return {"status": "ERROR", "confidence": 0, "history": [], "details": []}
 
 # =========================
 # II. ML Asset Predictions (Optimized)
