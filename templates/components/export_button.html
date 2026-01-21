@@ -1,3 +1,4 @@
+<!-- components/export_button.html -->
 <div class="flex justify-end mb-4 gap-6">
     <div class="flex flex-col items-center">
         <img
@@ -25,94 +26,107 @@
 </div>
 
 <script>
-function generateReportText() {
+// Embed the data directly from Flask
+const REPORT_DATA = {{ all_data_json|safe }};
+
+function formatJsonAsReadableText(data) {
+    if (!data) return "Error: Could not generate report";
+
     let text = "";
-    const now = new Date();
-    const dateStr = now.toLocaleDateString();
-    const timeStr = now.toLocaleTimeString();
+    const timestamp = new Date().toLocaleString();
 
     text += "==========================================\n";
     text += "       MACRO SYSTEM STRATEGY REPORT       \n";
-    text += "       Generated: " + dateStr + " " + timeStr + "\n";
+    text += "       Generated: " + timestamp + "\n";
     text += "==========================================\n\n";
 
+    // AI SECTOR ALLOCATION
+    const mlSector = data.ml_sector;
     text += "--- [I] AI SECTOR ALLOCATION ---\n";
-    text += "REGIME: {{ regime.status }}\n";
-    text += "TOP OVERWEIGHT:  {{ ml_sector.top.name }} ({{ ml_sector.top.ticker }})\n";
-    text += "TOP UNDERWEIGHT: {{ ml_sector.bottom.name }} ({{ ml_sector.bottom.ticker }})\n";
-    text += "TOP CONFIDENCE:  {{ ml_sector.top.confidence }}%\n";
-    text += "SPREAD:          {{ ml_sector.spread }}%\n\n";
-
+    text += `REGIME: ${data.regime.status}\n`;
+    text += `TOP OVERWEIGHT:  ${mlSector.top.name} (${mlSector.top.ticker})\n`;
+    text += `TOP UNDERWEIGHT: ${mlSector.bottom.name} (${mlSector.bottom.ticker})\n`;
+    text += `TOP CONFIDENCE:  ${mlSector.top.confidence}%\n`;
+    text += `SPREAD:          ${mlSector.spread}%\n\n`;
     text += "Sector Probability Distribution:\n";
-    {% for s in ml_sector.all %}
-    text += "  - {{ s.name }} ({{ s.ticker }}): {{ s.confidence }}%\n";
-    {% endfor %}
+    mlSector.all.forEach(s => {
+        text += `  - ${s.name} (${s.ticker}): ${s.confidence}%\n`;
+    });
     text += "\n";
 
+    // AI COUNTRY ALLOCATION
+    const mlCountry = data.ml_country;
     text += "--- [II] AI COUNTRY ALLOCATION ---\n";
-    text += "TOP OVERWEIGHT:  {{ ml_country.top.name }} ({{ ml_country.top.ticker }})\n";
-    text += "TOP UNDERWEIGHT: {{ ml_country.bottom.name }} ({{ ml_country.bottom.ticker }})\n";
-    text += "TOP CONFIDENCE:  {{ ml_country.top.confidence }}%\n";
-    text += "SPREAD:          {{ ml_country.spread }}%\n\n";
-
+    text += `TOP OVERWEIGHT:  ${mlCountry.top.name} (${mlCountry.top.ticker})\n`;
+    text += `TOP UNDERWEIGHT: ${mlCountry.bottom.name} (${mlCountry.bottom.ticker})\n`;
+    text += `TOP CONFIDENCE:  ${mlCountry.top.confidence}%\n`;
+    text += `SPREAD:          ${mlCountry.spread}%\n\n`;
     text += "Country Probability Distribution:\n";
-    {% for c in ml_country.all %}
-    text += "  - {{ c.name }} ({{ c.ticker }}): {{ c.confidence }}%\n";
-    {% endfor %}
+    mlCountry.all.forEach(c => {
+        text += `  - ${c.name} (${c.ticker}): ${c.confidence}%\n`;
+    });
     text += "\n";
 
+    // AI COMMODITY ALLOCATION
+    const mlCommodity = data.ml_commodity;
     text += "--- [III] AI COMMODITY ALLOCATION ---\n";
-    text += "TOP OVERWEIGHT:  {{ ml_commodity.top.name }} ({{ ml_commodity.top.ticker }})\n";
-    text += "TOP UNDERWEIGHT: {{ ml_commodity.bottom.name }} ({{ ml_commodity.bottom.ticker }})\n";
-    text += "TOP CONFIDENCE:  {{ ml_commodity.top.confidence }}%\n";
-    text += "SPREAD:          {{ ml_commodity.spread }}%\n\n";
-
+    text += `TOP OVERWEIGHT:  ${mlCommodity.top.name} (${mlCommodity.top.ticker})\n`;
+    text += `TOP UNDERWEIGHT: ${mlCommodity.bottom.name} (${mlCommodity.bottom.ticker})\n`;
+    text += `TOP CONFIDENCE:  ${mlCommodity.top.confidence}%\n`;
+    text += `SPREAD:          ${mlCommodity.spread}%\n\n`;
     text += "Commodity Probability Distribution:\n";
-    {% for c in ml_commodity.all %}
-    text += "  - {{ c.name }} ({{ c.sym }}): {{ c.confidence }}%\n";
-    {% endfor %}
+    mlCommodity.all.forEach(c => {
+        text += `  - ${c.name} (${c.sym}): ${c.confidence}%\n`;
+    });
     text += "\n";
 
+    // VOLATILITY & RISK REGIME
+    const regime = data.regime;
     text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
-    {% for m in regime.details %}
-    text += "  - {{ m.label }}: {{ 'PASS' if m.pass else 'FAIL' }}\n";
-    {% endfor %}
-    text += "VIX Level: {{ vix_mr.vix }} (Z: {{ vix_mr.z }})\n";
-    text += "VIX Signal: {{ vix_mr.signal.replace('_',' ') }}\n\n";
+    regime.details.forEach(m => {
+        text += `  - ${m.label}: ${m.pass ? 'PASS' : 'FAIL'}\n`;
+    });
+    const vixMr = data.vix_mr;
+    text += `VIX Level: ${vixMr.vix} (Z: ${vixMr.z})\n`;
+    text += `VIX Signal: ${vixMr.signal.replace(/_/g, ' ')}\n\n`;
 
+    // TACTICAL MEAN REVERSION
+    const mr = data.mr;
     text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
-    text += "Price: ${{ mr.price }}\n";
-    text += "RSI(2): {{ mr.rsi2 }}\n";
-    text += "Signal: {{ mr.signal }}\n\n";
+    text += `Price: $${mr.price}\n`;
+    text += `RSI(2): ${mr.rsi2}\n`;
+    text += `Signal: ${mr.signal}\n\n`;
 
+    // SECTOR ROTATION
+    const sr = data.sr;
     text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
-    {% for s in sr.all_ranked %}
-    text += "  - {{ s.name }}: Slope {{ s.slope }}% | ΔSlope {{ s.slope_change|default('0') }}% | R2 {{ s.r2 }}\n";
-    {% endfor %}
+    sr.all_ranked.forEach(s => {
+        text += `  - ${s.name}: Slope ${s.slope}% | ΔSlope ${s.slope_change || '0'}% | R2 ${s.r2}\n`;
+    });
     text += "\n";
 
+    // GLOBAL ROTATION
     text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
     text += "Countries:\n";
-    {% for c in countries %}
-    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
-    {% endfor %}
-
+    data.countries.forEach(c => {
+        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
+    });
     text += "\nCommodities:\n";
-    {% for c in commodities %}
-    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
-    {% endfor %}
-
+    data.commodities.forEach(c => {
+        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
+    });
     text += "\nCurrencies vs USD:\n";
-    {% for c in currencies %}
-    text += "  - {{ c.name }} ({{ c.sym }}): Slope {{ c.slope }}% | ΔSlope {{ c.slope_change|default('0') }}% | R2 {{ c.r2 }}\n";
-    {% endfor %}
+    data.currencies.forEach(c => {
+        text += `  - ${c.name} (${c.sym}): Slope ${c.slope}% | ΔSlope ${c.slope_change || '0'}% | R2 ${c.r2}\n`;
+    });
     text += "\n";
 
+    // MOMENTUM TREND AUDIT
     text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
-    {% for t in trends %}
-    text += "{{ t.status.ljust(12) }} | {{ t.name.ljust(14) }} ({{ t.sym }}): "
-         + "${{ t.price }} | ML {{ t.ml_conf }}% | Stop {{ t.stop }}\n";
-    {% endfor %}
+    data.trends.forEach(t => {
+        text += `${(t.status || '').padEnd(12)} | ${(t.name || '').padEnd(14)} (${t.sym}): `;
+        text += `$${t.price} | ML ${t.ml_conf}% | Stop ${t.stop}\n`;
+    });
     text += "\n";
 
     text += "==========================================\n";
@@ -123,17 +137,40 @@ function generateReportText() {
 }
 
 function exportDashboard() {
-    const text = generateReportText();
+    console.log('Exporting data...', REPORT_DATA);
+
+    if (!REPORT_DATA) {
+        alert('No data available to export. Please refresh the page.');
+        return;
+    }
+
+    // Export as pretty-printed JSON
+    const jsonText = JSON.stringify({
+        generated_at: new Date().toISOString(),
+        report_type: "macro_system_strategy",
+        data: REPORT_DATA
+    }, null, 2);
+
     const now = new Date();
-    const blob = new Blob([text], { type: 'text/plain' });
+    const blob = new Blob([jsonText], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'Macro_Strategy_Report_' + now.toISOString().split('T')[0] + '.txt';
+    a.download = 'Macro_Strategy_Report_' + now.toISOString().split('T')[0] + '.json';
     a.click();
 }
 
 function copyDashboard() {
-    const text = generateReportText();
+    console.log('REPORT_DATA:', REPORT_DATA);
+
+    if (!REPORT_DATA) {
+        alert('No data available to copy. Please refresh the page.');
+        return;
+    }
+
+    const text = formatJsonAsReadableText(REPORT_DATA);
+    console.log('Generated text length:', text.length);
+    console.log('Text preview:', text.substring(0, 200));
+
     const label = document.getElementById('copy-label');
 
     navigator.clipboard.writeText(text).then(() => {
@@ -146,9 +183,10 @@ function copyDashboard() {
             label.innerText = originalText;
             label.classList.remove('text-green-600');
             label.classList.add('text-slate-500');
-        }, 2000);
+        }, 20000);
     }).catch(err => {
         console.error('Failed to copy: ', err);
+        alert('Failed to copy to clipboard: ' + err.message);
     });
 }
 </script>
