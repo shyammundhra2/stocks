@@ -1,90 +1,111 @@
 import yfinance as yf
 import pandas as pd
 import xgboost as xgb
-import os
-import argparse
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION ---
-MODEL_NAME = "macro_model_2027.json"
+# ---------------- CONFIG ----------------
 LOCAL_FILE = "sp500.csv"
+MODEL_NAME = "macro_model_2027.json"
 
+MACRO_TICKERS = ['SPY','RSP','^VIX','^MOVE','DX-Y.NYB',
+                 '^IRX','^TNX','HYG','LQD']
 
-def valid_date(s):
-    """Check if the provided string is a valid YYYY-MM-DD date."""
-    try:
-        return datetime.strptime(s, "%Y-%m-%d")
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Not a valid date: '{s}'. Expected YYYY-MM-DD.")
+SECTOR_TICKERS = ['XLK','XLF','XLI','XLY','XLE','XLV',
+                  'XLP','XLU','XLB','XLRE','XLC']
 
+# Lookback for 3M momentum (trading days)
+LOOKBACK_3M = 63
 
-def predict_top(target_dt=None):
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, MODEL_NAME)
+# Extra days buffer for weekends/holidays
+BUFFER_DAYS = LOOKBACK_3M * 2
 
-    if not os.path.exists(model_path):
-        return print(f"Error: Model not found at {model_path}.")
-
-    # If no date is passed from CLI, use today's date
-    if target_dt is None:
-        target_dt = datetime.now()
-
-    start_dt = target_dt - timedelta(days=200)
-    print(f"\n[Strategy Snapshot: {target_dt.strftime('%Y-%m-%d')}]")
-
-    # Load Model and Data
+def infer_today(top_n=15, avoid_n=15):
+    # ---------------- LOAD MODEL ----------------
     model = xgb.XGBClassifier()
-    model.load_model(model_path)
-    ticker_df = pd.read_csv(LOCAL_FILE)
-    name_map = dict(zip(ticker_df['Symbol'], ticker_df['Company']))
-    symbols = ticker_df['Symbol'].tolist()
+    model.load_model(MODEL_NAME)
 
-    MACRO_TICKERS = ['SPY', 'RSP', '^VIX', '^MOVE', 'DX-Y.NYB', '^TNX', '^TYX', 'HYG', 'LQD']
-    SECTOR_TICKERS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
+    # ---------------- DATE RANGE ----------------
+    end = datetime.now()
+    start = end - timedelta(days=BUFFER_DAYS)
 
-    # Fetch Data for that specific window
-    ms_data = yf.download(MACRO_TICKERS + SECTOR_TICKERS, start=start_dt, end=target_dt, auto_adjust=True)['Close']
+    # ---------------- MACRO & SECTOR ----------------
+    ms = yf.download(MACRO_TICKERS + SECTOR_TICKERS,
+                     start=start, end=end,
+                     auto_adjust=True)['Close']
 
-    # Build Features
-    current_m = pd.Series({
-        'Curve_Inversion': ms_data['^TNX'].iloc[-1] - ms_data['^TYX'].iloc[-1],
-        'Bond_Stress': ms_data['^MOVE'].iloc[-1],
-        'Liquidity': ms_data['HYG'].iloc[-1] / ms_data['LQD'].iloc[-1],
-        'Concentration': ms_data['SPY'].iloc[-1] / ms_data['RSP'].iloc[-1]
-    })
+    m = pd.DataFrame(index=ms.index)
+    m['Curve_Inversion'] = ms['^IRX'] - ms['^TNX']
+    m['Bond_Stress'] = ms['^MOVE']
+    m['Liquidity'] = ms['HYG'] / ms['LQD']
+    m['Concentration'] = ms['SPY'] / ms['RSP']
+
     for s in SECTOR_TICKERS:
-        current_m[f'{s}_3M'] = ms_data[s].ffill().pct_change(63).iloc[-1]
+        m[f'{s}_3M'] = ms[s].pct_change(LOOKBACK_3M, fill_method=None)
 
-    # Predict
-    prices = yf.download(symbols, start=start_dt, end=target_dt, progress=False, auto_adjust=True)['Close']
-    results = []
-    feature_order = ['Curve_Inversion', 'Bond_Stress', 'Liquidity', 'Concentration', 'Stock_Mom_3M'] + \
-                    [f'{s}_3M' for s in SECTOR_TICKERS]
+    m = m.shift(1).dropna()
+    macro_latest = m.iloc[-1].astype(float)
+
+    # ---------------- STOCK FEATURES ----------------
+    symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
+    rows = []
 
     for t in symbols:
-        if t not in prices.columns or len(prices[t].dropna()) < 64: continue
-        try:
-            row = current_m.copy()
-            row['Stock_Mom_3M'] = prices[t].ffill().pct_change(63).iloc[-1]
-            prob = model.predict_proba(pd.DataFrame([row])[feature_order])[0][1]
-            results.append({'Ticker': t, 'Name': name_map.get(t, "N/A"), 'Score': prob})
-        except:
+        s = yf.download(t, start=start, end=end,
+                        auto_adjust=True, progress=False)
+        if s.empty or len(s) < LOOKBACK_3M:
             continue
 
-    top = pd.DataFrame(results).sort_values('Score', ascending=False).head(50)
+        try:
+            # ✅ Use .item() to convert single-element Series to float
+            mom_3m = s['Close'].pct_change(LOOKBACK_3M, fill_method=None).iloc[-1].item()
+        except (IndexError, TypeError, ValueError):
+            continue
 
-    # Print Output Table
-    print("\n" + "=" * 75)
-    print(f"{'TICKER':<10} {'NAME':<45} {'PROBABILITY'}")
-    print("=" * 75)
-    for _, r in top.iterrows():
-        print(f"{r['Ticker']:<10} {r['Name'][:43]:<45} {r['Score']:.2%}")
-    print("=" * 75)
+        if pd.isna(mom_3m):
+            continue
+
+        row = macro_latest.copy()
+        row['Stock_Mom_3M'] = mom_3m
+        row['Ticker'] = t
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # ---------------- FEATURES ----------------
+    feats = ['Curve_Inversion','Bond_Stress','Liquidity',
+             'Concentration','Stock_Mom_3M'] + \
+            [f'{s}_3M' for s in SECTOR_TICKERS]
+
+    df[feats] = df[feats].apply(pd.to_numeric, errors='coerce')
+    df = df.dropna(subset=feats)
+
+    if df.empty:
+        raise ValueError("No valid rows for inference. Check symbol list or Yahoo data.")
+
+    # ---------------- PREDICTIONS ----------------
+    df['Prob'] = model.predict_proba(df[feats])[:,1]
+    df['Margin'] = model.predict(df[feats], output_margin=True)
+
+    df['Confidence'] = pd.qcut(df['Prob'], q=[0,0.33,0.66,1],
+                               labels=['Avoid','Medium','Strong'])
+
+    df = df.sort_values(['Prob','Margin'], ascending=False)
+
+    # ---------------- OUTPUT ----------------
+    print("\n" + "="*60)
+    print("TOP 2027 STRATEGIC HOLDS")
+    print("="*60)
+    print(df[['Ticker','Prob','Confidence']].head(top_n).to_string(index=False))
+
+    print("\n" + "="*60)
+    print("AVOID / UNDERWEIGHT")
+    print("="*60)
+    print(df[['Ticker','Prob','Confidence']].tail(avoid_n).to_string(index=False))
+
+    # Optional CSV output
+    df[['Ticker','Prob','Confidence']].to_csv('macro_2027_ranking_fast.csv', index=False)
+    print("\n✅ Ranking CSV saved → macro_2027_ranking_fast.csv")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Predict top macro picks for a specific date.")
-    parser.add_argument("--date", type=valid_date, help="The target date (YYYY-MM-DD)")
-    args = parser.parse_args()
-
-    predict_top(target_dt=args.date)
+    infer_today()

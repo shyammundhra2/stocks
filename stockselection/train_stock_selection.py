@@ -4,69 +4,115 @@ import xgboost as xgb
 from datetime import datetime
 import os
 
-# --- CONFIGURATION ---
+# ---------------- CONFIG ----------------
 START, END = "2001-01-01", datetime.now().strftime('%Y-%m-%d')
 LOCAL_FILE = "sp500.csv"
-MODEL_NAME = "macro_model_2027.json"  # <--- Added for persistence
+MODEL_NAME = "macro_model_2027.json"
+FEATURE_RANK_FILE = "feature_rank_2027.csv"
 
-# User-Defined Tickers for 2027 Prediction
-MACRO_TICKERS = ['SPY', 'RSP', '^VIX', '^MOVE', 'DX-Y.NYB', '^TNX', '^TYX', 'HYG', 'LQD']
-SECTOR_TICKERS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
+MACRO_TICKERS = ['SPY','RSP','^VIX','^MOVE','DX-Y.NYB',
+                 '^IRX','^TNX','^TYX','HYG','LQD']
 
-def run_2027_strategy():
-    # 1. Load Local Data
-    try:
-        symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
-    except FileNotFoundError:
-        return print(f"Error: {LOCAL_FILE} not found. Ensure you created your Wikipedia-free CSV first.")
+SECTOR_TICKERS = ['XLK','XLF','XLI','XLY','XLE','XLV',
+                  'XLP','XLU','XLB','XLRE','XLC']
 
-    # 2. Macro & Sector Pulse
-    print("Syncing Macro Signals (MOVE, VIX, Spreads)...")
-    ms_data = yf.download(MACRO_TICKERS + SECTOR_TICKERS, start=START, end=END, auto_adjust=True)['Close']
+# ---------------- TRAIN ----------------
+def train_model():
+    symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
+    # Remove top-100 restriction; keeps enough rows for training
+    train_pool = symbols
 
-    m = pd.DataFrame(index=ms_data.index)
-    m['Curve_Inversion'] = ms_data['^TNX'] - ms_data['^TYX']
-    m['Bond_Stress'] = ms_data['^MOVE']
-    m['Liquidity'] = ms_data['HYG'] / ms_data['LQD']
-    m['Concentration'] = ms_data['SPY'] / ms_data['RSP']
+    print("Downloading macro + sector data...")
+    ms = yf.download(MACRO_TICKERS + SECTOR_TICKERS,
+                     start=START, end=END,
+                     auto_adjust=True)['Close']
+
+    m = pd.DataFrame(index=ms.index)
+    m['Curve_Inversion'] = ms['^IRX'] - ms['^TNX']
+    m['Bond_Stress'] = ms['^MOVE']
+    m['Liquidity'] = ms['HYG'] / ms['LQD']
+    m['Concentration'] = ms['SPY'] / ms['RSP']
+
     for s in SECTOR_TICKERS:
-        m[f'{s}_3M'] = ms_data[s].pct_change(63)  # Sector Strength (Last 3 Months)
+        m[f'{s}_3M'] = ms[s].pct_change(63)
 
-    # 3. Model Training (Predicting 2027)
-    print("Training XGBoost on 12-Month Forward Returns...")
-    train_pool = symbols[:100]  # Training on top 100 for efficiency
-    all_features = []
+    # shift to avoid look-ahead bias
+    m = m.shift(1)
 
+    all_rows = []
+
+    print("Building stock-level dataset...")
     for t in train_pool:
-        s_raw = yf.download(t, start=START, end=END, progress=False, auto_adjust=True)
-        if s_raw.empty: continue
+        s_raw = yf.download(t, start=START, end=END,
+                            auto_adjust=True, progress=False)
+        if s_raw.empty or len(s_raw) < 300:
+            continue
 
         s = pd.DataFrame(index=s_raw.index)
-        s['Ticker'], s['Stock_Mom_3M'] = t, s_raw['Close'].pct_change(63)
-        # TARGET: 252 trading days forward (approx 1 year)
+        s['Stock_Mom_3M'] = s_raw['Close'].pct_change(63)
         s['Target_2027'] = s_raw['Close'].pct_change(252).shift(-252)
-        all_features.append(s.join(m).dropna())
 
-    df_ml = pd.concat(all_features)
-    feats = ['Curve_Inversion', 'Bond_Stress', 'Liquidity', 'Concentration', 'Stock_Mom_3M'] + [f'{s}_3M' for s in SECTOR_TICKERS]
+        joined = s.join(m).dropna()
+        if joined.empty:
+            continue
 
-    X, y = df_ml[feats], (df_ml['Target_2027'] > df_ml['Target_2027'].median()).astype(int)
-    model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.05)
-    model.fit(X, y)
+        joined['Ticker'] = t
+        all_rows.append(joined)
 
-    # 4. PERSISTENCE LAYER: Save the Model
-    # We save it in the same directory as the script to avoid pathing errors
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    full_path = os.path.join(base_path, MODEL_NAME)
-    model.save_model(full_path)
-    print(f"\nSUCCESS: Model logic saved to {full_path}")
+    if not all_rows:
+        raise ValueError("No data available for training. Check your CSV or Yahoo downloads.")
 
-    # 5. RANKING OUTPUT
-    print("\n" + "=" * 60 + "\nFEATURE RANKING: Drivers for 2027 Strategic Picks\n" + "=" * 60)
-    imp = pd.DataFrame({'Feature': feats, 'Imp': model.feature_importances_}).sort_values('Imp', ascending=False)
-    for _, row in imp.head(15).iterrows():
-        print(f"{row['Feature']:<20} | {'█' * int(row['Imp'] * 100)} {row['Imp']:.2%}")
-    print("-" * 60)
+    df_ml = pd.concat(all_rows)
+
+    feats = ['Curve_Inversion','Bond_Stress','Liquidity',
+             'Concentration','Stock_Mom_3M'] + [f'{s}_3M' for s in SECTOR_TICKERS]
+
+    # Cross-sectional label per date
+    y = df_ml.groupby(df_ml.index)['Target_2027'] \
+             .transform(lambda x: x > x.median()).astype(int)
+    X = df_ml[feats]
+
+    # Ensure dataset is not empty
+    valid_idx = X.index.intersection(y.dropna().index)
+    X_train, y_train = X.loc[valid_idx], y.loc[valid_idx]
+
+    print(f"Training on {len(X_train)} rows...")
+    print("Label distribution:\n", y_train.value_counts())
+
+    # ---------------- TRAIN MODEL ----------------
+    model = xgb.XGBClassifier(
+        n_estimators=300,
+        learning_rate=0.03,
+        max_depth=4,
+        min_child_weight=0.1,      # allows small cross-sections
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        tree_method="approx",       # less conservative than hist
+        base_score=0.5
+    )
+
+    model.fit(X_train, y_train)
+
+    # ---------------- SAVE MODEL ----------------
+    model.save_model(MODEL_NAME)
+    print(f"Model saved → {MODEL_NAME}")
+
+    # ---------------- FEATURE IMPORTANCE ----------------
+    imp = pd.DataFrame({
+        "Feature": feats,
+        "Importance": model.feature_importances_
+    }).sort_values("Importance", ascending=False)
+
+    imp.to_csv(FEATURE_RANK_FILE, index=False)
+
+    print("\n" + "="*60)
+    print("FEATURE IMPORTANCE (2027 Drivers)")
+    print("="*60)
+    for _, r in imp.iterrows():
+        bar = "█" * int(r.Importance * 100)
+        print(f"{r.Feature:<18} | {bar} {r.Importance:.2%}")
+    print("="*60)
 
 if __name__ == "__main__":
-    run_2027_strategy()
+    train_model()
