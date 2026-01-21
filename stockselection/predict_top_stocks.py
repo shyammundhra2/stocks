@@ -14,16 +14,25 @@ def predict_top_20():
     model_path = os.path.join(base_path, MODEL_NAME)
 
     if not os.path.exists(model_path):
-        return print(f"Error: Model not found at {model_path}.")
+        return print(f"Error: Model not found at {model_path}. Run training first.")
 
+    # Load Model
     model = xgb.XGBClassifier()
     model.load_model(model_path)
+
+    # Load Tickers and Names from local CSV
+    try:
+        ticker_df = pd.read_csv(LOCAL_FILE)
+        # Create a mapping dictionary for quick name lookup
+        name_map = dict(zip(ticker_df['Symbol'], ticker_df['Company']))
+        symbols = ticker_df['Symbol'].tolist()
+    except Exception as e:
+        return print(f"Error loading {LOCAL_FILE}: {e}")
 
     MACRO_TICKERS = ['SPY', 'RSP', '^VIX', '^MOVE', 'DX-Y.NYB', '^TNX', '^TYX', 'HYG', 'LQD']
     SECTOR_TICKERS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
 
     print("Fetching live macro signals...")
-    # Fix: Added retry loop for network stability
     for attempt in range(3):
         try:
             ms_data = yf.download(MACRO_TICKERS + SECTOR_TICKERS, period="6mo", auto_adjust=True)['Close']
@@ -34,7 +43,7 @@ def predict_top_20():
             else:
                 return print("Final Network Error: Could not reach Yahoo Finance.")
 
-    # Strategic Feature Vector
+    # Build Strategic Feature Vector
     current_m = pd.Series({
         'Curve_Inversion': ms_data['^TNX'].iloc[-1] - ms_data['^TYX'].iloc[-1],
         'Bond_Stress': ms_data['^MOVE'].iloc[-1],
@@ -42,14 +51,12 @@ def predict_top_20():
         'Concentration': ms_data['SPY'].iloc[-1] / ms_data['RSP'].iloc[-1]
     })
 
-    # Fix: Pandas 2.1+ compatibility for Sector 3M logic
     for s in SECTOR_TICKERS:
         current_m[f'{s}_3M'] = ms_data[s].ffill().pct_change(63).iloc[-1]
 
-    symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
     print(f"Scoring S&P 500 universe (Target: 2027)...")
 
-    # Batch download with retry logic
+    # Batch download stock prices
     prices = yf.download(symbols, period="6mo", progress=False, auto_adjust=True)['Close']
 
     results = []
@@ -57,19 +64,36 @@ def predict_top_20():
                     [f'{s}_3M' for s in SECTOR_TICKERS]
 
     for t in symbols:
-        if t not in prices.columns or prices[t].isnull().all(): continue
+        # Check if ticker exists in downloaded data and has sufficient history
+        if t not in prices.columns or len(prices[t].dropna()) < 64:
+            continue
 
-        row = current_m.copy()
-        # Fix: Future-proofing .pct_change() by explicitly calling .ffill()
-        row['Stock_Mom_3M'] = prices[t].ffill().pct_change(63).iloc[-1]
+        try:
+            row = current_m.copy()
+            row['Stock_Mom_3M'] = prices[t].ffill().pct_change(63).iloc[-1]
 
-        input_df = pd.DataFrame([row])[feature_order]
-        prob = model.predict_proba(input_df)[0][1]
-        results.append({'Ticker': t, 'Score': prob})
+            # Predict
+            input_df = pd.DataFrame([row])[feature_order]
+            prob = model.predict_proba(input_df)[0][1]
 
+            results.append({
+                'Ticker': t,
+                'Name': name_map.get(t, "N/A"),  # Fetch name from local CSV
+                'Score': prob
+            })
+        except Exception:
+            continue
+
+    # Create DataFrame and sort
     top_20 = pd.DataFrame(results).sort_values('Score', ascending=False).head(20)
-    print("\n" + "=" * 40 + "\nTOP 20 STRATEGIC PICKS (2027 TARGET)\n" + "=" * 40)
-    print(top_20.to_string(index=False))
+
+    # Format the output for a clean terminal look
+    print("\n" + "=" * 75)
+    print(f"{'TICKER':<10} {'NAME':<45} {'PROBABILITY'}")
+    print("=" * 75)
+    for _, row in top_20.iterrows():
+        print(f"{row['Ticker']:<10} {row['Name'][:43]:<45} {row['Score']:.2%}")
+    print("=" * 75)
 
 
 if __name__ == "__main__":
