@@ -89,7 +89,7 @@ def get_risk_regime():
         # We use the logic from your predict.py by iterating over the last 20 valid trading dates
         history_points = []
         recent_dates = data.index[::-20][:5][::-1]
-        
+
         for ts in recent_dates:
             # We call the real prediction logic for each date in the window
             # Passing the specific date to predict_assets to ensure no data leakage
