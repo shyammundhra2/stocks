@@ -146,23 +146,35 @@ def fetch_macro_data(start_date="2000-01-01"):
     return macro_df
 
 
-def create_features(df, price_col="price_index"):
+def create_features(df, price_col="price_index", is_quarterly=False):
     """Create engineered features"""
     df = df.copy()
 
+    # Adjust lookback periods based on frequency
+    if is_quarterly:
+        yoy_periods = 4  # 4 quarters = 1 year
+        mom3_periods = 1  # 1 quarter = 3 months
+        mom6_periods = 2  # 2 quarters = 6 months
+        ma_periods = 4  # 4 quarters = 1 year
+    else:
+        yoy_periods = 12
+        mom3_periods = 3
+        mom6_periods = 6
+        ma_periods = 12
+
     # Price-based features
-    df["yoy_return"] = df[price_col].pct_change(12) * 100
-    df["mom3_return"] = df[price_col].pct_change(3) * 100
-    df["mom6_return"] = df[price_col].pct_change(6) * 100
-    df["price_ma12"] = df[price_col].rolling(12).mean()
+    df["yoy_return"] = df[price_col].pct_change(yoy_periods) * 100
+    df["mom3_return"] = df[price_col].pct_change(mom3_periods) * 100
+    df["mom6_return"] = df[price_col].pct_change(mom6_periods) * 100
+    df["price_ma12"] = df[price_col].rolling(ma_periods).mean()
     df["price_vs_ma12"] = (df[price_col] / df["price_ma12"] - 1) * 100
 
-    # Rent-based features (if available)
+    # Rent-based features (if available) - always monthly
     if "rent_index" in df.columns:
-        df["rent_yoy"] = df["rent_index"].pct_change(12) * 100  # Monthly CPI data
+        df["rent_yoy"] = df["rent_index"].pct_change(12) * 100
         df["rent_mom3"] = df["rent_index"].pct_change(3) * 100
         df["price_to_rent"] = df[price_col] / df["rent_index"] * 100
-        df["price_to_rent_ma12"] = df["price_to_rent"].rolling(12).mean()
+        df["price_to_rent_ma12"] = df["price_to_rent"].rolling(ma_periods).mean()
         df["price_to_rent_deviation"] = (df["price_to_rent"] / df["price_to_rent_ma12"] - 1) * 100
 
     # Macro features
@@ -173,11 +185,11 @@ def create_features(df, price_col="price_index"):
         df["mortgage_spread"] = df["mortgage_rate_30y"] - df["fed_funds_rate"]
 
     if "building_permits" in df.columns:
-        df["permits_ma6"] = df["building_permits"].rolling(6).mean()
-        df["permits_yoy"] = df["building_permits"].pct_change(12) * 100
+        df["permits_ma6"] = df["building_permits"].rolling(ma_periods // 2).mean()
+        df["permits_yoy"] = df["building_permits"].pct_change(yoy_periods) * 100
 
     # Volatility measure
-    df["price_volatility_12m"] = df[price_col].pct_change().rolling(12).std() * 100
+    df["price_volatility_12m"] = df[price_col].pct_change().rolling(ma_periods).std() * 100
 
     return df
 
@@ -239,20 +251,26 @@ def main():
     for series_id, market_name in MARKETS.items():
         try:
             # Fetch house price data
-            market_series = fred.get_series(series_id, observation_start="2000-01-01")
+            market_series = fred.get_series(series_id, observation_start="1991-01-01")
 
-            if len(market_series) < 120:
-                print(f"⚠️  {market_name}: Insufficient price data")
+            # Determine if quarterly or monthly data
+            is_quarterly = series_id.startswith("ATNHPIUS")
+            min_samples = 40 if is_quarterly else 120  # 10 years quarterly or monthly
+
+            if len(market_series) < min_samples:
+                print(f"⚠️  {market_name}: Insufficient price data ({len(market_series)} < {min_samples})")
                 continue
 
             market_df = market_series.to_frame("price_index")
             market_df.index.name = "date"
 
-            # Handle quarterly FHFA data - resample to monthly
-            if series_id.startswith("ATNHPIUS"):
-                market_df = market_df.resample("MS").ffill()
+            # Keep data in original frequency, convert to monthly later for features
+            if is_quarterly:
+                # Don't resample yet - keep quarterly
+                freq_str = "Q"
             else:
                 market_df = market_df.resample("MS").ffill().bfill()
+                freq_str = "M"
 
             # Fetch rent data if available
             rent_data = None
@@ -282,15 +300,24 @@ def main():
                 except Exception as e:
                     pass  # Silently skip rent data if not available
 
-            # Merge with macro
-            df_all = macro_df.join(market_df).dropna(subset=["price_index"])
+            # Merge with macro data
+            # Resample macro to match price data frequency
+            if is_quarterly:
+                macro_resampled = macro_df.resample("QS").mean()
+            else:
+                macro_resampled = macro_df
+
+            df_all = macro_resampled.join(market_df).dropna(subset=["price_index"])
 
             # Create features
-            df_all = create_features(df_all)
+            df_all = create_features(df_all, is_quarterly=is_quarterly)
 
             # Target: 5-year forward return
+            # Adjust periods based on frequency
+            forward_periods = 20 if is_quarterly else 60  # 20 quarters or 60 months = 5 years
+
             df_all["target_5y"] = (
-                    (df_all["price_index"].shift(-60) - df_all["price_index"])
+                    (df_all["price_index"].shift(-forward_periods) - df_all["price_index"])
                     / df_all["price_index"] * 100
             )
 
@@ -298,7 +325,7 @@ def main():
             has_rent = "rent_index" in df_all.columns
             if has_rent:
                 df_all["rent_target_5y"] = (
-                        (df_all["rent_index"].shift(-60) - df_all["rent_index"])
+                        (df_all["rent_index"].shift(-forward_periods) - df_all["rent_index"])
                         / df_all["rent_index"] * 100
                 )
 
@@ -308,8 +335,9 @@ def main():
             # Replace any remaining inf values
             df_all = df_all.replace([np.inf, -np.inf], np.nan).dropna()
 
-            if len(df_all) < 60:
-                print(f"⚠️  {market_name}: Insufficient training samples ({len(df_all)})")
+            min_train_samples = 20 if is_quarterly else 60
+            if len(df_all) < min_train_samples:
+                print(f"⚠️  {market_name}: Insufficient training samples ({len(df_all)} < {min_train_samples})")
                 continue
 
             # Define features
