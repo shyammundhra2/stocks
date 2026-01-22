@@ -179,7 +179,7 @@ def get_risk_regime():
         details = [
             {"label": "Trend (SPY > 200MA)", "pass": spy_trend},
             {"label": "Fear (VIX/MOVE Low)", "pass": vix_low},
-            {"label": "Breadth (RSP/SPY > 50MA)", "pass": breadth_pass},  
+            {"label": "Breadth (RSP/SPY > 50MA)", "pass": breadth_pass},
             {"label": "Credit (HYG/IEF Ratio)", "pass": credit_pass},
             {"label": "Curve (10Y-3M Spread)", "pass": curve_pass},
             {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
@@ -285,13 +285,27 @@ def get_vix_signal():
         vix_std = vix_tail.std()
         z = float((v_last - vix_mean) / vix_std)
 
+        # 2. Breadth Calculations (RSP/SPY Ratio)
+        rsp = shared_data['Close']['RSP']
+        spy = shared_data['Close']['SPY']
+        ratio = rsp / spy
+
+        current_ratio = float(ratio.iloc[-1])
+        ma50_ratio = float(ratio.tail(50).mean())
+        breadth_failing = current_ratio < ma50_ratio
+
         # Vectorized signal determination
         if z > 2.0:
             signal = "AGGRESSIVE_BUY"
         elif z > 1.0:
             signal = "SCALE_IN"
-        elif z < -1.5:
-            signal = "TRIM_PROFITS"
+            # Proposed logic for a more nuanced exit
+            if z < -1.5:
+                signal = "AGGRESSIVE_TRIM"  # Hard exit/Hedge
+            elif z < -1.0 and breadth_failing:
+                signal = "CAUTIOUS_TRIM"  # Trim due to poor breadth
+            else:
+                signal = "HOLD"
         else:
             signal = "NEUTRAL"
 
