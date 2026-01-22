@@ -373,9 +373,11 @@ def main():
     results_df_rent["Rank_Rent"] = range(1, len(results_df_rent) + 1)
 
     # Calculate total return (cap appreciation + rent yield approximation)
-    # Assuming annual rent yield of ~4-6%, total 5-year rent income ~20-30%
-    results_df["Approx_Rent_Yield_5Y"] = results_df["5Y_Rent_Forecast"].fillna(25)  # Default assumption
-    results_df["Total_Return_5Y"] = results_df["5Y_HPA_Forecast"] + results_df["Approx_Rent_Yield_5Y"]
+    # For markets with rent data, estimate 5-year rental income
+    # For markets without rent data, use the mean of markets with data
+    mean_rent_forecast = results_df['5Y_Rent_Forecast'].mean()
+    results_df["Rent_Forecast_Filled"] = results_df["5Y_Rent_Forecast"].fillna(mean_rent_forecast)
+    results_df["Total_Return_5Y"] = results_df["5Y_HPA_Forecast"] + results_df["Rent_Forecast_Filled"]
 
     # Save results
     os.makedirs("results", exist_ok=True)
@@ -413,9 +415,11 @@ def main():
     print(f"\n🏆 Top 10 Markets by Total Return (Price + Rent):")
     for idx, row in results_df_total.head(10).iterrows():
         hpa = row['5Y_HPA_Forecast']
-        rent = row['5Y_Rent_Forecast'] if not np.isnan(row['5Y_Rent_Forecast']) else row['Approx_Rent_Yield_5Y']
+        rent = row['5Y_Rent_Forecast'] if not np.isnan(row['5Y_Rent_Forecast']) else row['Rent_Forecast_Filled']
+        rent_note = "" if not np.isnan(row['5Y_Rent_Forecast']) else "*"
         total = row['Total_Return_5Y']
-        print(f"   {idx + 1:2d}. {row['Market']:20s} Total: {total:6.2f}% (HPA: {hpa:6.2f}% + Rent: {rent:5.2f}%)")
+        print(
+            f"   {idx + 1:2d}. {row['Market']:20s} Total: {total:6.2f}% (HPA: {hpa:6.2f}% + Rent: {rent:5.2f}%{rent_note})")
 
     # Risk-adjusted
     results_df["Sharpe_Ratio"] = results_df["5Y_HPA_Forecast"] / results_df["HPA_Uncertainty"]
@@ -425,6 +429,31 @@ def main():
     for idx, row in results_df_sharpe.head(5).iterrows():
         print(f"   {idx + 1}. {row['Market']:20s} Sharpe: {row['Sharpe_Ratio']:5.2f} "
               f"(HPA: {row['5Y_HPA_Forecast']:6.2f}%, Risk: {row['HPA_Uncertainty']:5.2f}%)")
+
+    # Investment insights
+    print(f"\n💡 Investment Insights:")
+    print(f"   * Markets with asterisk (*) use average rent forecast of {mean_rent_forecast:.2f}%")
+
+    # Find markets with low price-to-rent (potentially undervalued)
+    results_with_ptr = results_df.dropna(subset=["Price_to_Rent"]).copy()
+    if len(results_with_ptr) > 0:
+        results_with_ptr = results_with_ptr.sort_values("Price_to_Rent")
+        print(f"\n🔍 Potentially Undervalued Markets (Low Price-to-Rent Ratio):")
+        for idx, row in results_with_ptr.head(5).iterrows():
+            print(f"   - {row['Market']:20s} P/R: {row['Price_to_Rent']:.1f} | "
+                  f"HPA: {row['5Y_HPA_Forecast']:5.2f}% | Rent: {row['5Y_Rent_Forecast']:5.2f}%")
+
+    # Find markets with high rent growth relative to price growth
+    results_rent_ratio = results_df.dropna(subset=["5Y_Rent_Forecast"]).copy()
+    if len(results_rent_ratio) > 0:
+        results_rent_ratio["Rent_to_HPA_Ratio"] = results_rent_ratio["5Y_Rent_Forecast"] / results_rent_ratio[
+            "5Y_HPA_Forecast"]
+        results_rent_ratio = results_rent_ratio.sort_values("Rent_to_HPA_Ratio", ascending=False)
+        print(f"\n🏡 Best Markets for Rental Income Investors (High Rent Growth vs Price):")
+        for idx, row in results_rent_ratio.head(5).iterrows():
+            ratio = row['Rent_to_HPA_Ratio'] * 100
+            print(f"   - {row['Market']:20s} Rent/HPA: {ratio:.1f}% | "
+                  f"HPA: {row['5Y_HPA_Forecast']:5.2f}% | Rent: {row['5Y_Rent_Forecast']:5.2f}%")
 
     print(f"\n✅ Results saved to: results/market_rankings_with_rent.csv")
 
