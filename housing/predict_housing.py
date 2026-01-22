@@ -16,8 +16,8 @@ warnings.filterwarnings("ignore")
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 fred = Fred(api_key=FRED_API_KEY)
 
-# Case-Shiller Metro Areas
-MARKETS = {
+# Case-Shiller Metro Areas (20 major metros)
+CS_MARKETS = {
     "ATXRNSA": "Atlanta",
     "BOXRNSA": "Boston",
     "CHXRNSA": "Chicago",
@@ -38,6 +38,33 @@ MARKETS = {
     "WDXRNSA": "Washington DC",
     "CEXRNSA": "Cleveland",
 }
+
+# FHFA House Price Index - Additional metros (Quarterly data)
+# Format: ATNHPIUS##### where ##### is the MSA code
+FHFA_MARKETS = {
+    "ATNHPIUS39580Q": "Raleigh",  # Raleigh-Cary, NC
+    "ATNHPIUS34980Q": "Nashville",  # Nashville-Davidson-Murfreesboro, TN
+    "ATNHPIUS12420Q": "Austin",  # Austin-Round Rock, TX
+    "ATNHPIUS40900Q": "Sacramento",  # Sacramento-Roseville-Arden-Arcade, CA
+    "ATNHPIUS26620Q": "Huntsville",  # Huntsville, AL
+    "ATNHPIUS14260Q": "Boise",  # Boise City, ID
+    "ATNHPIUS40140Q": "Riverside",  # Riverside-San Bernardino-Ontario, CA
+    "ATNHPIUS37980Q": "Philadelphia",  # Philadelphia-Camden-Wilmington, PA-NJ
+    "ATNHPIUS26420Q": "Houston",  # Houston-The Woodlands-Sugar Land, TX
+    "ATNHPIUS17140Q": "Cincinnati",  # Cincinnati, OH-KY-IN
+    "ATNHPIUS19820Q": "Detroit-FHFA",  # Detroit-Warren-Dearborn, MI (for comparison)
+    "ATNHPIUS41740Q": "San Antonio",  # San Antonio-New Braunfels, TX
+    "ATNHPIUS18140Q": "Columbus",  # Columbus, OH
+    "ATNHPIUS17460Q": "Cleveland-FHFA",  # Cleveland-Elyria, OH
+    "ATNHPIUS36740Q": "Orlando",  # Orlando-Kissimmee-Sanford, FL
+    "ATNHPIUS19740Q": "Denver-FHFA",  # Denver-Aurora-Lakewood, CO
+    "ATNHPIUS41620Q": "Salt Lake City",  # Salt Lake City, UT
+    "ATNHPIUS32820Q": "Memphis",  # Memphis, TN-MS-AR
+    "ATNHPIUS38900Q": "Portland-FHFA",  # Portland-Vancouver-Hillsboro, OR-WA
+}
+
+# Combine all markets
+MARKETS = {**CS_MARKETS, **FHFA_MARKETS}
 
 # CPI Rent Index by Metro (BLS - Rent of Primary Residence)
 # Format: CUURA### or CUUSA### where ### is the metro code
@@ -62,6 +89,26 @@ RENT_SERIES = {
     "Tampa": "CUURA321SEHA",  # Tampa - Monthly
     "Washington DC": "CUURA311SEHA",  # Washington DC - Monthly
     "Cleveland": "CUURA210SEHA",  # Cleveland - Monthly
+    # FHFA markets - many don't have separate CPI rent series
+    "Raleigh": None,
+    "Nashville": "CUUSA427SEHA",  # Nashville - Annual
+    "Austin": "CUUSA426SEHA",  # Austin - Annual
+    "Sacramento": None,
+    "Huntsville": None,
+    "Boise": None,
+    "Riverside": None,
+    "Philadelphia": "CUURA102SEHA",  # Philadelphia - Monthly
+    "Houston": "CUURA318SEHA",  # Houston - Monthly
+    "Cincinnati": None,
+    "Detroit-FHFA": "CUURA208SEHA",  # Same as Detroit
+    "San Antonio": None,
+    "Columbus": None,
+    "Cleveland-FHFA": "CUURA210SEHA",  # Same as Cleveland
+    "Orlando": None,
+    "Denver-FHFA": "CUUSA433SEHA",  # Same as Denver
+    "Salt Lake City": None,
+    "Memphis": None,
+    "Portland-FHFA": "CUUSA438SEHA",  # Same as Portland
 }
 
 # Macro indicators
@@ -186,6 +233,8 @@ def main():
     predictions = []
 
     print(f"\nTraining models for {len(MARKETS)} markets...\n")
+    print(f"{'Market':<25} {'Source':<15} {'HPA':<10} {'Rent':<10} {'YoY%'}")
+    print("=" * 75)
 
     for series_id, market_name in MARKETS.items():
         try:
@@ -198,14 +247,19 @@ def main():
 
             market_df = market_series.to_frame("price_index")
             market_df.index.name = "date"
-            market_df = market_df.resample("MS").ffill().bfill()
+
+            # Handle quarterly FHFA data - resample to monthly
+            if series_id.startswith("ATNHPIUS"):
+                market_df = market_df.resample("MS").ffill()
+            else:
+                market_df = market_df.resample("MS").ffill().bfill()
 
             # Fetch rent data if available
             rent_data = None
             rent_yoy_latest = np.nan
             price_to_rent_latest = np.nan
 
-            if market_name in RENT_SERIES:
+            if market_name in RENT_SERIES and RENT_SERIES[market_name] is not None:
                 try:
                     rent_series = fred.get_series(RENT_SERIES[market_name], observation_start="2000-01-01")
                     if len(rent_series) > 20:
@@ -226,7 +280,7 @@ def main():
                         price_to_rent_latest = market_series.iloc[-1] / rent_series.iloc[-1] * 100
 
                 except Exception as e:
-                    print(f"   ⚠️  {market_name}: Could not fetch rent data - {str(e)[:40]}")
+                    pass  # Silently skip rent data if not available
 
             # Merge with macro
             df_all = macro_df.join(market_df).dropna(subset=["price_index"])
@@ -352,11 +406,12 @@ def main():
                 "Hist_Mean_Rent": rent_hist_mean,
             })
 
-            rent_str = f"Rent: {rent_pred:6.2f}%" if not np.isnan(rent_pred) else "Rent: N/A"
-            print(f"✅ {market_name:20s} | HPA: {pred:6.2f}% | {rent_str} | YoY: {yoy_change:5.2f}%")
+            rent_str = f"{rent_pred:6.2f}%" if not np.isnan(rent_pred) else "N/A"
+            source = "Case-Shiller" if not series_id.startswith("ATNHPIUS") else "FHFA"
+            print(f"✅ {market_name:<25} {source:<15} {pred:6.2f}% {rent_str:<10} {yoy_change:5.2f}%")
 
         except Exception as e:
-            print(f"❌ {market_name:20s} | Error: {str(e)[:60]}")
+            print(f"❌ {market_name:<25} {'Error':<15} {str(e)[:40]}")
 
     # Create rankings
     if not predictions:
