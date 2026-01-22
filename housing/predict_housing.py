@@ -1,11 +1,10 @@
-# predict_rank_all_markets_improved.py
+# predict_rank_all_markets_with_rent.py
 import os
 import pandas as pd
 import numpy as np
 from fredapi import Fred
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
 import joblib
 import warnings
 
@@ -17,7 +16,7 @@ warnings.filterwarnings("ignore")
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 fred = Fred(api_key=FRED_API_KEY)
 
-# Case-Shiller Metro Areas (using seasonally adjusted where available)
+# Case-Shiller Metro Areas
 MARKETS = {
     "ATXRNSA": "Atlanta",
     "BOXRNSA": "Boston",
@@ -38,6 +37,30 @@ MARKETS = {
     "TPXRNSA": "Tampa",
     "WDXRNSA": "Washington DC",
     "CEXRNSA": "Cleveland",
+}
+
+# CPI Rent Index by Metro (BLS - Rent of Primary Residence)
+# Format: CUURA###SEHA where ### is the metro code
+RENT_SERIES = {
+    "Atlanta": "CUURA319SEHA",  # Atlanta-Sandy Springs-Roswell, GA
+    "Boston": "CUURA103SEHA",  # Boston-Cambridge-Newton, MA-NH
+    "Chicago": "CUURA207SEHA",  # Chicago-Naperville-Elgin, IL-IN-WI
+    "San Diego": "CUURA424SEHA",  # San Diego-Carlsbad, CA
+    "Dallas": "CUURA316SEHA",  # Dallas-Fort Worth-Arlington, TX
+    "Denver": "CUURA433SEHA",  # Denver-Aurora-Lakewood, CO
+    "Detroit": "CUURA208SEHA",  # Detroit-Warren-Dearborn, MI
+    "Los Angeles": "CUURA421SEHA",  # Los Angeles-Long Beach-Anaheim, CA
+    "Miami": "CUURA320SEHA",  # Miami-Fort Lauderdale-West Palm Beach, FL
+    "Minneapolis": "CUURA211SEHA",  # Minneapolis-St. Paul-Bloomington, MN-WI
+    "New York": "CUURA101SEHA",  # New York-Newark-Jersey City, NY-NJ-PA
+    "Phoenix": "CUURA425SEHA",  # Phoenix-Mesa-Scottsdale, AZ
+    "Portland": "CUURA438SEHA",  # Portland-Vancouver-Hillsboro, OR-WA
+    "Las Vegas": "CUURA437SEHA",  # Las Vegas-Henderson-Paradise, NV
+    "San Francisco": "CUURA422SEHA",  # San Francisco-Oakland-Hayward, CA
+    "Seattle": "CUURA423SEHA",  # Seattle-Tacoma-Bellevue, WA
+    "Tampa": "CUURA321SEHA",  # Tampa-St. Petersburg-Clearwater, FL
+    "Washington DC": "CUURA311SEHA",  # Washington-Arlington-Alexandria, DC-VA-MD-WV
+    "Cleveland": "CUURA210SEHA",  # Cleveland-Elyria, OH
 }
 
 # Macro indicators
@@ -85,6 +108,14 @@ def create_features(df, price_col="price_index"):
     df["mom6_return"] = df[price_col].pct_change(6) * 100
     df["price_ma12"] = df[price_col].rolling(12).mean()
     df["price_vs_ma12"] = (df[price_col] / df["price_ma12"] - 1) * 100
+
+    # Rent-based features (if available)
+    if "rent_index" in df.columns:
+        df["rent_yoy"] = df["rent_index"].pct_change(12) * 100  # Monthly CPI data
+        df["rent_mom3"] = df["rent_index"].pct_change(3) * 100
+        df["price_to_rent"] = df[price_col] / df["rent_index"] * 100
+        df["price_to_rent_ma12"] = df["price_to_rent"].rolling(12).mean()
+        df["price_to_rent_deviation"] = (df["price_to_rent"] / df["price_to_rent_ma12"] - 1) * 100
 
     # Macro features
     if "yield_10y" in df.columns and "fed_funds_rate" in df.columns:
@@ -138,7 +169,6 @@ def get_ensemble_prediction(models, X_pred):
         pred = model.predict(X_pred)[0]
         predictions.append(pred)
 
-    # Use median for robustness
     return np.median(predictions), np.std(predictions)
 
 
@@ -158,16 +188,39 @@ def main():
 
     for series_id, market_name in MARKETS.items():
         try:
-            # Fetch market data
+            # Fetch house price data
             market_series = fred.get_series(series_id, observation_start="2000-01-01")
 
             if len(market_series) < 120:
-                print(f"⚠️  {market_name}: Insufficient data")
+                print(f"⚠️  {market_name}: Insufficient price data")
                 continue
 
             market_df = market_series.to_frame("price_index")
             market_df.index.name = "date"
             market_df = market_df.resample("MS").ffill().bfill()
+
+            # Fetch rent data if available
+            rent_data = None
+            rent_yoy_latest = np.nan
+            price_to_rent_latest = np.nan
+
+            if market_name in RENT_SERIES:
+                try:
+                    rent_series = fred.get_series(RENT_SERIES[market_name], observation_start="2000-01-01")
+                    if len(rent_series) > 20:
+                        rent_df = rent_series.to_frame("rent_index")
+                        rent_df.index.name = "date"
+                        # Resample quarterly to monthly
+                        rent_df = rent_df.resample("MS").ffill()
+                        market_df = market_df.join(rent_df)
+
+                        # Calculate latest rent metrics
+                        if len(rent_series) >= 13:
+                            rent_yoy_latest = (rent_series.iloc[-1] / rent_series.iloc[-13] - 1) * 100
+                        price_to_rent_latest = market_series.iloc[-1] / rent_series.iloc[-1] * 100
+
+                except Exception as e:
+                    print(f"   ⚠️  {market_name}: Could not fetch rent data - {str(e)[:40]}")
 
             # Merge with macro
             df_all = macro_df.join(market_df).dropna(subset=["price_index"])
@@ -181,6 +234,14 @@ def main():
                     / df_all["price_index"] * 100
             )
 
+            # Also create rent target if available
+            has_rent = "rent_index" in df_all.columns
+            if has_rent:
+                df_all["rent_target_5y"] = (
+                        (df_all["rent_index"].shift(-60) - df_all["rent_index"])
+                        / df_all["rent_index"] * 100
+                )
+
             # Drop NaN - must drop before selecting features
             df_all = df_all.dropna()
 
@@ -193,7 +254,8 @@ def main():
 
             # Define features
             feature_cols = [col for col in df_all.columns
-                            if col not in ["date", "target_5y", "price_index", "price_ma12"]]
+                            if col not in ["date", "target_5y", "rent_target_5y", "price_index",
+                                           "price_ma12", "price_to_rent_ma12", "rent_index"]]
 
             X = df_all[feature_cols]
             y = df_all["target_5y"]
@@ -210,8 +272,31 @@ def main():
                 print(f"⚠️  {market_name}: Extreme target values (mean={y_mean:.1f}, std={y_std:.1f})")
                 continue
 
-            # Train ensemble
+            # Train ensemble for house prices
             models = train_ensemble_model(X, y)
+
+            # Train rent model if data available
+            rent_pred = np.nan
+            rent_uncertainty = np.nan
+            rent_hist_mean = np.nan
+
+            if has_rent and "rent_target_5y" in df_all.columns:
+                y_rent = df_all["rent_target_5y"].dropna()
+                X_rent = X.loc[y_rent.index]
+
+                if len(y_rent) >= 30:
+                    rent_models = train_ensemble_model(X_rent, y_rent)
+                    rent_hist_mean = y_rent.mean()
+
+                    # Predict rent
+                    latest_row = df_all.iloc[[-1]][feature_cols].copy()
+                    if not latest_row.isnull().any().any():
+                        rent_pred, _ = get_ensemble_prediction(rent_models, latest_row)
+
+                        # Rent uncertainty
+                        rent_preds = [tree.predict(X_rent.to_numpy()) for tree in rent_models['rf'].estimators_[:100]]
+                        rent_residuals = [y_rent.values - pred for pred in rent_preds]
+                        rent_uncertainty = np.mean([np.std(res) for res in rent_residuals])
 
             # Prepare latest data for prediction
             latest_row = df_all.iloc[[-1]][feature_cols].copy()
@@ -231,8 +316,12 @@ def main():
             residuals = [y.values - pred for pred in rf_preds]
             residual_std = np.mean([np.std(res) for res in residuals])
 
-            ci_lower = pred - 1.28 * residual_std  # 80% CI
+            ci_lower = pred - 1.28 * residual_std
             ci_upper = pred + 1.28 * residual_std
+
+            # Rent CIs
+            rent_ci_lower = rent_pred - 1.28 * rent_uncertainty if not np.isnan(rent_uncertainty) else np.nan
+            rent_ci_upper = rent_pred + 1.28 * rent_uncertainty if not np.isnan(rent_uncertainty) else np.nan
 
             # Get current market stats
             current_price = market_series.iloc[-1]
@@ -240,18 +329,25 @@ def main():
 
             predictions.append({
                 "Market": market_name,
-                "5Y_Forecast_Pct": pred,
-                "Uncertainty_Pct": residual_std,
-                "CI_Lower_80": ci_lower,
-                "CI_Upper_80": ci_upper,
+                "5Y_HPA_Forecast": pred,
+                "HPA_Uncertainty": residual_std,
+                "HPA_CI_Lower": ci_lower,
+                "HPA_CI_Upper": ci_upper,
+                "5Y_Rent_Forecast": rent_pred,
+                "Rent_Uncertainty": rent_uncertainty,
+                "Rent_CI_Lower": rent_ci_lower,
+                "Rent_CI_Upper": rent_ci_upper,
                 "Current_Index": current_price,
-                "YoY_Change_Pct": yoy_change,
+                "YoY_Price_Change": yoy_change,
+                "YoY_Rent_Change": rent_yoy_latest,
+                "Price_to_Rent": price_to_rent_latest,
                 "Training_N": len(df_all),
-                "Historical_Mean_5Y": y_mean,
-                "Historical_Std_5Y": y_std
+                "Hist_Mean_HPA": y_mean,
+                "Hist_Mean_Rent": rent_hist_mean,
             })
 
-            print(f"✅ {market_name:20s} | Forecast: {pred:6.2f}% | Hist Avg: {y_mean:6.2f}% | YoY: {yoy_change:5.2f}%")
+            rent_str = f"Rent: {rent_pred:6.2f}%" if not np.isnan(rent_pred) else "Rent: N/A"
+            print(f"✅ {market_name:20s} | HPA: {pred:6.2f}% | {rent_str} | YoY: {yoy_change:5.2f}%")
 
         except Exception as e:
             print(f"❌ {market_name:20s} | Error: {str(e)[:60]}")
@@ -262,56 +358,69 @@ def main():
         return
 
     results_df = pd.DataFrame(predictions)
-    results_df = results_df.sort_values("5Y_Forecast_Pct", ascending=False).reset_index(drop=True)
-    results_df["Rank"] = range(1, len(results_df) + 1)
+    results_df = results_df.sort_values("5Y_HPA_Forecast", ascending=False).reset_index(drop=True)
+    results_df["Rank_HPA"] = range(1, len(results_df) + 1)
 
-    # Reorder columns
-    results_df = results_df[[
-        "Rank", "Market", "5Y_Forecast_Pct", "Uncertainty_Pct",
-        "CI_Lower_80", "CI_Upper_80", "YoY_Change_Pct",
-        "Historical_Mean_5Y", "Historical_Std_5Y", "Training_N"
-    ]]
+    # Rank by rent appreciation
+    results_df_rent = results_df.dropna(subset=["5Y_Rent_Forecast"]).copy()
+    results_df_rent = results_df_rent.sort_values("5Y_Rent_Forecast", ascending=False).reset_index(drop=True)
+    results_df_rent["Rank_Rent"] = range(1, len(results_df_rent) + 1)
+
+    # Calculate total return (cap appreciation + rent yield approximation)
+    # Assuming annual rent yield of ~4-6%, total 5-year rent income ~20-30%
+    results_df["Approx_Rent_Yield_5Y"] = results_df["5Y_Rent_Forecast"].fillna(25)  # Default assumption
+    results_df["Total_Return_5Y"] = results_df["5Y_HPA_Forecast"] + results_df["Approx_Rent_Yield_5Y"]
 
     # Save results
     os.makedirs("results", exist_ok=True)
-    results_df.to_csv("results/market_rankings_improved.csv", index=False)
+    results_df.to_csv("results/market_rankings_with_rent.csv", index=False)
 
-    # Display
-    print("\n" + "=" * 120)
-    print("📊 5-YEAR HOME PRICE APPRECIATION FORECAST - MARKET RANKINGS (IMPROVED)")
-    print("=" * 120)
-    print(results_df.to_string(index=False, float_format=lambda x: f"{x:.2f}"))
-    print("=" * 120)
+    # Display HPA rankings
+    print("\n" + "=" * 140)
+    print("📊 5-YEAR HOME PRICE APPRECIATION FORECAST")
+    print("=" * 140)
+    display_cols = ["Rank_HPA", "Market", "5Y_HPA_Forecast", "HPA_Uncertainty",
+                    "5Y_Rent_Forecast", "Rent_Uncertainty", "YoY_Price_Change", "YoY_Rent_Change"]
+    print(results_df[display_cols].to_string(index=False,
+                                             float_format=lambda x: f"{x:.2f}" if not np.isnan(x) else "N/A"))
+    print("=" * 140)
+
+    # Display rent rankings
+    if len(results_df_rent) > 0:
+        print("\n" + "=" * 100)
+        print("📊 5-YEAR RENT APPRECIATION FORECAST - TOP MARKETS")
+        print("=" * 100)
+        rent_display = results_df_rent[["Rank_Rent", "Market", "5Y_Rent_Forecast", "Rent_Uncertainty",
+                                        "YoY_Rent_Change", "Price_to_Rent"]].head(10)
+        print(rent_display.to_string(index=False, float_format=lambda x: f"{x:.2f}" if not np.isnan(x) else "N/A"))
+        print("=" * 100)
 
     # Summary
     print(f"\n📈 Summary Statistics:")
-    print(f"   Mean Forecast:     {results_df['5Y_Forecast_Pct'].mean():6.2f}%")
-    print(f"   Median Forecast:   {results_df['5Y_Forecast_Pct'].median():6.2f}%")
-    print(f"   Std Dev:           {results_df['5Y_Forecast_Pct'].std():6.2f}%")
-    print(
-        f"   Range:             {results_df['5Y_Forecast_Pct'].min():6.2f}% to {results_df['5Y_Forecast_Pct'].max():6.2f}%")
+    print(f"   HPA Forecast - Mean:   {results_df['5Y_HPA_Forecast'].mean():6.2f}%")
+    print(f"   HPA Forecast - Median: {results_df['5Y_HPA_Forecast'].median():6.2f}%")
+    print(f"   Rent Forecast - Mean:  {results_df['5Y_Rent_Forecast'].mean():6.2f}%")
+    print(f"   Rent Forecast - Median:{results_df['5Y_Rent_Forecast'].median():6.2f}%")
 
-    # Top/Bottom 5
-    print(f"\n🏆 Top 5 Markets:")
-    for _, row in results_df.head(5).iterrows():
-        print(f"   {row['Rank']:2.0f}. {row['Market']:20s} {row['5Y_Forecast_Pct']:6.2f}% "
-              f"[{row['CI_Lower_80']:6.2f}%, {row['CI_Upper_80']:6.2f}%]")
+    # Top markets by total return
+    results_df_total = results_df.sort_values("Total_Return_5Y", ascending=False).reset_index(drop=True)
+    print(f"\n🏆 Top 10 Markets by Total Return (Price + Rent):")
+    for idx, row in results_df_total.head(10).iterrows():
+        hpa = row['5Y_HPA_Forecast']
+        rent = row['5Y_Rent_Forecast'] if not np.isnan(row['5Y_Rent_Forecast']) else row['Approx_Rent_Yield_5Y']
+        total = row['Total_Return_5Y']
+        print(f"   {idx + 1:2d}. {row['Market']:20s} Total: {total:6.2f}% (HPA: {hpa:6.2f}% + Rent: {rent:5.2f}%)")
 
-    print(f"\n⚠️  Bottom 5 Markets:")
-    for _, row in results_df.tail(5).iterrows():
-        print(f"   {row['Rank']:2.0f}. {row['Market']:20s} {row['5Y_Forecast_Pct']:6.2f}% "
-              f"[{row['CI_Lower_80']:6.2f}%, {row['CI_Upper_80']:6.2f}%]")
-
-    # Risk-adjusted ranking
-    results_df["Sharpe_Ratio"] = results_df["5Y_Forecast_Pct"] / results_df["Uncertainty_Pct"]
+    # Risk-adjusted
+    results_df["Sharpe_Ratio"] = results_df["5Y_HPA_Forecast"] / results_df["HPA_Uncertainty"]
     results_df_sharpe = results_df.sort_values("Sharpe_Ratio", ascending=False).reset_index(drop=True)
 
     print(f"\n📊 Best Risk-Adjusted Returns (Top 5 by Sharpe Ratio):")
     for idx, row in results_df_sharpe.head(5).iterrows():
         print(f"   {idx + 1}. {row['Market']:20s} Sharpe: {row['Sharpe_Ratio']:5.2f} "
-              f"(Return: {row['5Y_Forecast_Pct']:6.2f}%, Risk: {row['Uncertainty_Pct']:5.2f}%)")
+              f"(HPA: {row['5Y_HPA_Forecast']:6.2f}%, Risk: {row['HPA_Uncertainty']:5.2f}%)")
 
-    print(f"\n✅ Results saved to: results/market_rankings_improved.csv")
+    print(f"\n✅ Results saved to: results/market_rankings_with_rent.csv")
 
 
 if __name__ == "__main__":
