@@ -1,31 +1,37 @@
+# train_predict_hpa_20city_composite.py
 import os
 import pandas as pd
 import numpy as np
 from fredapi import Fred
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
+import joblib
+import warnings
 
-# ---------------------------------------------
-# 1) FRED Setup
-# ---------------------------------------------
+warnings.filterwarnings("ignore")
+
+# -----------------------------
+# 1) FRED API Setup
+# -----------------------------
 fred = Fred(api_key=os.getenv("FRED_API_KEY"))
 
-# ---------------------------------------------
-# 2) Macro Series Including Foreclosure Proxy
-# ---------------------------------------------
+# -----------------------------
+# 2) Macro series to fetch
+# -----------------------------
 macro_ids = {
     "UNRATE": "unemployment_rate",
     "FEDFUNDS": "fed_funds_rate",
     "GS10": "yield_10y",
     "HOUST": "housing_starts",
     "PERMIT": "building_permits",
-    "DRSFRMACBS": "mortgage_serious_delinquency_rate"  # foreclosure proxy
+    "DRSFRMACBS": "mortgage_serious_delinquency_rate"
 }
 
+# -----------------------------
+# 3) Fetch macro data (monthly, 1991+)
+# -----------------------------
 macro_dfs = []
 for sid, name in macro_ids.items():
-    s = fred.get_series(sid)
+    s = fred.get_series(sid, observation_start="1991-01-01")
     df_series = s.to_frame(name)
     df_series.index.name = "date"
     macro_dfs.append(df_series)
@@ -33,115 +39,50 @@ for sid, name in macro_ids.items():
 macro_df = pd.concat(macro_dfs, axis=1).sort_index()
 macro_df = macro_df.resample("MS").ffill().bfill()
 
-# ---------------------------------------------
-# 3) Home Sales Features
-# ---------------------------------------------
-sales_ids = {
-    "EXHOSLUSM495S": "existing_home_sales",
-    "HSN1F": "new_one_family_homes_sold"
-}
+# -----------------------------
+# 4) Fetch Case-Shiller 20-City Composite
+# -----------------------------
+cs20 = fred.get_series("SPCS20RSA", observation_start="1991-01-01")
+cs20_df = cs20.to_frame("cs20_index")
+cs20_df.index.name = "date"
+cs20_df = cs20_df.resample("MS").ffill().bfill()
 
-sales_dfs = []
-for sid, name in sales_ids.items():
-    s = fred.get_series(sid)
-    df_series = s.to_frame(name)
-    df_series.index.name = "date"
-    sales_dfs.append(df_series)
+# -----------------------------
+# 5) Compute 5-year forward returns
+# -----------------------------
+df_all = macro_df.join(cs20_df).reset_index()
+df_all["5y_return"] = (df_all["cs20_index"].shift(-60) - df_all["cs20_index"]) / df_all["cs20_index"] * 100
+df_all = df_all.dropna(subset=["5y_return"])
+print("Number of training samples:", df_all.shape[0])
 
-sales_df = pd.concat(sales_dfs, axis=1).sort_index()
-sales_df = sales_df.resample("MS").ffill().bfill()
+# -----------------------------
+# 6) Features and target
+# -----------------------------
+feature_cols = list(macro_ids.values()) + ["cs20_index"]
+X = df_all[feature_cols]
+y = df_all["5y_return"]
 
-# ---------------------------------------------
-# 4) Case-Shiller Home Price Series
-# ---------------------------------------------
-price_ids = {
-    "SPCS10RSA": "case_shiller_10_city",
-    "SPCS20RSA": "case_shiller_20_city",
-    "PHXRSA": "phoenix_index",
-    "LXXRSA": "los_angeles_index",
-    "DNXRSA": "denver_index",
-    "SFXRSA": "san_francisco_index",
-    "MIXRSA": "miami_index"
-}
-
-price_dfs = []
-for sid, name in price_ids.items():
-    s = fred.get_series(sid)
-    df_series = s.to_frame(name)
-    df_series.index.name = "date"
-    price_dfs.append(df_series)
-
-price_df = pd.concat(price_dfs, axis=1).sort_index()
-price_df = price_df.resample("MS").last().ffill().bfill()
-
-# ---------------------------------------------
-# 5) Combine Macro, Sales, and Prices
-# ---------------------------------------------
-df_all = macro_df.join(sales_df, how="inner").join(price_df, how="inner")
-df_all = df_all.reset_index()
-
-# ---------------------------------------------
-# 6) Melt Data for ML
-# ---------------------------------------------
-# Use the correct column names for sales (values, not keys)
-df_long = df_all.melt(
-    id_vars=["date"] + list(macro_ids.values()) + list(sales_ids.values()),  # <-- use values
-    value_vars=list(price_ids.values()),
-    var_name="metro",
-    value_name="price"
-)
-
-# ---------------------------------------------
-# 7) Compute 5-Year Forward Return per row
-# ---------------------------------------------
-def compute_5y_return(row):
-    future_date = row["date"] + pd.DateOffset(months=60)
-    try:
-        future_price = df_all.loc[df_all["date"] == future_date, row["metro"]].values[0]
-        return (future_price - row["price"]) / row["price"] * 100
-    except IndexError:
-        return np.nan
-
-df_long["5y_return"] = df_long.apply(compute_5y_return, axis=1)
-df_long = df_long.dropna(subset=["5y_return"])
-
-# ---------------------------------------------
-# 8) Prepare Features for ML
-# ---------------------------------------------
-encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
-metro_encoded = encoder.fit_transform(df_long[["metro"]])
-metro_cols = encoder.get_feature_names_out(["metro"])
-df_metro_enc = pd.DataFrame(metro_encoded, columns=metro_cols, index=df_long.index)
-
-X_numeric = df_long[list(macro_ids.values()) + list(sales_ids.values())]
-X = pd.concat([X_numeric.reset_index(drop=True), df_metro_enc.reset_index(drop=True)], axis=1)
-y = df_long["5y_return"]
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-
-# ---------------------------------------------
-# 9) Train RandomForest
-# ---------------------------------------------
+# -----------------------------
+# 7) Train RandomForest
+# -----------------------------
 model = RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1)
-model.fit(X_train, y_train)
+model.fit(X, y)
 
-# Predict 5-year HPA
-preds = model.predict(X)
-# Confidence = standard deviation across trees
-pred_std = np.std([tree.predict(X) for tree in model.estimators_], axis=0)
+# Save model
+os.makedirs("models", exist_ok=True)
+joblib.dump(model, "models/rf_hpa_20city_composite.pkl")
 
-df_long["pred_5y_return"] = preds
-df_long["pred_confidence"] = pred_std
+print("✅ Trained HPA model using Case-Shiller 20-City Composite + macro (1991+)")
 
-# ---------------------------------------------
-# 10) Rank Latest Predictions by Metro
-# ---------------------------------------------
-latest_idx = df_long.groupby("metro")["date"].idxmax()
-df_pred = df_long.loc[latest_idx, ["metro", "pred_5y_return", "pred_confidence"]]
-df_pred = df_pred.sort_values(by="pred_5y_return", ascending=False)
+# -----------------------------
+# 8) Predict latest 5-year HPA
+# -----------------------------
+latest_macro = {name: fred.get_series(sid).iloc[-1] for sid, name in macro_ids.items()}
+latest_price = cs20.iloc[-1]
+X_pred = pd.DataFrame([{**latest_macro, "cs20_index": latest_price}])
 
-# ---------------------------------------------
-# 11) Print Ranked Metro Predictions
-# ---------------------------------------------
-print("\n--- 5-Year Forward Home Price Appreciation Predictions ---")
-print(df_pred.to_string(index=False))
+pred = model.predict(X_pred)[0]
+confidence = np.std([tree.predict(X_pred.to_numpy()) for tree in model.estimators_])
+
+print("\n--- 5-Year Forward HPA Prediction ---")
+print(f"Case-Shiller 20-City Composite: {pred:.2f}% ± {confidence:.2f}%")
