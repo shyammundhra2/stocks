@@ -172,9 +172,14 @@ def get_risk_regime():
         spy_trend = bool(last_vals['SPY'] > spy_ma200)
         vix_low = bool(last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110)
 
+        # Breadth Logic: RSP/SPY Ratio vs its 50-day Moving Average
+        rsp_spy_ratio = data['RSP'] / data['SPY']
+        breadth_pass = bool(rsp_spy_ratio.iloc[-1] > rsp_spy_ratio.rolling(50).mean().iloc[-1])
+
         details = [
             {"label": "Trend (SPY > 200MA)", "pass": spy_trend},
             {"label": "Fear (VIX/MOVE Low)", "pass": vix_low},
+            {"label": "Breadth (RSP/SPY > 50MA)", "pass": breadth_pass},  
             {"label": "Credit (HYG/IEF Ratio)", "pass": credit_pass},
             {"label": "Curve (10Y-3M Spread)", "pass": curve_pass},
             {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
@@ -539,7 +544,7 @@ def get_trends():
             else:
                 status = "HOLD"
 
-            pos_size = compute_kelly_size(ml_conf, last, stop)
+            pos_size = _compute_kelly_size(ml_conf, last, stop)
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
             results.append({
@@ -563,7 +568,7 @@ def get_trends():
     return sorted(results, key=lambda x: x["slope"], reverse=True)
 
 
-def compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
+def _compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
     """
     Quarter Kelly sizing logic: f* = (p - q/b) / 4
     b (odds) is set to 2.0 based on a conservative 2:1 Reward/Risk.
