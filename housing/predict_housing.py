@@ -40,27 +40,28 @@ MARKETS = {
 }
 
 # CPI Rent Index by Metro (BLS - Rent of Primary Residence)
-# Format: CUURA###SEHA where ### is the metro code
+# Format: CUURA### or CUUSA### where ### is the metro code
+# Note: Some series are monthly (CUURA), some are annual/semi-annual (CUUSA)
 RENT_SERIES = {
-    "Atlanta": "CUURA319SEHA",  # Atlanta-Sandy Springs-Roswell, GA
-    "Boston": "CUURA103SEHA",  # Boston-Cambridge-Newton, MA-NH
-    "Chicago": "CUURA207SEHA",  # Chicago-Naperville-Elgin, IL-IN-WI
-    "San Diego": "CUURA424SEHA",  # San Diego-Carlsbad, CA
-    "Dallas": "CUURA316SEHA",  # Dallas-Fort Worth-Arlington, TX
-    "Denver": "CUURA433SEHA",  # Denver-Aurora-Lakewood, CO
-    "Detroit": "CUURA208SEHA",  # Detroit-Warren-Dearborn, MI
-    "Los Angeles": "CUURA421SEHA",  # Los Angeles-Long Beach-Anaheim, CA
-    "Miami": "CUURA320SEHA",  # Miami-Fort Lauderdale-West Palm Beach, FL
-    "Minneapolis": "CUURA211SEHA",  # Minneapolis-St. Paul-Bloomington, MN-WI
-    "New York": "CUURA101SEHA",  # New York-Newark-Jersey City, NY-NJ-PA
-    "Phoenix": "CUURA425SEHA",  # Phoenix-Mesa-Scottsdale, AZ
-    "Portland": "CUURA438SEHA",  # Portland-Vancouver-Hillsboro, OR-WA
-    "Las Vegas": "CUURA437SEHA",  # Las Vegas-Henderson-Paradise, NV
-    "San Francisco": "CUURA422SEHA",  # San Francisco-Oakland-Hayward, CA
-    "Seattle": "CUURA423SEHA",  # Seattle-Tacoma-Bellevue, WA
-    "Tampa": "CUURA321SEHA",  # Tampa-St. Petersburg-Clearwater, FL
-    "Washington DC": "CUURA311SEHA",  # Washington-Arlington-Alexandria, DC-VA-MD-WV
-    "Cleveland": "CUURA210SEHA",  # Cleveland-Elyria, OH
+    "Atlanta": "CUURA319SEHA",  # Atlanta - Monthly
+    "Boston": "CUURA103SEHA",  # Boston - Monthly
+    "Chicago": "CUURA207SEHA",  # Chicago - Monthly
+    "San Diego": "CUURA424SEHA",  # San Diego - Monthly
+    "Dallas": "CUURA316SEHA",  # Dallas - Monthly
+    "Denver": "CUUSA433SEHA",  # Denver - Annual
+    "Detroit": "CUURA208SEHA",  # Detroit - Monthly
+    "Los Angeles": "CUURA421SEHA",  # Los Angeles - Monthly
+    "Miami": "CUURA320SEHA",  # Miami - Monthly
+    "Minneapolis": "CUUSA211SEHA",  # Minneapolis - Annual
+    "New York": "CUURA101SEHA",  # New York - Monthly
+    "Phoenix": "CUUSA429SEHA",  # Phoenix - Annual
+    "Portland": "CUUSA438SEHA",  # Portland - Annual
+    "Las Vegas": "CUUSA437SEHA",  # Las Vegas - Annual
+    "San Francisco": "CUURA422SEHA",  # San Francisco - Monthly
+    "Seattle": "CUURA423SEHA",  # Seattle - Monthly
+    "Tampa": "CUURA321SEHA",  # Tampa - Monthly
+    "Washington DC": "CUURA311SEHA",  # Washington DC - Monthly
+    "Cleveland": "CUURA210SEHA",  # Cleveland - Monthly
 }
 
 # Macro indicators
@@ -210,13 +211,18 @@ def main():
                     if len(rent_series) > 20:
                         rent_df = rent_series.to_frame("rent_index")
                         rent_df.index.name = "date"
-                        # Resample quarterly to monthly
+                        # Handle both monthly and annual/semi-annual data
+                        # Forward fill to monthly if needed
                         rent_df = rent_df.resample("MS").ffill()
                         market_df = market_df.join(rent_df)
 
                         # Calculate latest rent metrics
-                        if len(rent_series) >= 13:
-                            rent_yoy_latest = (rent_series.iloc[-1] / rent_series.iloc[-13] - 1) * 100
+                        if len(rent_series) >= 2:
+                            # For annual data, calculate YoY differently
+                            if len(rent_series) >= 13:
+                                rent_yoy_latest = (rent_series.iloc[-1] / rent_series.iloc[-13] - 1) * 100
+                            else:
+                                rent_yoy_latest = (rent_series.iloc[-1] / rent_series.iloc[-2] - 1) * 100
                         price_to_rent_latest = market_series.iloc[-1] / rent_series.iloc[-1] * 100
 
                 except Exception as e:
