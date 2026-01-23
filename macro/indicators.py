@@ -396,20 +396,17 @@ def get_sector_rotation():
             out.append({
                 "name": name,
                 "gain": f"{rel_gain:+.2%}",
-                "is_positive": rel_gain > 0,
+                "is_positive": slope > 0,
                 "r2": r2,
                 "slope": slope,
                 "gradient": gradient,
                 "slope_change": slope_change
             })
 
-        # Use itemgetter for faster sorting
-        from operator import itemgetter
-        gain_extractor = lambda x: float(x["gain"].strip("%+"))
-        return {"all_ranked": sorted(out, key=gain_extractor, reverse=True)}
+        # Sort by slope instead of gain
+        return {"all_ranked": sorted(out, key=lambda x: x["slope"], reverse=True)}
     except:
         return {"all_ranked": []}
-
 
 @ttl_cache(30)
 def get_country_rotation():
