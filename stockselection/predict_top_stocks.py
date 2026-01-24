@@ -217,7 +217,7 @@ def infer_today(top_n=25, avoid_n=25):
 
     # ---------------- OUTPUT ----------------
     # Round numeric columns to 1 decimal place
-    df['Prob'] = df['Prob'].round(1)
+    df['Prob'] = df['Prob'].round(2)
     df['Current_Price'] = df['Current_Price'].round(1)
     df['Stop_Loss'] = df['Stop_Loss'].round(1)
     df['Stop_Pct'] = df['Stop_Pct'].round(1)
