@@ -21,7 +21,7 @@ LOOKBACK_3M = 63
 LOOKBACK_STOP = 50  # Look back 50 days for 50-day high
 ATR_PERIOD = 14
 ATR_MULTIPLIER = 2.5
-BUFFER_DAYS = LOOKBACK_3M * 3  # give more data for smoothing
+BUFFER_DAYS = LOOKBACK_3M * 3# give more data for smoothing
 
 # Entry timing parameters
 RSI_PERIOD = 14
@@ -153,7 +153,7 @@ def infer_today(top_n=25, avoid_n=25):
 
     # Date range
     end = datetime.now()
-    start = end - timedelta(days=BUFFER_DAYS)
+    start = end - timedelta(days=365)
     print(f"📅 Date range: {start.date()} to {end.date()}")
 
     # Macro & sector data
