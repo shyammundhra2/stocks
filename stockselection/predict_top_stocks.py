@@ -19,9 +19,17 @@ SECTOR_TICKERS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV',
                   'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
 
 LOOKBACK_3M = 63
+LOOKBACK_STOP = 50  # Look back 50 days for max price stop loss
 ATR_PERIOD = 14
 ATR_MULTIPLIER = 2.5
 BUFFER_DAYS = LOOKBACK_3M * 2
+
+# Entry timing parameters
+RSI_PERIOD = 14
+RSI_OVERSOLD = 45
+RSI_OVERBOUGHT = 65
+SMA_SHORT = 20
+MIN_MOMENTUM = 0.10  # 10% minimum 3-month momentum
 
 # Performance settings
 MAX_WORKERS = 10
@@ -39,8 +47,70 @@ def calculate_atr(high, low, close, period=14):
     return atr
 
 
+def calculate_rsi(close, period=14):
+    """Calculate RSI indicator."""
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def evaluate_entry_timing(stock_data, mom_3m):
+    """
+    Evaluate trading signal for stock.
+
+    Signal Rules:
+    - BUY: Strong momentum (>10%), RSI 45-65, Price > 20D SMA
+    - HOLD: Moderate momentum (0-10%), or price near SMA, not extreme RSI
+    - SELL: Negative momentum (<0%), or RSI extreme (>70 or <30), or price < SMA
+
+    Returns: 'BUY', 'HOLD', or 'SELL' and component signals
+    """
+    close = stock_data['Close']
+
+    # Calculate indicators
+    rsi = calculate_rsi(close, RSI_PERIOD)
+    sma_20 = close.rolling(SMA_SHORT).mean()
+
+    current_price = close.iloc[-1]
+    current_rsi = rsi.iloc[-1]
+    current_sma = sma_20.iloc[-1]
+
+    price_vs_sma = ((current_price - current_sma) / current_sma) * 100
+
+    # Determine signal
+    signal = "HOLD"  # Default
+
+    # SELL conditions (highest priority)
+    if (mom_3m < 0 or  # Negative momentum
+            current_rsi > 70 or  # Overbought
+            current_rsi < 30 or  # Oversold
+            current_price < current_sma):  # Below trend
+        signal = "SELL"
+
+    # BUY conditions (all must be true)
+    elif (mom_3m > MIN_MOMENTUM and  # Strong momentum
+          RSI_OVERSOLD <= current_rsi <= RSI_OVERBOUGHT and  # Healthy RSI
+          current_price > current_sma):  # Above trend
+        signal = "BUY"
+
+    # Otherwise HOLD (moderate conditions)
+
+    return {
+        'rsi': current_rsi,
+        'sma_20': current_sma,
+        'price_vs_sma': price_vs_sma,
+        'signal': signal,
+        'momentum_ok': mom_3m > MIN_MOMENTUM,
+        'rsi_ok': RSI_OVERSOLD <= current_rsi <= RSI_OVERBOUGHT,
+        'trend_ok': current_price > current_sma
+    }
+
+
 def download_stocks_batch(tickers, start, end, batch_size=50):
-    """Download stocks in bulk batches with retry logic and ATR calculation."""
+    """Download stocks in bulk batches with retry logic and signal evaluation."""
     all_results = []
     total_batches = (len(tickers) + batch_size - 1) // batch_size
 
@@ -55,7 +125,7 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
                 if i > 0:
                     time.sleep(RETRY_DELAY)
 
-                # Download with full OHLC data for ATR calculation
+                # Download with full OHLC data
                 data = yf.download(batch, start=start, end=end,
                                    auto_adjust=True, progress=False,
                                    group_by='ticker', threads=True)
@@ -68,7 +138,7 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
                         else:
                             stock_data = data[ticker] if ticker in data.columns.get_level_values(0) else pd.DataFrame()
 
-                        if stock_data.empty or len(stock_data) < max(LOOKBACK_3M, ATR_PERIOD):
+                        if stock_data.empty or len(stock_data) < max(LOOKBACK_3M, ATR_PERIOD, SMA_SHORT, LOOKBACK_STOP):
                             continue
 
                         # Calculate 3-month momentum
@@ -76,7 +146,7 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
                         if pd.isna(mom_3m):
                             continue
 
-                        # Calculate ATR and stop loss
+                        # Calculate ATR
                         atr = calculate_atr(stock_data['High'],
                                             stock_data['Low'],
                                             stock_data['Close'],
@@ -88,8 +158,13 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
                         if pd.isna(current_atr) or pd.isna(current_price):
                             continue
 
-                        stop_loss = current_price - (ATR_MULTIPLIER * current_atr)
+                        # Calculate stop loss as: Max Price (last 50 days) - 2.5 * ATR
+                        max_price_50d = stock_data['High'].tail(LOOKBACK_STOP).max()
+                        stop_loss = max_price_50d - (ATR_MULTIPLIER * current_atr)
                         stop_pct = ((stop_loss - current_price) / current_price) * 100
+
+                        # Evaluate trading signal
+                        entry_signals = evaluate_entry_timing(stock_data, mom_3m)
 
                         all_results.append({
                             'ticker': ticker,
@@ -97,7 +172,10 @@ def download_stocks_batch(tickers, start, end, batch_size=50):
                             'current_price': float(current_price),
                             'atr': float(current_atr),
                             'stop_loss': float(stop_loss),
-                            'stop_pct': float(stop_pct)
+                            'stop_pct': float(stop_pct),
+                            'rsi': float(entry_signals['rsi']),
+                            'price_vs_sma': float(entry_signals['price_vs_sma']),
+                            'signal': entry_signals['signal']
                         })
                     except Exception:
                         continue
@@ -131,7 +209,7 @@ def load_company_names_from_csv():
 
 
 def infer_today(top_n=25, avoid_n=25):
-    print("🚀 Starting optimized inference pipeline with ATR stops...")
+    print("🚀 Starting optimized inference pipeline with BUY/HOLD/SELL signals...")
 
     # ---------------- LOAD MODEL ----------------
     try:
@@ -166,7 +244,7 @@ def infer_today(top_n=25, avoid_n=25):
     print("✅ Macro features computed")
 
     # ---------------- STOCK FEATURES ----------------
-    print("📈 Bulk downloading stock data with ATR calculation...")
+    print("📈 Bulk downloading stock data with signal evaluation...")
     symbols_df = pd.read_csv(LOCAL_FILE)
     symbols = symbols_df['Symbol'].tolist()
 
@@ -174,7 +252,7 @@ def infer_today(top_n=25, avoid_n=25):
     print(f"✅ Loaded {len(ticker_to_name)} company names from CSV")
 
     stock_results = download_stocks_batch(symbols, start, end, batch_size=BATCH_SIZE)
-    print(f"✅ Downloaded {len(stock_results)}/{len(symbols)} valid stocks with ATR stops")
+    print(f"✅ Downloaded {len(stock_results)}/{len(symbols)} valid stocks with signals")
 
     # ---------------- BUILD DATAFRAME ----------------
     print("🔧 Building feature matrix...")
@@ -188,6 +266,9 @@ def infer_today(top_n=25, avoid_n=25):
         row['ATR'] = result['atr']
         row['Stop_Loss'] = result['stop_loss']
         row['Stop_Pct'] = result['stop_pct']
+        row['RSI'] = result['rsi']
+        row['Price_vs_SMA'] = result['price_vs_sma']
+        row['Signal'] = result['signal']
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -213,32 +294,92 @@ def infer_today(top_n=25, avoid_n=25):
     df['Confidence'] = pd.qcut(df['Prob'], q=[0, 0.33, 0.66, 1],
                                labels=['Avoid', 'Medium', 'Strong'])
 
+    # ---------------- ENTRY TIMING EVALUATION ----------------
+    print("⏱️  Evaluating entry timing with probability threshold...")
+
+    # Evaluate entry criteria for each stock (now with probability)
+    entry_signals = []
+    for idx, row in df.iterrows():
+        prob_ok = row['Prob'] > 0.5
+        momentum_ok = row['Stock_Mom_3M'] > MIN_MOMENTUM
+        rsi_ok = RSI_OVERSOLD <= row['RSI'] <= RSI_OVERBOUGHT
+        trend_ok = row['Price_vs_SMA'] > 0  # Price above SMA
+
+        # ALL conditions must be met
+        entry_now = "BUY" if (prob_ok and momentum_ok and rsi_ok and trend_ok) else "WAIT"
+        entry_signals.append(entry_now)
+
+    df['Entry_Now'] = entry_signals
+
     df = df.sort_values(['Prob', 'Margin'], ascending=False)
 
     # ---------------- OUTPUT ----------------
-    # Round numeric columns to 1 decimal place
+    # Round numeric columns
     df['Prob'] = df['Prob'].round(2)
     df['Current_Price'] = df['Current_Price'].round(1)
     df['Stop_Loss'] = df['Stop_Loss'].round(1)
     df['Stop_Pct'] = df['Stop_Pct'].round(1)
     df['ATR'] = df['ATR'].round(1)
+    df['RSI'] = df['RSI'].round(1)
+    df['Price_vs_SMA'] = df['Price_vs_SMA'].round(1)
 
-    print("\n" + "=" * 100)
-    print("TOP 2027 STRATEGIC HOLDS (with ATR Stops)")
-    print("=" * 100)
-    output_cols = ['Ticker', 'Name', 'Prob', 'Confidence', 'Current_Price', 'Stop_Loss', 'Stop_Pct', 'ATR']
+    print("\n" + "=" * 120)
+    print("TOP 2027 STRATEGIC HOLDS (with BUY/HOLD/SELL Signals)")
+    print("=" * 120)
+    output_cols = ['Ticker', 'Name', 'Prob', 'Signal', 'RSI', 'Price_vs_SMA',
+                   'Current_Price', 'Stop_Loss', 'Stop_Pct']
     print(df[output_cols].head(top_n).to_string(index=False))
 
-    print("\n" + "=" * 100)
-    print("AVOID / UNDERWEIGHT")
-    print("=" * 100)
+    # Show buy signals
+    buy_signals = df[df['Signal'] == 'BUY'].head(15)
+    if not buy_signals.empty:
+        print("\n" + "=" * 120)
+        print(f"🟢 BUY SIGNALS ({len(df[df['Signal'] == 'BUY'])} total stocks)")
+        print("=" * 120)
+        print(buy_signals[output_cols].to_string(index=False))
+
+    # Show hold signals
+    hold_signals = df[df['Signal'] == 'HOLD'].head(10)
+    if not hold_signals.empty:
+        print("\n" + "=" * 120)
+        print(f"🟡 HOLD SIGNALS ({len(df[df['Signal'] == 'HOLD'])} total stocks)")
+        print("=" * 120)
+        print(hold_signals[output_cols].to_string(index=False))
+
+    # Show sell signals
+    sell_signals = df[df['Signal'] == 'SELL'].head(15)
+    if not sell_signals.empty:
+        print("\n" + "=" * 120)
+        print(f"🔴 SELL SIGNALS ({len(df[df['Signal'] == 'SELL'])} total stocks)")
+        print("=" * 120)
+        print(sell_signals[output_cols].to_string(index=False))
+
+    print("\n" + "=" * 120)
+    print("LOWEST RANKED STOCKS")
+    print("=" * 120)
     print(df[output_cols].tail(avoid_n).to_string(index=False))
 
     # Save output
-    output_file = 'macro_2027_ranking_with_atr_stops.csv'
+    output_file = 'macro_2027_ranking_with_signals.csv'
     df[output_cols].to_csv(output_file, index=False)
     print(f"\n✅ Ranking CSV saved → {output_file}")
-    print(f"📊 ATR Stop Calculation: Current Price - ({ATR_MULTIPLIER} × {ATR_PERIOD}-day ATR)")
+
+    # Print signal summary
+    total_buy = len(df[df['Signal'] == 'BUY'])
+    total_hold = len(df[df['Signal'] == 'HOLD'])
+    total_sell = len(df[df['Signal'] == 'SELL'])
+
+    print(f"\n📊 Trading Signal Summary:")
+    print(f"   • Total stocks analyzed: {len(df)}")
+    print(f"   • 🟢 BUY signals: {total_buy} ({total_buy / len(df) * 100:.1f}%)")
+    print(f"   • 🟡 HOLD signals: {total_hold} ({total_hold / len(df) * 100:.1f}%)")
+    print(f"   • 🔴 SELL signals: {total_sell} ({total_sell / len(df) * 100:.1f}%)")
+    print(f"\n   Signal Logic:")
+    print(
+        f"   • BUY: Momentum >{MIN_MOMENTUM * 100:.0f}%, RSI {RSI_OVERSOLD}-{RSI_OVERBOUGHT}, Price > {SMA_SHORT}D SMA")
+    print(f"   • SELL: Momentum <0%, RSI >70 or <30, OR Price < {SMA_SHORT}D SMA")
+    print(f"   • HOLD: Everything else (moderate conditions)")
+    print(f"   • Stop Loss: Max Price (last {LOOKBACK_STOP} days) - ({ATR_MULTIPLIER} × {ATR_PERIOD}-day ATR)")
     print(f"⏱️  Pipeline complete!")
 
     return df
