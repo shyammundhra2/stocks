@@ -2,9 +2,9 @@
 
 # --- Sector Mapping ---
 SECTOR_NAMES = {
-    'VDE':'Energy', 'XLB':'Materials', 'VIS':'Industrials', 
+    'XLE':'Energy', 'XLB':'Materials', 'XLI':'Industrials',
     'XLY':'Discr', 'XLF':'Financials', 'XLC':'Comm Serv', 
-    'VGT':'Tech', 'XLV':'Health', 'XLP':'Staples', 
+    'XLK':'Tech', 'XLV':'Health', 'XLP':'Staples',
     'XLU':'Utilities', 'XLRE':'Real Estate'
 }
 
