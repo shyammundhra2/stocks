@@ -5,7 +5,7 @@ import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingClassifier
 import warnings
-from macro.helpers import compute_RSI  # Fixed import outside loop
+from macro.helpers import compute_RSI
 
 # ---------------- CONFIG ----------------
 SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
@@ -39,15 +39,10 @@ def compute_features(df):
         X[f'{s}_Rel_Mom_1M'] = df[s].pct_change(21) - df['SPY'].pct_change(21)
         X[f'{s}_Rel_Mom_3M'] = df[s].pct_change(63) - df['SPY'].pct_change(63)
 
-        # Risk Adjusted Momentum
         vol = df[s].pct_change().rolling(21).std()
         X[f'{s}_Risk_Adj_Mom'] = df[s].pct_change(21) / (vol + 1e-6)
-
-        # RSI & Above MA50
         X[f'{s}_RSI'] = compute_RSI(df[s], 14)
         X[f'{s}_Above_MA50'] = (df[s] > df[s].rolling(50).mean()).astype(int)
-
-        # Drawdown from 52-week high
         high_52w = df[s].rolling(252).max()
         X[f'{s}_Drawdown_High'] = (df[s] - high_52w) / high_52w
 
@@ -84,38 +79,35 @@ latest_scaled = scaler.transform(X_full.tail(1))
 probs = model.predict_proba(latest_scaled)[0]
 top_idx = np.argsort(probs)[-3:][::-1]
 
-sector_3m_perf = df[SECTORS].pct_change(63).iloc[-1].sort_values(ascending=False)
-
 print("\n### Strategic Analysis & Sector Picks")
-print("**Top 3 Predicted Sectors (High Confidence):**")
 for i, idx in enumerate(top_idx):
     print(f"{i + 1}. **{model.classes_[idx]}** ({probs[idx]*100:.1f}% confidence)")
 
+# ---------------- HISTORICAL ODDS ----------------
+hist_top_counts = y.value_counts()
+hist_odds = hist_top_counts / len(y)
+
+print("\n📊 Historical vs Predicted Odds:")
+for s in SECTORS:
+    pred_prob = probs[list(model.classes_).index(s)] if s in model.classes_ else 0.0
+    hist_prob = hist_odds.get(s, 0.0)
+    print(f"{s:<6} Predicted: {pred_prob*100:5.1f}%  | Historical: {hist_prob*100:5.1f}%")
+
 # ---------------- EVALUATION ----------------
-# Top-1, Top-2, Top-3 accuracy
 def top_n_accuracy(model, X_test, y_test, n=3):
     probas = model.predict_proba(X_test)
     top_n_preds = np.argsort(probas, axis=1)[:, -n:]
-    acc_list = []
-    for i in range(len(y_test)):
-        true_idx = list(model.classes_).index(y_test.iloc[i])
-        if true_idx == top_n_preds[i, -1]:
-            acc_list.append(1)
-        else:
-            acc_list.append(0)
-    top1 = np.mean(acc_list)
-
-    # Top-2 & Top-3
-    top2_acc = np.mean([y_test.iloc[i] in [model.classes_[idx] for idx in top_n_preds[i, -2:]] for i in range(len(y_test))])
-    top3_acc = np.mean([y_test.iloc[i] in [model.classes_[idx] for idx in top_n_preds[i]] for i in range(len(y_test))])
-    return top1, top2_acc, top3_acc
+    top1_list = [list(model.classes_)[top_n_preds[i, -1]] == y_test.iloc[i] for i in range(len(y_test))]
+    top2_list = [y_test.iloc[i] in [list(model.classes_)[idx] for idx in top_n_preds[i, -2:]] for i in range(len(y_test))]
+    top3_list = [y_test.iloc[i] in [list(model.classes_)[idx] for idx in top_n_preds[i]] for i in range(len(y_test))]
+    return np.mean(top1_list), np.mean(top2_list), np.mean(top3_list)
 
 top1, top2, top3 = top_n_accuracy(model, X_test, y_test)
 print(f"\n✅ Top-1 Accuracy: {top1*100:.2f}%")
 print(f"✅ Top-2 Accuracy: {top2*100:.2f}%")
 print(f"✅ Top-3 Accuracy: {top3*100:.2f}%")
 
-# Feature importance
+# ---------------- FEATURE IMPORTANCE ----------------
 feat_importance = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
 print("\n🔑 Top 10 Feature Rankings:")
 for f, v in feat_importance.head(10).items():
