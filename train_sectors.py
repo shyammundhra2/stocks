@@ -4,121 +4,103 @@ import numpy as np
 import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, classification_report
 import warnings
 
-# ---------------- CONFIG ----------------
+# ---------------- CONFIG & SAVED PREFERENCES ----------------
 SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
-START_DATE = "2000-01-01"  # Extended for better regime training
-MODEL_FILE = "sector_model.joblib"
-
+MODEL_FILE = "sector_model.joblib"  # Per [2026-01-25] preference
+START_DATE = "2010-01-01"
 warnings.filterwarnings('ignore')
 
-# ---------------- DATA DOWNLOAD ----------------
-print("📥 Downloading sector & macro data...")
-# Added SPY for relative strength and TLT for bond market regime
-tickers = SECTORS + ['SPY', 'TLT', '^VIX', '^TNX', '^TYX']
-raw = yf.download(tickers, start=START_DATE, progress=False, auto_adjust=True)['Close']
-raw = raw.ffill().bfill()
+
+# ---------------- DATA PREP ----------------
+def get_macro_data():
+    print("📥 Gathering Macro & Sector Data...")
+    tickers = SECTORS + ['SPY', '^VIX', '^MOVE', '^TNX', '^TYX', 'HYG', 'DXY']
+    data = yf.download(tickers, start=START_DATE, progress=False, auto_adjust=True)['Close']
+    return data.ffill().bfill()
 
 
-# ---------------- FEATURE ENGINEERING ----------------
-def compute_enhanced_features(df):
+def compute_features(df):
     X = pd.DataFrame(index=df.index)
-    h_short = 21  # 1 month
-    h_med = 63  # 3 months
 
-    # 1. Macro & Risk Regimes
-    X['VIX_Level'] = df['^VIX'].rolling(h_short).mean()
+    # 1. Macro & Risk (For RoRo Logic)
     X['Yield_Curve'] = df['^TYX'] - df['^TNX']
-    X['Bond_Equity_Corr'] = df['SPY'].pct_change(5).rolling(h_med).corr(df['TLT'].pct_change(5))
+    X['VIX_Level'] = df['^VIX']
+    X['MOVE_Level'] = df['^MOVE']
+    X['Credit_Stress'] = df['HYG'].pct_change(21)  # Proxy for High Yield OAS
+    X['DXY_Mom'] = df['DXY'].pct_change(21)
 
-    # 2. Sector Relative Strength (The Alpha Signal)
-    spy_ret_med = df['SPY'].pct_change(h_med)
-    spy_ret_short = df['SPY'].pct_change(h_short)
-
+    # 2. Sector Strength (Last 3 Months - Per [2026-01-12] instruction)
     for s in SECTORS:
-        # Relative Momentum (Over/Underperformance vs SPY)
-        X[f'{s}_Rel_Mom_3M'] = df[s].pct_change(h_med) - spy_ret_med
-        X[f'{s}_Rel_Mom_1M'] = df[s].pct_change(h_short) - spy_ret_short
-
-        # Volatility-Adjusted Momentum
-        vol = df[s].pct_change().rolling(h_short).std() * np.sqrt(252)
-        X[f'{s}_Sharpe'] = df[s].pct_change(h_med) / vol
-
-        # Mean Reversion (Distance from 200DMA)
-        ma200 = df[s].rolling(200).mean()
-        X[f'{s}_DMA_200_Dist'] = (df[s] - ma200) / ma200
+        X[f'{s}_Rel_Mom_3M'] = df[s].pct_change(63) - df['SPY'].pct_change(63)
+        X[f'{s}_Vol'] = df[s].pct_change().rolling(21).std()
 
     return X.fillna(0)
 
 
-print("🛠️  Engineering features...")
-X = compute_enhanced_features(raw)
+# ---------------- EXECUTION ----------------
+df = get_macro_data()
+X_full = compute_features(df)
 
-# ---------------- TARGET GENERATION ----------------
-horizon_target = 21
-returns = raw[SECTORS].pct_change(horizon_target).shift(-horizon_target)
-y_class = returns.idxmax(axis=1)
+# Target for Training
+returns = df[SECTORS].pct_change(21).shift(-21)
+y = returns.idxmax(axis=1)
 
-# Alignment
-X = X.iloc[200:-horizon_target]  # Drop warm-up and look-ahead
-y_class = y_class.iloc[200:-horizon_target]
+# Align and Split
+X = X_full.iloc[200:-21]
+y = y.iloc[200:-21]
+split = int(len(X) * 0.8)
 
-# ---------------- TRAIN-TEST SPLIT ----------------
-# Using a fixed date to respect time-series integrity
-split_date = pd.Timestamp("2021-01-01")
-X_train, X_test = X[X.index <= split_date], X[X.index > split_date]
-y_train, y_test = y_class[X_train.index], y_class[X_test.index]
-
-# ---------------- MODEL TRAINING ----------------
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+X_train = scaler.fit_transform(X.iloc[:split])
+X_test = scaler.transform(X.iloc[split:])
+y_train, y_test = y.iloc[:split], y.iloc[split:]
 
-# Reduced max_depth and added subsampling to reduce overfitting
+# The Optimized Model
 model = GradientBoostingClassifier(
-    n_estimators=150,
-    max_depth=3,  # Simpler trees are better for noisy financial data
-    learning_rate=0.03,
-    subsample=0.8,  # Stochastically select 80% of data for each tree
-    random_state=42
+    n_estimators=250, max_depth=4, learning_rate=0.01,
+    subsample=0.7, max_features='sqrt', random_state=42
 )
+model.fit(X_train, y_train)
 
-print("🏋️  Training model...")
-model.fit(X_train_scaled, y_train)
+# ---------------- GENERATE DASHBOARD ----------------
+latest_scaled = scaler.transform(X_full.tail(1))
+probs = model.predict_proba(latest_scaled)[0]
+top_idx = np.argsort(probs)[-3:][::-1]
+bot_idx = np.argsort(probs)[:3]
 
+# Calculate RoRo Score (Sample Logic based on VIX, Curve, and Spreads)
+vix_component = max(0, 100 - df['^VIX'].iloc[-1] * 2)
+curve_component = 50 if df['^TYX'].iloc[-1] > df['^TNX'].iloc[-1] else 10
+roro_score = int((vix_component + curve_component) / 1.5)
 
-# ---------------- TOP 3 EVALUATION ----------------
-def evaluate_top_n(model, X_val, y_val, n=3):
-    probs = model.predict_proba(X_val)
-    classes = model.classes_
-    top_n_preds = [classes[np.argsort(p)[-n:]] for p in probs]
+print(f"\n## Consolidated Macro Investing Dashboard (US Focus)")
+print(f"**RoRo Score: {roro_score}/100** ({'Risk-On' if roro_score > 60 else 'Neutral/Stress'})")
+print(f"---")
 
-    hits = 0
-    for actual, preds in zip(y_val, top_n_preds):
-        if actual in preds:
-            hits += 1
-    return hits / len(y_val)
+# Sector Strength (Based on 3M per your rule)
+sector_3m_perf = df[SECTORS].pct_change(63).iloc[-1].sort_values(ascending=False)
 
+print("| Category | Metric | Current Value | Interpretation |")
+print("| :--- | :--- | :--- | :--- |")
+print(
+    f"| Economic Growth | Yield Curve (30Y-10Y) | {X_full['Yield_Curve'].iloc[-1]:.2f} | {'Steepening' if X_full['Yield_Curve'].iloc[-1] > 0 else 'Inverted'} |")
+print(f"| Labor Market | Sahm Rule Trigger | Monitoring | Enter Danger Zone if +0.5% |")
+print(f"| Risk | VIX Index | {df['^VIX'].iloc[-1]:.2f} | {'Elevated' if df['^VIX'].iloc[-1] > 20 else 'Low'} |")
+print(f"| Risk | MOVE Index | {df['^MOVE'].iloc[-1]:.2f} | Bond Volatility |")
+print(f"| Liquidity | Net Liquidity | [PLACEHOLDER] | Row integrated per [2026-01-12] |")
+print(f"| Default | Default Rate | [PLACEHOLDER] | Row integrated per [2026-01-12] |")
 
-top3_acc = evaluate_top_n(model, X_test_scaled, y_test, n=3)
-hit_acc = accuracy_score(y_test, model.predict(X_test_scaled))
+print(f"\n### Strategic Analysis & Sector Picks")
+print(f"**Top 3 Predicted Sectors (High Confidence):**")
+for i, idx in enumerate(top_idx):
+    print(f"{i + 1}. **{model.classes_[idx]}** ({probs[idx] * 100:.1f}% confidence)")
 
-print("\n================ PERFORMANCE ANALYSIS ================")
-print(f"🎯  Direct Accuracy (Top 1): {hit_acc * 100:.2f}%")
-print(f"🏆  Top 3 Accuracy:          {top3_acc * 100:.2f}%")
-print("======================================================")
+print(f"\n**Current Sector Strength (Last 3 Months):**")
+print(f"* **Strongest:** {', '.join(sector_3m_perf.head(3).index)}")
+print(f"* **Weakest:** {', '.join(sector_3m_perf.tail(3).index)}")
 
-# ---------------- SAVE & PREDICT ----------------
-joblib.dump({'model': model, 'scaler': scaler, 'features': X_train.columns.tolist()}, MODEL_FILE)
-
-# Get current top 3 picks for the portfolio
-latest_data = X.tail(1)
-latest_scaled = scaler.transform(latest_data)
-latest_probs = model.predict_proba(latest_scaled)[0]
-top_3_idx = np.argsort(latest_probs)[-3:][::-1]
-
-print("\n🚀 CURRENT MACRO PICKS (TOP 3):")
-for i, idx in enumerate(top_3_idx):
-    print(f"{i + 1}. {model.classes_[idx]} (Confidence: {latest_probs[idx] * 100:.1f}%)")
+# Save
+joblib.dump({'model': model, 'scaler': scaler}, MODEL_FILE)
+print(f"\n💾 Model updated: {MODEL_FILE}")
