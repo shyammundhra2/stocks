@@ -180,7 +180,86 @@ def compute_trend_features(df, model_type='trend'):
     return X
 
 
-def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cache=True):
+def explain_tree_prediction(model, X_scaled, feature_names, class_idx, top_n=5):
+    """
+    Extract feature contributions for tree-based models using decision path analysis.
+
+    Args:
+        model: Trained model (RandomForest, GradientBoosting, etc.)
+        X_scaled: Scaled feature array for prediction
+        feature_names: List of feature names
+        class_idx: Index of the class to explain
+        top_n: Number of top features to return
+
+    Returns:
+        List of tuples (feature_name, contribution_score)
+    """
+    try:
+        # Check if model has feature_importances_ attribute
+        if hasattr(model, 'feature_importances_'):
+            # Get global feature importances
+            importances = model.feature_importances_
+
+            # Weight by feature values (larger absolute values matter more)
+            feature_values = X_scaled[0]
+            weighted_importance = importances * abs(feature_values)
+
+            # Create feature contribution pairs
+            contributions = list(zip(feature_names, weighted_importance))
+            contributions.sort(key=lambda x: x[1], reverse=True)
+
+            return contributions[:top_n]
+        else:
+            return []
+    except Exception as e:
+        print(f"  Warning: Could not extract feature importance: {e}")
+        return []
+
+
+def get_feature_descriptions():
+    """Return human-readable descriptions for common features"""
+    return {
+        'DXY_mom': 'Dollar momentum (3-month)',
+        'DXY_Mom': 'Dollar momentum (1-month)',
+        'VIX_level': 'Market volatility (VIX avg)',
+        'VIX_Level': 'Current VIX level',
+        'MOVE_level': 'Bond volatility',
+        'MOVE_Level': 'Current bond volatility',
+        'Yield_Curve': '30Y-10Y yield spread',
+        'TNX_vol': '10Y Treasury volatility',
+        'Credit_Spread': 'Investment grade vs High yield',
+        'Credit_Spread_Proxy': 'Credit risk indicator',
+        'Breadth_Ratio': 'Equal-weight vs Cap-weight',
+        'Breadth_MA_Diff': 'Breadth trend deviation',
+        'SPY_Trend': 'S&P 500 vs 200-day MA',
+        'Defensive_Rotation': 'Defensive vs Growth sectors',
+        'XLF_Relative_Strength': 'Financials vs Market',
+        'Labor_Stress_Proxy': 'Labor market stress signal',
+        'RSI14': 'Relative Strength Index',
+        'SMA50_dist': 'Distance from 50-day MA',
+        'SMA200_dist': 'Distance from 200-day MA',
+    }
+
+
+def format_feature_contribution(feature_name, value, descriptions):
+    """Format a feature contribution with description and value"""
+    # Extract base feature name (remove ticker prefix for momentum features)
+    if '_3M_Mom' in feature_name:
+        ticker = feature_name.replace('_3M_Mom', '')
+        desc = f'{ticker} 3-month momentum'
+    elif '_mom' in feature_name and not feature_name.startswith('DXY'):
+        ticker = feature_name.split('_')[0]
+        desc = f'{ticker} momentum'
+    elif '_vol' in feature_name:
+        ticker = feature_name.split('_')[0]
+        desc = f'{ticker} volatility'
+    else:
+        desc = descriptions.get(feature_name, feature_name)
+
+    return f"{desc:<35} (importance: {value:.3f})"
+
+
+def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cache=True, explain=True):
     """
     Predict trend confidence for multiple assets using dual model approach.
 
@@ -190,6 +269,7 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
         friendly_names: Dict mapping tickers to friendly names
         as_of_date: Date to predict for (None = today)
         use_cache: Whether to use shared data cache
+        explain: Whether to include feature explanations
 
     Returns:
         Dict with predictions for each asset
@@ -237,26 +317,22 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
 
     # Handle MultiIndex properly
     if isinstance(raw_data.columns, pd.MultiIndex):
-        # Multi-ticker download - columns are (metric, ticker)
         data = raw_data
     else:
-        # Single ticker or already processed - wrap it
         if len(tickers) == 1:
-            # Single ticker case
             data = raw_data
         else:
             data = raw_data
 
     # Process each ticker
     predictions = {}
+    descriptions = get_feature_descriptions()
 
     for ticker in tickers:
         try:
             # Extract ticker data based on structure
             if isinstance(data.columns, pd.MultiIndex):
-                # MultiIndex: (Price, Ticker) format
                 if 'Close' in data.columns.get_level_values(0):
-                    # Standard yfinance format
                     try:
                         ticker_data = pd.DataFrame({
                             'Close': data['Close'][ticker],
@@ -268,46 +344,30 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
                                 0) else pd.Series(0, index=data.index)
                         }).dropna()
                     except KeyError:
-                        # Ticker not found in data
                         predictions[friendly_names.get(ticker, ticker)] = {
-                            'fast': 50.0,
-                            'slow': 50.0,
-                            'blended': 50.0,
-                            'regime': 'No Data'
+                            'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'No Data'
                         }
                         continue
                 else:
-                    # Alternative format: extract ticker slice
                     try:
                         ticker_data = data.xs(ticker, level=1, axis=1).dropna()
                     except KeyError:
                         predictions[friendly_names.get(ticker, ticker)] = {
-                            'fast': 50.0,
-                            'slow': 50.0,
-                            'blended': 50.0,
-                            'regime': 'No Data'
+                            'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'No Data'
                         }
                         continue
             else:
-                # Non-MultiIndex (single ticker)
                 if len(tickers) == 1:
                     ticker_data = data
                 else:
-                    # Multi-ticker but no MultiIndex (shouldn't happen)
                     predictions[friendly_names.get(ticker, ticker)] = {
-                        'fast': 50.0,
-                        'slow': 50.0,
-                        'blended': 50.0,
-                        'regime': 'Data Error'
+                        'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'Data Error'
                     }
                     continue
 
             if len(ticker_data) < 200:
                 predictions[friendly_names.get(ticker, ticker)] = {
-                    'fast': 50.0,
-                    'slow': 50.0,
-                    'blended': 50.0,
-                    'regime': 'Insufficient Data'
+                    'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'Insufficient Data'
                 }
                 continue
 
@@ -316,16 +376,13 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
 
             if X.empty:
                 predictions[friendly_names.get(ticker, ticker)] = {
-                    'fast': 50.0,
-                    'slow': 50.0,
-                    'blended': 50.0,
-                    'regime': 'Error'
+                    'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'Error'
                 }
                 continue
 
             # Fill missing features
             X_live_dict = {f: X[f].iloc[0] if f in X.columns else 0.0 for f in features}
-            X_live = pd.DataFrame([X_live_dict], columns=features)  # Ensure proper column names
+            X_live = pd.DataFrame([X_live_dict], columns=features)
 
             # Scale and predict
             X_scaled = scaler.transform(X_live)
@@ -345,7 +402,7 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
             f_conf = round(p_fast * vol_adj, 1)
             s_conf = round(p_slow * vol_adj, 1)
 
-            # Blended score: 70% Slow, 30% Fast
+            # Blended score
             blended = round(s_conf * 0.7 + f_conf * 0.3, 1)
 
             # Determine regime
@@ -358,22 +415,25 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
             else:
                 regime = "Neutral/Chop"
 
-            predictions[friendly_names.get(ticker, ticker)] = {
+            pred_data = {
                 'fast': f_conf,
                 'slow': s_conf,
                 'blended': blended,
                 'regime': regime
             }
 
+            # Add explanations if requested
+            if explain:
+                slow_contrib = explain_tree_prediction(m_slow, X_scaled, features, slow_idx, top_n=3)
+                pred_data['drivers'] = [format_feature_contribution(f, v, descriptions)
+                                        for f, v in slow_contrib]
+
+            predictions[friendly_names.get(ticker, ticker)] = pred_data
+
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
-            import traceback
-            traceback.print_exc()
             predictions[friendly_names.get(ticker, ticker)] = {
-                'fast': 50.0,
-                'slow': 50.0,
-                'blended': 50.0,
-                'regime': 'Error'
+                'fast': 50.0, 'slow': 50.0, 'blended': 50.0, 'regime': 'Error'
             }
 
     return {
@@ -382,9 +442,9 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
     }
 
 
-def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, use_cache=True):
+def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, use_cache=True, explain=True):
     """
-    Fetch data, compute features, and run prediction bundle.
+    Fetch data, compute features, and run prediction bundle with explanations.
 
     Args:
         model_path: Path to the model file
@@ -393,6 +453,7 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         model_type: Type of model ('risk', 'sector', 'commodity', 'country')
         as_of_date: Date to predict for (None = today)
         use_cache: Whether to use shared data cache (default True)
+        explain: Whether to include feature explanations (default True)
     """
     if as_of_date is None:
         as_of_date = pd.Timestamp.today()
@@ -404,21 +465,19 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
     model, scaler, feature_names = bundle['model'], bundle['scaler'], bundle['features']
 
     # Determine minimal start date for rolling windows
-    max_rolling = 200  # largest rolling window used in compute_features
-    buffer_days = 10  # safety buffer
+    max_rolling = 200
+    buffer_days = 10
     start_date = as_of_date - pd.Timedelta(days=int(max_rolling * 1.5 + buffer_days))
-
-    # yfinance end is exclusive
     fetch_end = as_of_date + timedelta(days=1)
 
-    # Download data - use cache if enabled
+    # Download data
     if use_cache:
         raw_data = _get_shared_predict_data(tickers, start_date, fetch_end)
     else:
         raw_data = yf.download(tickers, start=start_date, end=fetch_end, progress=False,
                                auto_adjust=False, group_by='column')
 
-    # Extract Close prices for standard predict_assets
+    # Extract Close prices
     data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
 
     X = compute_features(data, model_type)
@@ -428,7 +487,7 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         if feat not in X.columns:
             X[feat] = 0
 
-    # Create properly formatted DataFrame with explicit column names
+    # Scale and predict
     X_scaled = scaler.transform(X.tail(1)[feature_names])
     proba = model.predict_proba(X_scaled)[0]
 
@@ -437,16 +496,34 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
     else:
         proba_dict = {friendly_names.get(c, c): p for c, p in zip(model.classes_, proba)}
 
-    return {
+    result = {
         'date': as_of_date.strftime('%Y-%m-%d'),
         'probabilities': dict(sorted(proba_dict.items(), key=lambda x: x[1], reverse=True))
     }
 
+    # Add explanations if requested
+    if explain:
+        explanations = {}
+        descriptions = get_feature_descriptions()
 
-def print_prediction(title, result):
-    """Pretty-print every asset and its associated probability"""
-    print(f"\n📊 {title.upper()} FULL PROBABILITIES ({result['date']})")
-    print("-" * 60)
+        for i, class_name in enumerate(model.classes_):
+            display_name = friendly_names.get(class_name, class_name)
+            if model_type == 'risk':
+                display_name = f"Class {class_name}"
+
+            contrib = explain_tree_prediction(model, X_scaled, feature_names, i, top_n=5)
+            explanations[display_name] = [format_feature_contribution(f, v, descriptions)
+                                          for f, v in contrib]
+
+        result['explanations'] = explanations
+
+    return result
+
+
+def print_prediction(title, result, show_explanations=True):
+    """Pretty-print predictions with feature explanations"""
+    print(f"\n📊 {title.upper()} PREDICTIONS ({result['date']})")
+    print("=" * 80)
 
     # Check if this is a trend prediction result
     if 'predictions' in result:
@@ -454,27 +531,48 @@ def print_prediction(title, result):
             blended = data.get('blended', 0)
             slow = data.get('slow', 0)
             fast = data.get('fast', 0)
-
             regime = data.get('regime', 'N/A')
-            print(f"  {name:<25} {blended:>3.1f}%  slow:{slow:>3.1f}% fast:{fast:>3.1f}% [{regime}]")
+
+            print(f"\n  {name:<25} {blended:>3.1f}%  [slow:{slow:>3.1f}% fast:{fast:>3.1f}%] [{regime}]")
+
+            # Show drivers if available
+            if show_explanations and 'drivers' in data:
+                print("    Key drivers:")
+                for driver in data['drivers']:
+                    print(f"      • {driver}")
     else:
         # Standard probability output
+        top_n = 5  # Show top 5 predictions with explanations
+        count = 0
+
         for name, p in result['probabilities'].items():
+            prob_pct = round(float(p) * 100, 2)
+
             if "Class" in name:
-                label = "Risk-On (Positive Outcome)" if "1" in name else "Risk-Off (Negative Outcome)"
-                print(f"  {label:<35} {round(float(p) * 100, 2):>6}%")
+                label = "Risk-On (Positive)" if "1" in name else "Risk-Off (Negative)"
+                print(f"\n  {label:<35} {prob_pct:>6.1f}%")
             else:
-                print(f"  {name:<35} {round(float(p) * 100, 2):>6}%")
+                print(f"\n  {name:<35} {prob_pct:>6.1f}%")
+
+            # Show explanations for top predictions
+            if show_explanations and count < top_n and 'explanations' in result:
+                if name in result['explanations']:
+                    print("    Key drivers:")
+                    for driver in result['explanations'][name]:
+                        print(f"      • {driver}")
+                    count += 1
 
 
 # ----------------- Main Execution -----------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Macro Prediction Dashboard")
+    parser = argparse.ArgumentParser(description="Macro Prediction Dashboard with Explanations")
     parser.add_argument("--date", type=str, default=None, help="Date to predict (YYYY-MM-DD)")
     parser.add_argument("--no-cache", action="store_true", help="Disable data caching")
+    parser.add_argument("--no-explain", action="store_true", help="Disable feature explanations")
     args = parser.parse_args()
 
     use_cache = not args.no_cache
+    show_explain = not args.no_explain
 
     model_configs = [
         ("Risk Regime", "risk_model.joblib", list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))),
@@ -489,26 +587,28 @@ if __name__ == "__main__":
 
     for title, path, tickers, names, m_type in model_configs:
         try:
-            res = predict_assets(path, tickers, names, m_type, args.date, use_cache=use_cache)
-            print_prediction(title, res)
+            res = predict_assets(path, tickers, names, m_type, args.date,
+                                 use_cache=use_cache, explain=show_explain)
+            print_prediction(title, res, show_explanations=show_explain)
         except FileNotFoundError:
             print(f"\n⚠️ File '{path}' not found. Skipping {title}.")
         except Exception as e:
             print(f"\n❌ Error processing {title}: {e}")
 
     # Add trend predictions
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 80)
     print("TREND ANALYSIS")
-    print("=" * 60)
+    print("=" * 80)
     try:
         trend_res = predict_trends(
             "trend_model.joblib",
             list(TREND_ASSETS.keys()),
             TREND_ASSETS,
             args.date,
-            use_cache=use_cache
+            use_cache=use_cache,
+            explain=show_explain
         )
-        print_prediction("Trend Predictions", trend_res)
+        print_prediction("Trend Predictions", trend_res, show_explanations=show_explain)
     except FileNotFoundError:
         print(f"\n⚠️ File 'trend_model.joblib' not found. Skipping trend predictions.")
     except Exception as e:
