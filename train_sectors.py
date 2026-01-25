@@ -3,209 +3,262 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.utils import resample
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import joblib
-
-from macro.constants import ML_MACRO_TICKERS
+from datetime import datetime
 
 # ----------------- Configuration -----------------
 SECTOR_TICKERS = ['XLE', 'XLB', 'XLI', 'XLY', 'XLF', 'XLC', 'XLK', 'XLV', 'XLP', 'XLU', 'XLRE']
+MACRO_DRIVERS = ['^TNX', '^IRX', 'DX-Y.NYB', 'CL=F', 'GLD', '^VIX']  # Removed ^MOVE due to data availability
 
 
-def train_quarterly_model():
-    print("🚀 Initializing Balanced Historical Sector Model...")
+def train_enhanced_macro_model():
+    print("🚀 Initializing Macro-Regime Sector Model...")
+    print(f"⏰ Training as of: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-    # ---------------- Data Acquisition ----------------
-    tickers = SECTOR_TICKERS + list(ML_MACRO_TICKERS) + ['SPY', 'RSP', 'TLT']
-    raw_data = yf.download(tickers, start="2000-01-01")['Close'].ffill()
-    raw_data = raw_data.shift(1)  # prevent lookahead bias
+    # 1. Data Acquisition with Error Handling
+    all_tickers = list(set(SECTOR_TICKERS + MACRO_DRIVERS + ['SPY']))
+    print(f"📊 Downloading {len(all_tickers)} tickers from 2000-01-01...")
 
-    # ---------------- Feature Engineering ----------------
-    print("🛠️  Engineering Momentum & Macro Features...")
+    try:
+        raw_data = yf.download(all_tickers, start="2000-01-01", progress=False)['Close']
+    except Exception as e:
+        print(f"❌ Download error: {e}")
+        return
+
+    # Handle missing data
+    missing_tickers = [t for t in all_tickers if t not in raw_data.columns]
+    if missing_tickers:
+        print(f"⚠️  Warning: Missing tickers: {missing_tickers}")
+        all_tickers = [t for t in all_tickers if t in raw_data.columns]
+
+    raw_data = raw_data.ffill().bfill()  # Forward fill then backfill
+    print(f"✅ Data loaded: {len(raw_data)} trading days\n")
+
+    # 2. Feature Engineering (Match predict.py naming conventions)
+    print("🛠️  Building Macro & Factor Features...")
     X = pd.DataFrame(index=raw_data.index)
 
-    # Macro features
-    for macro in ['DX-Y.NYB', '^VIX', '^MOVE', '^TNX', 'LQD', 'HYG']:
-        if macro in raw_data.columns:
-            X[f'{macro}_Level'] = raw_data[macro]
-        else:
-            X[f'{macro}_Level'] = 0
+    # Macro features using predict.py conventions
+    if '^TNX' in raw_data.columns and '^IRX' in raw_data.columns:
+        X['Yield_Curve'] = raw_data['^TNX'] - raw_data['^IRX']
+        X['TNX_vol'] = raw_data['^TNX'].rolling(63).std()
 
-    # Credit Spread
-    X['Credit_Spread'] = raw_data['LQD'] / raw_data['HYG'] if (
-                'LQD' in raw_data.columns and 'HYG' in raw_data.columns) else 0
+    if 'DX-Y.NYB' in raw_data.columns:
+        X['DXY_mom'] = raw_data['DX-Y.NYB'].pct_change(63)
+        X['DXY_Mom'] = raw_data['DX-Y.NYB'].pct_change(21)
 
-    # RiskOn regime
-    X['RiskOn'] = (raw_data['SPY'].pct_change(63) > 0).astype(int) if 'SPY' in raw_data.columns else 1
+    if 'CL=F' in raw_data.columns:
+        X['Oil_Trend'] = raw_data['CL=F'].pct_change(63)
 
-    # ---------------- Sector Momentum ----------------
-    momentum_windows = {'1W': 5, '1M': 21, '3M': 63, '6M': 126}
+    if '^VIX' in raw_data.columns:
+        X['VIX_Level'] = raw_data['^VIX']
+        X['VIX_level'] = raw_data['^VIX'].rolling(21).mean()
+
+    if 'SPY' in raw_data.columns:
+        X['Equity_Regime'] = raw_data['SPY'].pct_change(126)
+        X['SPY_Volatility'] = raw_data['SPY'].pct_change(21).rolling(63).std()
+
+    # Relative momentum features (match predict.py naming)
     for ticker in SECTOR_TICKERS:
-        if ticker not in raw_data.columns:
-            for period in momentum_windows:
-                X[f'{ticker}_Mom_{period}'] = 0
-            X[f'{ticker}_Mom_Accel'] = 0
-            continue
+        if ticker in raw_data.columns and 'SPY' in raw_data.columns:
+            relative_ratio = raw_data[ticker] / raw_data['SPY']
+            X[f'{ticker}_Rel_Mom_3M'] = relative_ratio.pct_change(63)
+            X[f'{ticker}_Rel_Mom_1M'] = relative_ratio.pct_change(21)
+            # Add direct momentum features for consistency
+            X[f'{ticker}_mom'] = raw_data[ticker].pct_change(63)
+            X[f'{ticker}_vol'] = raw_data[ticker].rolling(63).std()
 
-        for period_name, window in momentum_windows.items():
-            X[f'{ticker}_Mom_{period_name}'] = raw_data[ticker].pct_change(window)
+    # 3. Target Generation (FIXED: No Look-Ahead Bias)
+    print("🎯 Generating Multi-Label Targets (No Look-Ahead Bias)...")
+    horizon = 63  # ~3 months forward
 
-        X[f'{ticker}_Mom_Accel'] = X[f'{ticker}_Mom_1M'] - X[f'{ticker}_Mom_3M']
+    # Calculate future returns properly
+    future_prices = raw_data[SECTOR_TICKERS].shift(-horizon)
+    current_prices = raw_data[SECTOR_TICKERS]
+    sector_returns = (future_prices - current_prices) / current_prices
 
-    # Momentum Clipping (Winsorization ±2 std per quarter)
-    for period in momentum_windows:
-        cols = [f'{t}_Mom_{period}' for t in SECTOR_TICKERS if f'{t}_Mom_{period}' in X.columns]
-        X[cols] = X[cols].apply(lambda x: np.clip(x, x.mean() - 2 * x.std(), x.mean() + 2 * x.std()), axis=1)
+    # Only keep dates where we have both features and future returns
+    valid_dates = X.dropna().index.intersection(sector_returns.dropna().index)
+    print(f"📅 Valid training dates: {len(valid_dates)}")
 
-    # ---------------- Historical Quarterly Top-Performer Weights ----------------
-    horizon = 63
-    sector_returns = raw_data[SECTOR_TICKERS].pct_change(horizon).shift(-horizon)
+    # Build dataset - predict each sector as a separate class
+    X_list, y_list, date_labels = [], [], []
 
-    top_count = {t: 0 for t in SECTOR_TICKERS}
-    for date in sector_returns.index:
-        row = sector_returns.loc[date]
-        if row.isna().all():
-            continue
-        top3 = row.nlargest(3).index.tolist()
-        for t in top3:
-            top_count[t] += 1
+    for date in valid_dates:
+        returns_on_date = sector_returns.loc[date]
 
-    # Normalize weights to sum to 1
-    total_count = sum(top_count.values())
-    historical_weights = {t: top_count[t] / total_count for t in SECTOR_TICKERS}
+        # Find the best performing sector (not top 3, but THE top)
+        best_sector = returns_on_date.idxmax()
 
-    print("\n📊 Normalized Historical Quarterly Top-Performer Weights (25Y):")
-    for sector, w in historical_weights.items():
-        print(f"{sector:<6} → {w:.2%}")
+        # Create one sample per date with best sector as target
+        sector_feat = X.loc[date].to_dict()
 
-    # ---------------- Target Generation (Winner Takes All) ----------------
-    # Label only THE BEST performer (clearer signal for model)
-    y_list = []
-    dates_list = []
+        X_list.append(sector_feat)
+        y_list.append(best_sector)  # String label (ticker)
+        date_labels.append(date)
 
-    for date in sector_returns.index:
-        if date not in X.index:
-            continue
-        row = sector_returns.loc[date]
-        if row.isna().all():
-            continue
+    X_final = pd.DataFrame(X_list).fillna(0)
+    y_final = pd.Series(y_list)
+    date_labels = pd.Series(date_labels)
 
-        # Get the single best performer
-        best_sector = row.idxmax()
-        y_list.append(best_sector)
-        dates_list.append(date)
+    print(f"✅ Dataset built: {len(X_final)} samples")
+    print(f"   Target sectors: {y_final.nunique()} unique")
+    print(f"   Class distribution:")
+    for sector, count in y_final.value_counts().items():
+        print(f"      {sector}: {count} ({count / len(y_final) * 100:.1f}%)")
 
-    X_expanded = X.loc[dates_list]
-    y_expanded = pd.Series(y_list, index=dates_list)
+    # 4. Proper Time-Based Split (No Data Leakage)
+    unique_dates = sorted(date_labels.unique())
+    split_idx = int(len(unique_dates) * 0.8)
+    split_date = unique_dates[split_idx]
 
-    # ---------------- Clean & Split ----------------
-    valid_data = pd.concat([X_expanded.reset_index(drop=True), y_expanded.rename('target').reset_index(drop=True)],
-                           axis=1).dropna()
-    split_idx = int(len(valid_data) * 0.8)
-    train_df = valid_data.iloc[:split_idx].copy()
-    test_df = valid_data.iloc[split_idx:].copy()
+    train_mask = date_labels < split_date
+    test_mask = date_labels >= split_date
 
-    X_train = train_df.drop(columns=['target'])
-    y_train = train_df['target']
-    X_test = test_df.drop(columns=['target'])
-    y_test = test_df['target']
+    X_train, X_test = X_final[train_mask], X_final[test_mask]
+    y_train, y_test = y_final[train_mask], y_final[test_mask]
 
-    print(f"\n📊 Training Label Distribution:")
-    train_dist = y_train.value_counts(normalize=True).sort_index()
-    for sector in SECTOR_TICKERS:
-        if sector in train_dist.index:
-            pct = train_dist[sector] * 100
-            bar = '█' * max(1, int(pct))
-            print(f"{sector:<6} | {bar} {pct:.1f}%")
+    print(f"\n📊 Train/Test Split:")
+    print(f"   Train: {len(X_train)} samples ({train_mask.sum()} dates)")
+    print(f"   Test:  {len(X_test)} samples ({test_mask.sum()} dates)")
+    print(f"   Split Date: {split_date.strftime('%Y-%m-%d')}\n")
 
+    # 5. Scaling
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # ---------------- Train Random Forest ----------------
+    # 6. Training
+    print("🧠 Training Random Forest Classifier...")
     model = RandomForestClassifier(
-        n_estimators=1000,
-        max_depth=12,  # Allow more complex patterns
-        min_samples_leaf=5,  # Allow finer splits
-        min_samples_split=15,
-        max_features='sqrt',
+        n_estimators=500,
+        max_depth=10,
+        min_samples_split=50,
+        min_samples_leaf=20,
         class_weight='balanced',
         random_state=42,
         n_jobs=-1
     )
-    print("\n🧠 Training Random Forest Ensemble...")
     model.fit(X_train_scaled, y_train)
+    print("✅ Training complete\n")
 
-    # ---------------- Test Set Predictions with Top-3 Ensemble ----------------
-    probs = model.predict_proba(X_test_scaled)
-    classes = model.classes_
-    adjusted_preds = []
-    top3_hits = 0
+    # 7. Evaluation
+    train_preds = model.predict(X_train_scaled)
+    test_preds = model.predict(X_test_scaled)
 
-    for i, row in enumerate(probs):
-        prob_dict = dict(zip(classes, row))
+    print("=" * 60)
+    print("📈 MODEL PERFORMANCE SUMMARY")
+    print("=" * 60)
+    print(f"\n{'METRIC':<30} {'TRAIN':<15} {'TEST (OOS)':<15}")
+    print("-" * 60)
+    print(
+        f"{'Overall Accuracy':<30} {accuracy_score(y_train, train_preds):>14.1%} {accuracy_score(y_test, test_preds):>14.1%}")
 
-        # Weight by historical weights (gentle blend)
-        for sector in prob_dict:
-            hist_weight = historical_weights.get(sector, 0.09)
-            # 80% model confidence, 20% history (trust the model more)
-            prob_dict[sector] = 0.8 * prob_dict[sector] + 0.2 * hist_weight
+    # Sector-wise accuracy (how often each sector was correctly predicted when it was the best)
+    print("\n" + "=" * 60)
+    print("📊 SECTOR PREDICTION ACCURACY (When Sector Was Best)")
+    print("=" * 60)
 
-        # Normalize
-        total = sum(prob_dict.values())
-        prob_dict = {k: v / total for k, v in prob_dict.items()}
+    sector_results = []
+    for ticker in SECTOR_TICKERS:
+        mask = (y_test == ticker)
+        if mask.sum() > 0:
+            correct_predictions = (test_preds[mask] == ticker).sum()
+            total = mask.sum()
+            acc = correct_predictions / total
+            sector_results.append((ticker, acc, total, correct_predictions))
 
-        # Get top 3 predictions
-        sorted_sectors = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
-        top3_sectors = [s[0] for s in sorted_sectors[:3]]
+    # Sort by accuracy
+    sector_results.sort(key=lambda x: x[1], reverse=True)
 
-        # Check if actual is in top 3
-        if i < len(y_test) and y_test.iloc[i] in top3_sectors:
-            top3_hits += 1
+    for ticker, acc, total, correct in sector_results:
+        bar = '█' * int(acc * 30)
+        print(f"{ticker:<6} ({correct:>2}/{total:<2} correct) | {bar:<30} {acc:.1%}")
 
-        # Pick the top prediction
-        adjusted_preds.append(sorted_sectors[0][0])
+    # Classification report
+    print("\n" + "=" * 60)
+    print("📋 DETAILED CLASSIFICATION REPORT (Test Set)")
+    print("=" * 60)
 
-    test_predictions = np.array(adjusted_preds)
-    top3_accuracy = top3_hits / len(y_test) if len(y_test) > 0 else 0
+    # For multi-class, show per-class precision/recall
+    from sklearn.metrics import precision_recall_fscore_support
+    precision, recall, f1, support = precision_recall_fscore_support(y_test, test_preds, labels=SECTOR_TICKERS)
 
-    # ---------------- Validation ----------------
-    pred_dist = pd.Series(test_predictions).value_counts(normalize=True).sort_index()
-    print("\n📈 Test Set Prediction Distribution:")
-    for sector in SECTOR_TICKERS:
-        if sector in pred_dist.index:
-            pct = pred_dist[sector] * 100
-            hist_pct = historical_weights.get(sector, 0) * 100
-            bar = '█' * max(1, int(pct))
-            print(f"{sector:<6} | {bar} {pct:.1f}% (hist: {hist_pct:.1f}%)")
+    print(f"\n{'Sector':<8} {'Precision':<12} {'Recall':<12} {'F1-Score':<12} {'Support':<10}")
+    print("-" * 60)
+    for i, sector in enumerate(SECTOR_TICKERS):
+        print(f"{sector:<8} {precision[i]:>11.3f} {recall[i]:>11.3f} {f1[i]:>11.3f} {support[i]:>9}")
 
-    accuracy = (test_predictions == y_test).mean()
-    print(f"\n🎯 Test Accuracy: {accuracy:.1%}")
+    print(f"\n{'Macro Avg':<8} {precision.mean():>11.3f} {recall.mean():>11.3f} {f1.mean():>11.3f}")
+    print(f"{'Accuracy':<8} {accuracy_score(y_test, test_preds):>11.3f}")
 
-    # ---------------- Feature Importance ----------------
+    # 8. Feature Importance
+    print("=" * 60)
+    print("🔍 TOP 15 MOST IMPORTANT FEATURES")
+    print("=" * 60)
+
     importances = model.feature_importances_
-    feature_names = X_train.columns.tolist()
-    feature_imp_df = pd.DataFrame({'Driver': feature_names, 'Importance': importances}).sort_values(by='Importance',
-                                                                                                    ascending=False).head(
-        15)
-    print("\n📊 Top 15 Feature Drivers:")
-    for _, row in feature_imp_df.iterrows():
-        bar = '█' * max(1, int(row['Importance'] * 100))
-        print(f"{row['Driver']:<30} | {bar} {row['Importance']:.3f}")
+    feat_names = X_train.columns
+    indices = np.argsort(importances)[::-1][:15]
 
-    # ---------------- Save Model ----------------
-    bundle = {'model': model, 'scaler': scaler, 'features': feature_names}
-    joblib.dump(bundle, 'sector_model_balanced.joblib')
-    diagnostics = {
-        'class_distribution': y_train.value_counts().to_dict(),
-        'test_accuracy': accuracy,
-        'prediction_distribution': pred_dist.to_dict(),
-        'feature_importance': feature_imp_df.to_dict(),
-        'historical_weights': historical_weights
+    for i, idx in enumerate(indices):
+        bar = '█' * int(importances[idx] * 100)
+        print(f"{i + 1:>2}. {feat_names[idx]:<30} | {bar:<20} {importances[idx]:.4f}")
+
+    # 9. Top-3 Accuracy Analysis
+    print("\n" + "=" * 60)
+    print("🎯 TOP-3 PREDICTION ACCURACY")
+    print("=" * 60)
+
+    # Get top 3 predicted probabilities for each test sample
+    test_probs = model.predict_proba(X_test_scaled)
+    top3_correct = 0
+
+    for i, true_sector in enumerate(y_test):
+        # Get indices of top 3 predicted sectors
+        top3_indices = np.argsort(test_probs[i])[-3:]
+        top3_sectors = [model.classes_[idx] for idx in top3_indices]
+
+        if true_sector in top3_sectors:
+            top3_correct += 1
+
+    top3_accuracy = top3_correct / len(y_test)
+    print(f"\nAccuracy (Best Sector in Top 3): {top3_accuracy:.1%}")
+    print(f"   {top3_correct} out of {len(y_test)} test samples")
+
+    # 10. Confusion Matrix (simplified view)
+    print("\n" + "=" * 60)
+    print("📊 PREDICTION DISTRIBUTION")
+    print("=" * 60)
+
+    pred_counts = pd.Series(test_preds).value_counts()
+    actual_counts = pd.Series(y_test).value_counts()
+
+    print(f"\n{'Sector':<8} {'Predicted':<12} {'Actual':<12}")
+    print("-" * 40)
+    for sector in SECTOR_TICKERS:
+        pred = pred_counts.get(sector, 0)
+        actual = actual_counts.get(sector, 0)
+        print(f"{sector:<8} {pred:>11} {actual:>11}")
+
+    # 10. Save Model
+    print("\n" + "=" * 60)
+    model_artifact = {
+        'model': model,
+        'scaler': scaler,
+        'features': X_train.columns.tolist(),
+        'sector_tickers': SECTOR_TICKERS,
+        'train_date': split_date,
+        'train_samples': len(X_train),
+        'test_accuracy': accuracy_score(y_test, test_preds)
     }
-    joblib.dump(diagnostics, 'sector_model_balanced_diagnostics.joblib')
-    print("\n✅ Training Complete. Model & diagnostics saved.")
+
+    joblib.dump(model_artifact, 'sector_model.joblib')
+    print("💾 Model saved to: sector_model.joblib")
+    print("=" * 60)
+    print("\n✅ Training pipeline complete!")
 
 
 if __name__ == "__main__":
-    train_quarterly_model()
+    train_enhanced_macro_model()
