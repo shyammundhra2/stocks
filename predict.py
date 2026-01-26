@@ -131,78 +131,133 @@ def compute_risk_features(data):
 
 def compute_sector_features(df):
     """
-    Compute sector features exactly as done during training.
-    Includes linear regression slope & R², risk-adjusted momentum, and macro context.
+    Compute sector features matching the 63.86% production model.
 
     Args:
-        df (pd.DataFrame): Historical Close prices for sectors + SPY + macro tickers
+        df (pd.DataFrame): Historical Close prices for sectors + SPY + QQQ + macro tickers
 
     Returns:
         X (pd.DataFrame): Feature matrix for sector model
     """
-    import numpy as np
-    import pandas as pd
-    from scipy import stats
-
-    window = 21
-    x_axis = np.arange(window)
     X = pd.DataFrame(index=df.index)
 
-    # Sector list matching training
     SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
 
-    # Pre-compute log prices for all sectors at once
-    log_prices = {}
-    for s in SECTORS:
-        if s in df.columns:
-            log_prices[s] = np.log(df[s])
-
-    # --- Sector Features ---
+    # ========== SECTOR POSITIONING ==========
     for s in SECTORS:
         if s not in df.columns:
             continue
 
-        log_price = log_prices[s]
+        # Multi-timeframe returns and ranks
+        for period in [10, 21, 42, 63, 126]:
+            ret = df[s].pct_change(period)
+            X[f'{s}_Ret_{period}d'] = ret
 
-        # Linear Regression Slope & R²
-        X[f'{s}_Slope'] = log_price.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[0] if not np.isnan(x).any() else 0,
-            raw=False
-        )
-        X[f'{s}_R2'] = log_price.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[2] ** 2 if not np.isnan(x).any() else 0,
-            raw=False
-        )
+            # Rank vs other sectors
+            available_sectors = [sec for sec in SECTORS if sec in df.columns]
+            if len(available_sectors) > 1:
+                sector_rets = df[available_sectors].pct_change(period)
+                X[f'{s}_Rank_{period}d'] = sector_rets.rank(axis=1, pct=True)[s]
 
-        # Risk-adjusted momentum (matching training exactly)
-        pct_change = df[s].pct_change(window, fill_method=None)
-        vol = df[s].pct_change(fill_method=None).rolling(window).std()
-        X[f'{s}_Risk_Adj_Mom'] = pct_change / (vol + 1e-6)
+        # Moving average positioning
+        ma_20 = df[s].rolling(20).mean()
+        ma_50 = df[s].rolling(50).mean()
+        ma_200 = df[s].rolling(200).mean()
 
-    # --- Macro / Market Features ---
-    if '^TYX' in df.columns and '^TNX' in df.columns:
-        X['Yield_Curve'] = df['^TYX'] - df['^TNX']
+        X[f'{s}_MA20'] = (df[s] - ma_20) / ma_20
+        X[f'{s}_MA50'] = (df[s] - ma_50) / ma_50
+        X[f'{s}_MA200'] = (df[s] - ma_200) / ma_200
+        X[f'{s}_MA_Slope'] = (ma_20 - ma_200) / ma_200
+
+        # Volatility metrics
+        vol_21 = df[s].pct_change().rolling(21).std()
+        vol_63 = df[s].pct_change().rolling(63).std()
+        X[f'{s}_Vol_21d'] = vol_21
+        X[f'{s}_Vol_Ratio'] = vol_21 / (vol_63 + 1e-6)
+
+        # Risk-adjusted returns (Sharpe ratio)
+        X[f'{s}_Sharpe_63d'] = (df[s].pct_change(63) / (vol_63 * np.sqrt(63) + 1e-6))
+
+    # ========== ROTATION SIGNALS ==========
+    available_sectors = [s for s in SECTORS if s in df.columns]
+    if len(available_sectors) > 1:
+        sector_mom_21 = df[available_sectors].pct_change(21)
+        sector_mom_63 = df[available_sectors].pct_change(63)
+
+        for s in available_sectors:
+            # Rank improvement
+            rank_21 = sector_mom_21.rank(axis=1, pct=True)[s]
+            rank_63 = sector_mom_63.rank(axis=1, pct=True)[s]
+            X[f'{s}_Rank_Improvement'] = rank_21 - rank_63
+
+            # Distance from sector median
+            median_ret = sector_mom_63.median(axis=1)
+            X[f'{s}_vs_Median_63d'] = sector_mom_63[s] - median_ret
+
+    # ========== MACRO CONDITIONS ==========
     if '^VIX' in df.columns:
-        X['VIX_Level'] = df['^VIX']
+        X['VIX'] = df['^VIX']
+        X['VIX_MA63'] = df['^VIX'].rolling(63).mean()
+        X['VIX_Delta'] = df['^VIX'] - X['VIX_MA63']
+
     if '^MOVE' in df.columns:
-        X['MOVE_Level'] = df['^MOVE']
+        X['MOVE'] = df['^MOVE']
+        X['MOVE_MA63'] = df['^MOVE'].rolling(63).mean()
+
+    if '^TNX' in df.columns and '^TYX' in df.columns:
+        X['TNX'] = df['^TNX']
+        X['TYX'] = df['^TYX']
+        X['YieldCurve'] = df['^TYX'] - df['^TNX']
+        X['YC_MA63'] = X['YieldCurve'].rolling(63).mean()
+        X['YC_Slope'] = X['YieldCurve'] - X['YC_MA63']
+
+    if 'HYG' in df.columns and 'LQD' in df.columns:
+        X['HYG_Ret_63d'] = df['HYG'].pct_change(63)
+        X['LQD_Ret_63d'] = df['LQD'].pct_change(63)
+        X['Credit_Spread'] = X['LQD_Ret_63d'] - X['HYG_Ret_63d']
+
     if 'DX-Y.NYB' in df.columns:
-        X['DXY_Mom'] = df['DX-Y.NYB'].pct_change(window, fill_method=None)
+        X['DXY_Ret_63d'] = df['DX-Y.NYB'].pct_change(63)
 
-    # Dummy column for alignment
-    X['Sector'] = 0
+    if 'GLD' in df.columns:
+        X['Gold_Ret_63d'] = df['GLD'].pct_change(63)
 
-    # Fill missing values with 0 to match training
+    if 'USO' in df.columns:
+        X['Oil_Ret_63d'] = df['USO'].pct_change(63)
+
+    # Market regime
+    if 'SPY' in df.columns:
+        spy_ma_50 = df['SPY'].rolling(50).mean()
+        spy_ma_200 = df['SPY'].rolling(200).mean()
+        X['SPY_Trend'] = (spy_ma_50 - spy_ma_200) / spy_ma_200
+        X['SPY_vs_MA200'] = (df['SPY'] - spy_ma_200) / spy_ma_200
+        X['SPY_Ret_21d'] = df['SPY'].pct_change(21)
+        X['SPY_Ret_63d'] = df['SPY'].pct_change(63)
+
+    if 'QQQ' in df.columns and 'SPY' in df.columns:
+        X['QQQ_Ret_63d'] = df['QQQ'].pct_change(63)
+        X['Tech_Premium'] = X['QQQ_Ret_63d'] - X['SPY_Ret_63d']
+
+    # Sector style factors
+    defensive = ['XLP', 'XLU', 'XLV']
+    cyclical = ['XLY', 'XLI', 'XLK']
+    value = ['XLE', 'XLF', 'XLI']
+
+    defensive_avail = [s for s in defensive if s in df.columns]
+    cyclical_avail = [s for s in cyclical if s in df.columns]
+    value_avail = [s for s in value if s in df.columns]
+
+    if len(defensive_avail) > 0 and len(cyclical_avail) > 0:
+        defensive_ret = df[defensive_avail].mean(axis=1).pct_change(63)
+        cyclical_ret = df[cyclical_avail].mean(axis=1).pct_change(63)
+        X['Cyclical_vs_Def'] = cyclical_ret - defensive_ret
+
+    if len(value_avail) > 0 and 'XLK' in df.columns:
+        value_ret = df[value_avail].mean(axis=1).pct_change(63)
+        growth_ret = df['XLK'].pct_change(63)
+        X['Growth_vs_Value'] = growth_ret - value_ret
+
     return X.fillna(0)
-
-
-# Usage notes:
-# 1. This function now matches the training script exactly
-# 2. Uses .pct_change(fill_method=None) to suppress FutureWarnings
-# 3. Computes risk-adjusted momentum using same window for pct_change and volatility
-# 4. All feature names match training script
-# 5. Returns features in same order as training
-# 6. NaN values from pct_change are handled by final .fillna(0)
 
 
 def compute_commodity_features(data):
@@ -604,6 +659,9 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
     bundle = _get_model_bundle(model_path)
     model, scaler, feature_names = bundle['model'], bundle['scaler'], bundle['features']
 
+    # Check if model has label_encoder (new sector model format)
+    label_encoder = bundle.get('label_encoder', None)
+
     # Determine minimal start date for rolling windows
     max_rolling = 200
     buffer_days = 10
@@ -622,19 +680,28 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
 
     X = compute_features(data, model_type)
 
-    # Ensure all features exist
-    for feat in feature_names:
-        if feat not in X.columns:
-            X[feat] = 0
+    # Ensure all features exist - use pd.concat to avoid fragmentation
+    missing_features = {feat: 0 for feat in feature_names if feat not in X.columns}
+    if missing_features:
+        missing_df = pd.DataFrame(missing_features, index=X.index)
+        X = pd.concat([X, missing_df], axis=1)
 
     # Scale and predict
     X_scaled = scaler.transform(X.tail(1)[feature_names])
     proba = model.predict_proba(X_scaled)[0]
 
+    # Handle class labels (could be integers or strings)
+    classes = model.classes_
+
+    # Decode if label encoder exists (new sector model)
+    if label_encoder is not None:
+        classes = label_encoder.inverse_transform(classes)
+
+    # Build probability dictionary
     if model_type == 'risk':
-        proba_dict = {f"Class {c}": p for c, p in zip(model.classes_, proba)}
+        proba_dict = {f"Class {c}": p for c, p in zip(classes, proba)}
     else:
-        proba_dict = {friendly_names.get(c, c): p for c, p in zip(model.classes_, proba)}
+        proba_dict = {friendly_names.get(c, c): p for c, p in zip(classes, proba)}
 
     result = {
         'date': as_of_date.strftime('%Y-%m-%d'),
@@ -646,7 +713,7 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         explanations = {}
         descriptions = get_feature_descriptions()
 
-        for i, class_name in enumerate(model.classes_):
+        for i, class_name in enumerate(classes):
             display_name = friendly_names.get(class_name, class_name)
             if model_type == 'risk':
                 display_name = f"Class {class_name}"
@@ -717,7 +784,8 @@ if __name__ == "__main__":
     model_configs = [
         ("Risk Regime", "risk_model.joblib", list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))),
          {}, 'risk'),
-        ("Sector Rotation", "sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS, SECTOR_NAMES,
+        ("Sector Rotation", "sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS + ['QQQ', 'GLD', 'USO'],
+         SECTOR_NAMES,
          'sector'),
         ("Commodities", "commodity_model.joblib", list(COMMODITIES.keys()) + ML_MACRO_TICKERS, COMMODITIES,
          'commodity'),
