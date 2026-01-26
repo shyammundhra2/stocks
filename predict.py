@@ -79,7 +79,7 @@ def compute_risk_features(data):
     X = pd.DataFrame(index=data.index)
     cols = data.columns
 
-    data = data.ffill().fillna(method='bfill')
+    data = data.ffill().bfill()
 
     if 'DX-Y.NYB' in cols:
         X['DXY_mom'] = data['DX-Y.NYB'].pct_change(horizon_q)
@@ -190,7 +190,7 @@ def compute_commodity_features(data):
     horizon_1m = 21
     X = pd.DataFrame(index=data.index)
     cols = data.columns
-    data = data.ffill().fillna(method='bfill')
+    data = data.ffill().bfill()
 
     tickers = [c for c in cols if c in COMMODITIES.keys()]
     if tickers:
