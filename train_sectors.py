@@ -86,6 +86,7 @@ for i, idx in enumerate(top_idx):
 # ---------------- HISTORICAL ODDS ----------------
 hist_top_counts = y.value_counts()
 hist_odds = hist_top_counts / len(y)
+print(y.value_counts())
 
 print("\n📊 Historical vs Predicted Odds:")
 for s in SECTORS:
