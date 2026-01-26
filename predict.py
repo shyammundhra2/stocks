@@ -148,24 +148,36 @@ def compute_sector_features(df):
     x_axis = np.arange(window)
     X = pd.DataFrame(index=df.index)
 
+    # Sector list matching training
+    SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
+
+    # Pre-compute log prices for all sectors at once
+    log_prices = {}
+    for s in SECTORS:
+        if s in df.columns:
+            log_prices[s] = np.log(df[s])
+
     # --- Sector Features ---
-    for s in SECTOR_NAMES.keys():
+    for s in SECTORS:
         if s not in df.columns:
             continue
 
-        log_price = np.log(df[s])
+        log_price = log_prices[s]
 
         # Linear Regression Slope & R²
         X[f'{s}_Slope'] = log_price.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[0] if not np.isnan(x).any() else 0
+            lambda x: stats.linregress(x_axis, x)[0] if not np.isnan(x).any() else 0,
+            raw=False
         )
         X[f'{s}_R2'] = log_price.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[2] ** 2 if not np.isnan(x).any() else 0
+            lambda x: stats.linregress(x_axis, x)[2] ** 2 if not np.isnan(x).any() else 0,
+            raw=False
         )
 
-        # Risk-adjusted momentum
+        # Risk-adjusted momentum (matching training exactly)
+        pct_change = df[s].pct_change(window, fill_method=None)
         vol = df[s].pct_change(fill_method=None).rolling(window).std()
-        X[f'{s}_Risk_Adj_Mom'] = df[s].pct_change(window, fill_method=None) / (vol + 1e-6)
+        X[f'{s}_Risk_Adj_Mom'] = pct_change / (vol + 1e-6)
 
     # --- Macro / Market Features ---
     if '^TYX' in df.columns and '^TNX' in df.columns:
@@ -175,13 +187,22 @@ def compute_sector_features(df):
     if '^MOVE' in df.columns:
         X['MOVE_Level'] = df['^MOVE']
     if 'DX-Y.NYB' in df.columns:
-        X['DXY_Mom'] = df['DX-Y.NYB'].pct_change(window)
+        X['DXY_Mom'] = df['DX-Y.NYB'].pct_change(window, fill_method=None)
 
     # Dummy column for alignment
     X['Sector'] = 0
 
     # Fill missing values with 0 to match training
     return X.fillna(0)
+
+
+# Usage notes:
+# 1. This function now matches the training script exactly
+# 2. Uses .pct_change(fill_method=None) to suppress FutureWarnings
+# 3. Computes risk-adjusted momentum using same window for pct_change and volatility
+# 4. All feature names match training script
+# 5. Returns features in same order as training
+# 6. NaN values from pct_change are handled by final .fillna(0)
 
 
 def compute_commodity_features(data):

@@ -15,6 +15,9 @@ SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE'
 MODEL_FILE = "sector_model.joblib"
 START_DATE = "2000-01-01"
 CACHE_DIR = ".cache"
+VIX_ZSCORE_WINDOW = 252  # 1-year rolling window for z-score calculation
+MOVE_ZSCORE_WINDOW = 252  # 1-year rolling window for z-score calculation
+ZSCORE_THRESHOLD = 2  # Z-score threshold for stress regime
 warnings.filterwarnings('ignore')
 
 
@@ -133,9 +136,9 @@ def compute_features(df):
     return X.fillna(0)
 
 
-# ---------------- REGIME-DEPENDENT TARGET (OPTIMIZED) ----------------
+# ---------------- REGIME-DEPENDENT TARGET (Z-SCORE BASED) ----------------
 def get_regime_target(df):
-    """Vectorized regime target calculation"""
+    """Vectorized regime target calculation using VIX and MOVE z-scores"""
     # Calculate relative returns for all sectors at once
     sector_returns = df[SECTORS].pct_change(21)
     spy_returns = df['SPY'].pct_change(21)
@@ -143,8 +146,18 @@ def get_regime_target(df):
     # Vectorized relative returns
     rel_returns = sector_returns.sub(spy_returns, axis=0).shift(-21)
 
-    # Vectorized regime detection
-    is_stress = (df['^MOVE'] > 110) | (df['^VIX'] > 20)
+    # Calculate VIX z-score (rolling 1-year window)
+    vix_mean = df['^VIX'].rolling(VIX_ZSCORE_WINDOW).mean()
+    vix_std = df['^VIX'].rolling(VIX_ZSCORE_WINDOW).std()
+    vix_zscore = (df['^VIX'] - vix_mean) / (vix_std + 1e-6)
+
+    # Calculate MOVE z-score (rolling 1-year window)
+    move_mean = df['^MOVE'].rolling(MOVE_ZSCORE_WINDOW).mean()
+    move_std = df['^MOVE'].rolling(MOVE_ZSCORE_WINDOW).std()
+    move_zscore = (df['^MOVE'] - move_mean) / (move_std + 1e-6)
+
+    # Vectorized regime detection: Stress when VIX z-score > 2 OR MOVE z-score > 2
+    is_stress = (vix_zscore > 2) | (move_zscore > 2)
 
     # Vectorized target assignment
     target = pd.Series(index=df.index, dtype='object')
@@ -157,7 +170,7 @@ def get_regime_target(df):
         else:
             target.iloc[i] = rel_returns.iloc[i].idxmax()  # Calm: Trend Continuation
 
-    return target
+    return target, vix_zscore, move_zscore
 
 
 # ---------------- EXECUTION ----------------
@@ -172,9 +185,9 @@ print("⚙️ Computing features...")
 X_full = compute_features(df)
 print(f"✅ Features computed: {len(X_full.columns)} features")
 
-# Step 3: Generate targets
-print("🎯 Generating regime-dependent targets...")
-y = get_regime_target(df)
+# Step 3: Generate targets with z-score
+print("🎯 Generating regime-dependent targets (VIX/MOVE z-score > 2)...")
+y, vix_zscore, move_zscore = get_regime_target(df)
 print(f"✅ Targets generated: {len(y)} samples")
 
 # Step 4: Train/test split
@@ -209,13 +222,19 @@ latest_scaled = scaler.transform(latest)
 probs = model.predict_proba(latest_scaled)[0]
 top_idx = np.argsort(probs)[-3:][::-1]
 
-# Identify current regime for printout
-current_move = df['^MOVE'].iloc[-1]
+# Identify current regime using z-scores
+current_vix_zscore = vix_zscore.iloc[-1]
+current_move_zscore = move_zscore.iloc[-1]
 current_vix = df['^VIX'].iloc[-1]
-regime_mode = "STRESS (Mean Reversion)" if (current_move > 110 or current_vix > 30) else "NORMAL (Trend Continuation)"
+current_move = df['^MOVE'].iloc[-1]
+
+is_stress_regime = (current_vix_zscore > 2) or (current_move_zscore > 2)
+regime_mode = "STRESS (Mean Reversion)" if is_stress_regime else "NORMAL (Trend Continuation)"
 
 print(f"\n{'=' * 60}")
-print(f"### Strategic Analysis & Sector Picks [Regime: {regime_mode}]")
+print(f"### Strategic Analysis & Sector Picks")
+print(f"VIX: {current_vix:.2f} (Z-Score: {current_vix_zscore:.2f}) | MOVE: {current_move:.2f} (Z-Score: {current_move_zscore:.2f})")
+print(f"Regime: {regime_mode}")
 print(f"{'=' * 60}")
 for i, idx in enumerate(top_idx):
     print(f"{i + 1}. **{model.classes_[idx]}** ({probs[idx] * 100:.1f}% confidence)")
