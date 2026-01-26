@@ -34,7 +34,7 @@ def compute_features(df):
     X['Market_Regime_3M'] = df['SPY'].pct_change(63)
     X['Tech_Regime_1M'] = df['QQQ'].pct_change(21) - df['SPY'].pct_change(21)
 
-    # --- Sector Features ---
+    # --- Sector Features for Mean Reversion ---
     for s in SECTORS:
         X[f'{s}_Rel_Mom_1M'] = df[s].pct_change(21) - df['SPY'].pct_change(21)
         X[f'{s}_Rel_Mom_3M'] = df[s].pct_change(63) - df['SPY'].pct_change(63)
@@ -46,6 +46,9 @@ def compute_features(df):
         high_52w = df[s].rolling(252).max()
         X[f'{s}_Drawdown_High'] = (df[s] - high_52w) / high_52w
 
+    # Dummy column to match training features for dashboard
+    X['Sector'] = 0
+
     return X.fillna(0)
 
 
@@ -53,9 +56,9 @@ def compute_features(df):
 df = get_macro_data()
 X_full = compute_features(df)
 
-# Target: next 1-month returns
+# Target: next 1-month **mean-reversion returns** (lowest relative to SPY)
 returns = df[SECTORS].pct_change(21).shift(-21)
-y = returns.idxmax(axis=1)
+y = returns.sub(df['SPY'].pct_change(21), axis=0).idxmin(axis=1)  # min relative => mean-reversion
 
 # Align for rolling windows
 X = X_full.iloc[252:-21]
@@ -75,7 +78,9 @@ model = GradientBoostingClassifier(
 model.fit(X_train, y_train)
 
 # ---------------- DASHBOARD ----------------
-latest_scaled = scaler.transform(X_full.tail(1))
+latest = X_full.tail(1).copy()
+latest['Sector'] = 0  # ensure matching feature
+latest_scaled = scaler.transform(latest)
 probs = model.predict_proba(latest_scaled)[0]
 top_idx = np.argsort(probs)[-3:][::-1]
 

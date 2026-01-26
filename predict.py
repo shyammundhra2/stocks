@@ -128,10 +128,66 @@ def compute_risk_features(data):
     return X
 
 
-def compute_sector_features(data):
-    """Compute features specific to sector models"""
-    # Currently same as risk sectors but can be extended
-    return compute_risk_features(data)  # minimal change
+
+
+def compute_sector_features(df):
+    """
+    Compute sector features exactly as done during training.
+    Includes relative momentum, risk-adjusted momentum, RSI, 50-day MA, and drawdown.
+
+    Args:
+        df (pd.DataFrame): Historical Close prices for sectors + SPY
+
+    Returns:
+        X (pd.DataFrame): Feature matrix for sector model
+    """
+    X = pd.DataFrame(index=df.index)
+
+    # --- Macro / Market Features ---
+    if '^TYX' in df.columns and '^TNX' in df.columns:
+        X['Yield_Curve'] = df['^TYX'] - df['^TNX']
+        X['Curve_Momentum'] = X['Yield_Curve'].diff(21)
+    if '^VIX' in df.columns:
+        X['VIX_Level'] = df['^VIX']
+    if '^MOVE' in df.columns:
+        X['MOVE_Level'] = df['^MOVE']
+    if 'DX-Y.NYB' in df.columns:
+        X['DXY_Mom'] = df['DX-Y.NYB'].pct_change(21)
+    if 'SPY' in df.columns:
+        X['Market_Regime_3M'] = df['SPY'].pct_change(63)
+    if 'QQQ' in df.columns and 'SPY' in df.columns:
+        X['Tech_Regime_1M'] = df['QQQ'].pct_change(21) - df['SPY'].pct_change(21)
+
+    # --- Sector Features ---
+    for s in SECTOR_NAMES.keys():
+        if s not in df.columns or 'SPY' not in df.columns:
+            continue
+
+        # Relative momentum
+        X[f'{s}_Rel_Mom_1M'] = df[s].pct_change(21) - df['SPY'].pct_change(21)
+        X[f'{s}_Rel_Mom_3M'] = df[s].pct_change(63) - df['SPY'].pct_change(63)
+
+        # Risk-adjusted momentum
+        vol = df[s].pct_change().rolling(21).std()
+        X[f'{s}_Risk_Adj_Mom'] = df[s].pct_change(21) / (vol + 1e-6)
+
+        # RSI
+        X[f'{s}_RSI'] = compute_RSI(df[s], 14)
+
+        # Above 50-day MA
+        X[f'{s}_Above_MA50'] = (df[s] > df[s].rolling(50).mean()).astype(int)
+
+        # Drawdown from 52-week high
+        high_52w = df[s].rolling(252).max()
+        X[f'{s}_Drawdown_High'] = (df[s] - high_52w) / high_52w
+
+    # Dummy column for alignment
+    X['Sector'] = 0
+
+    # Fill any missing values with 0 to match training
+    X = X.fillna(0)
+
+    return X
 
 
 def compute_commodity_features(data):
