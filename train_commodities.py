@@ -3,16 +3,16 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
 import joblib
 
 # Assuming these are imported correctly from your local structure
 # from macro.constants import COMMODITIES, ML_MACRO_TICKERS
-
-# Mocking constants for the sake of the complete code example
-from macro.constants import  ML_MACRO_TICKERS, COMMODITIES
+from macro.constants import ML_MACRO_TICKERS, COMMODITIES
 
 commodity_tickers = list(COMMODITIES.keys())
 macro_tickers = ML_MACRO_TICKERS
+
 
 def train_quarterly_commodity_model():
     print("🚀 Training Quarterly Commodity Model with constants...")
@@ -44,6 +44,7 @@ def train_quarterly_commodity_model():
     # 3. Clean and scale
     valid = pd.concat([X, y.rename('target')], axis=1).dropna()
     X_train = valid.drop(columns=['target'])
+    y_train = valid['target']
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_train)
@@ -56,12 +57,35 @@ def train_quarterly_commodity_model():
         class_weight='balanced',
         random_state=42
     )
-    model.fit(X_scaled, valid['target'])
+    model.fit(X_scaled, y_train)
 
-    # --- NEW: FEATURE RANKING SECTION ---
+    # ------------------ TOP-K ACCURACY ------------------
+    proba = model.predict_proba(X_scaled)
+    classes = model.classes_
+
+    # Top-1 Accuracy
+    top1_preds = classes[np.argmax(proba, axis=1)]
+    top1_acc = accuracy_score(y_train, top1_preds)
+
+    # Top-3 Accuracy
+    top3_correct = 0
+    for i in range(len(y_train)):
+        top3_idx = np.argsort(proba[i])[-3:]
+        top3_classes = classes[top3_idx]
+        if y_train.iloc[i] in top3_classes:
+            top3_correct += 1
+    top3_acc = top3_correct / len(y_train)
+
+    print("\n📊 MODEL PERFORMANCE")
+    print("===================================")
+    print(f"✅ Top-1 Accuracy: {top1_acc:.2%}")
+    print(f"✅ Top-3 Accuracy: {top3_acc:.2%}")
+    print("===================================\n")
+
+    # --- FEATURE IMPORTANCE ---
     importances = model.feature_importances_
     feature_names = X_train.columns.tolist()
-    
+
     feature_imp_df = pd.DataFrame({
         'Feature': feature_names,
         'Importance': importances
@@ -69,12 +93,10 @@ def train_quarterly_commodity_model():
 
     print("\n📊 Commodity Driver Hierarchy (Top 15 Drivers):")
     print("-" * 60)
-    # Displaying top 15 to keep the console clean
     for _, row in feature_imp_df.head(15).iterrows():
         bar = '█' * int(row['Importance'] * 100)
         print(f"{row['Feature']:<20} | {bar} {row['Importance']:.2%}")
     print("-" * 60)
-    # ------------------------------------
 
     # 5. Save model
     joblib.dump({
@@ -84,6 +106,7 @@ def train_quarterly_commodity_model():
     }, 'commodity_model.joblib')
 
     print("✅ Commodity model trained and saved!")
+
 
 if __name__ == "__main__":
     train_quarterly_commodity_model()
