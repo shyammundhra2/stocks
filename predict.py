@@ -132,6 +132,7 @@ def compute_risk_features(data):
 def compute_sector_features(df):
     """
     Compute sector features matching the 63.86% production model.
+    Optimized to avoid DataFrame fragmentation warnings.
 
     Args:
         df (pd.DataFrame): Historical Close prices for sectors + SPY + QQQ + macro tickers
@@ -139,9 +140,10 @@ def compute_sector_features(df):
     Returns:
         X (pd.DataFrame): Feature matrix for sector model
     """
-    X = pd.DataFrame(index=df.index)
-
     SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
+
+    # Collect all features in a dict, then create DataFrame once
+    features = {}
 
     # ========== SECTOR POSITIONING ==========
     for s in SECTORS:
@@ -150,93 +152,100 @@ def compute_sector_features(df):
 
         # Multi-timeframe returns and ranks
         for period in [10, 21, 42, 63, 126]:
-            ret = df[s].pct_change(period)
-            X[f'{s}_Ret_{period}d'] = ret
+            ret = df[s].pct_change(period, fill_method=None)
+            features[f'{s}_Ret_{period}d'] = ret
 
             # Rank vs other sectors
             available_sectors = [sec for sec in SECTORS if sec in df.columns]
             if len(available_sectors) > 1:
-                sector_rets = df[available_sectors].pct_change(period)
-                X[f'{s}_Rank_{period}d'] = sector_rets.rank(axis=1, pct=True)[s]
+                sector_rets = df[available_sectors].pct_change(period, fill_method=None)
+                features[f'{s}_Rank_{period}d'] = sector_rets.rank(axis=1, pct=True)[s]
 
         # Moving average positioning
         ma_20 = df[s].rolling(20).mean()
         ma_50 = df[s].rolling(50).mean()
         ma_200 = df[s].rolling(200).mean()
 
-        X[f'{s}_MA20'] = (df[s] - ma_20) / ma_20
-        X[f'{s}_MA50'] = (df[s] - ma_50) / ma_50
-        X[f'{s}_MA200'] = (df[s] - ma_200) / ma_200
-        X[f'{s}_MA_Slope'] = (ma_20 - ma_200) / ma_200
+        features[f'{s}_MA20'] = (df[s] - ma_20) / ma_20
+        features[f'{s}_MA50'] = (df[s] - ma_50) / ma_50
+        features[f'{s}_MA200'] = (df[s] - ma_200) / ma_200
+        features[f'{s}_MA_Slope'] = (ma_20 - ma_200) / ma_200
 
         # Volatility metrics
-        vol_21 = df[s].pct_change().rolling(21).std()
-        vol_63 = df[s].pct_change().rolling(63).std()
-        X[f'{s}_Vol_21d'] = vol_21
-        X[f'{s}_Vol_Ratio'] = vol_21 / (vol_63 + 1e-6)
+        vol_21 = df[s].pct_change(fill_method=None).rolling(21).std()
+        vol_63 = df[s].pct_change(fill_method=None).rolling(63).std()
+        features[f'{s}_Vol_21d'] = vol_21
+        features[f'{s}_Vol_Ratio'] = vol_21 / (vol_63 + 1e-6)
 
         # Risk-adjusted returns (Sharpe ratio)
-        X[f'{s}_Sharpe_63d'] = (df[s].pct_change(63) / (vol_63 * np.sqrt(63) + 1e-6))
+        features[f'{s}_Sharpe_63d'] = (df[s].pct_change(63, fill_method=None) / (vol_63 * np.sqrt(63) + 1e-6))
 
     # ========== ROTATION SIGNALS ==========
     available_sectors = [s for s in SECTORS if s in df.columns]
     if len(available_sectors) > 1:
-        sector_mom_21 = df[available_sectors].pct_change(21)
-        sector_mom_63 = df[available_sectors].pct_change(63)
+        sector_mom_21 = df[available_sectors].pct_change(21, fill_method=None)
+        sector_mom_63 = df[available_sectors].pct_change(63, fill_method=None)
 
         for s in available_sectors:
             # Rank improvement
             rank_21 = sector_mom_21.rank(axis=1, pct=True)[s]
             rank_63 = sector_mom_63.rank(axis=1, pct=True)[s]
-            X[f'{s}_Rank_Improvement'] = rank_21 - rank_63
+            features[f'{s}_Rank_Improvement'] = rank_21 - rank_63
 
             # Distance from sector median
             median_ret = sector_mom_63.median(axis=1)
-            X[f'{s}_vs_Median_63d'] = sector_mom_63[s] - median_ret
+            features[f'{s}_vs_Median_63d'] = sector_mom_63[s] - median_ret
 
     # ========== MACRO CONDITIONS ==========
     if '^VIX' in df.columns:
-        X['VIX'] = df['^VIX']
-        X['VIX_MA63'] = df['^VIX'].rolling(63).mean()
-        X['VIX_Delta'] = df['^VIX'] - X['VIX_MA63']
+        vix_ma63 = df['^VIX'].rolling(63).mean()
+        features['VIX'] = df['^VIX']
+        features['VIX_MA63'] = vix_ma63
+        features['VIX_Delta'] = df['^VIX'] - vix_ma63
 
     if '^MOVE' in df.columns:
-        X['MOVE'] = df['^MOVE']
-        X['MOVE_MA63'] = df['^MOVE'].rolling(63).mean()
+        features['MOVE'] = df['^MOVE']
+        features['MOVE_MA63'] = df['^MOVE'].rolling(63).mean()
 
     if '^TNX' in df.columns and '^TYX' in df.columns:
-        X['TNX'] = df['^TNX']
-        X['TYX'] = df['^TYX']
-        X['YieldCurve'] = df['^TYX'] - df['^TNX']
-        X['YC_MA63'] = X['YieldCurve'].rolling(63).mean()
-        X['YC_Slope'] = X['YieldCurve'] - X['YC_MA63']
+        yc = df['^TYX'] - df['^TNX']
+        yc_ma63 = yc.rolling(63).mean()
+        features['TNX'] = df['^TNX']
+        features['TYX'] = df['^TYX']
+        features['YieldCurve'] = yc
+        features['YC_MA63'] = yc_ma63
+        features['YC_Slope'] = yc - yc_ma63
 
     if 'HYG' in df.columns and 'LQD' in df.columns:
-        X['HYG_Ret_63d'] = df['HYG'].pct_change(63)
-        X['LQD_Ret_63d'] = df['LQD'].pct_change(63)
-        X['Credit_Spread'] = X['LQD_Ret_63d'] - X['HYG_Ret_63d']
+        hyg_ret = df['HYG'].pct_change(63, fill_method=None)
+        lqd_ret = df['LQD'].pct_change(63, fill_method=None)
+        features['HYG_Ret_63d'] = hyg_ret
+        features['LQD_Ret_63d'] = lqd_ret
+        features['Credit_Spread'] = lqd_ret - hyg_ret
 
     if 'DX-Y.NYB' in df.columns:
-        X['DXY_Ret_63d'] = df['DX-Y.NYB'].pct_change(63)
+        features['DXY_Ret_63d'] = df['DX-Y.NYB'].pct_change(63, fill_method=None)
 
     if 'GLD' in df.columns:
-        X['Gold_Ret_63d'] = df['GLD'].pct_change(63)
+        features['Gold_Ret_63d'] = df['GLD'].pct_change(63, fill_method=None)
 
     if 'USO' in df.columns:
-        X['Oil_Ret_63d'] = df['USO'].pct_change(63)
+        features['Oil_Ret_63d'] = df['USO'].pct_change(63, fill_method=None)
 
     # Market regime
     if 'SPY' in df.columns:
         spy_ma_50 = df['SPY'].rolling(50).mean()
         spy_ma_200 = df['SPY'].rolling(200).mean()
-        X['SPY_Trend'] = (spy_ma_50 - spy_ma_200) / spy_ma_200
-        X['SPY_vs_MA200'] = (df['SPY'] - spy_ma_200) / spy_ma_200
-        X['SPY_Ret_21d'] = df['SPY'].pct_change(21)
-        X['SPY_Ret_63d'] = df['SPY'].pct_change(63)
+        features['SPY_Trend'] = (spy_ma_50 - spy_ma_200) / spy_ma_200
+        features['SPY_vs_MA200'] = (df['SPY'] - spy_ma_200) / spy_ma_200
+        features['SPY_Ret_21d'] = df['SPY'].pct_change(21, fill_method=None)
+        features['SPY_Ret_63d'] = df['SPY'].pct_change(63, fill_method=None)
 
     if 'QQQ' in df.columns and 'SPY' in df.columns:
-        X['QQQ_Ret_63d'] = df['QQQ'].pct_change(63)
-        X['Tech_Premium'] = X['QQQ_Ret_63d'] - X['SPY_Ret_63d']
+        qqq_ret = df['QQQ'].pct_change(63, fill_method=None)
+        spy_ret = features.get('SPY_Ret_63d', df['SPY'].pct_change(63, fill_method=None))
+        features['QQQ_Ret_63d'] = qqq_ret
+        features['Tech_Premium'] = qqq_ret - spy_ret
 
     # Sector style factors
     defensive = ['XLP', 'XLU', 'XLV']
@@ -248,15 +257,17 @@ def compute_sector_features(df):
     value_avail = [s for s in value if s in df.columns]
 
     if len(defensive_avail) > 0 and len(cyclical_avail) > 0:
-        defensive_ret = df[defensive_avail].mean(axis=1).pct_change(63)
-        cyclical_ret = df[cyclical_avail].mean(axis=1).pct_change(63)
-        X['Cyclical_vs_Def'] = cyclical_ret - defensive_ret
+        defensive_ret = df[defensive_avail].mean(axis=1).pct_change(63, fill_method=None)
+        cyclical_ret = df[cyclical_avail].mean(axis=1).pct_change(63, fill_method=None)
+        features['Cyclical_vs_Def'] = cyclical_ret - defensive_ret
 
     if len(value_avail) > 0 and 'XLK' in df.columns:
-        value_ret = df[value_avail].mean(axis=1).pct_change(63)
-        growth_ret = df['XLK'].pct_change(63)
-        X['Growth_vs_Value'] = growth_ret - value_ret
+        value_ret = df[value_avail].mean(axis=1).pct_change(63, fill_method=None)
+        growth_ret = df['XLK'].pct_change(63, fill_method=None)
+        features['Growth_vs_Value'] = growth_ret - value_ret
 
+    # Create DataFrame once from dict
+    X = pd.DataFrame(features, index=df.index)
     return X.fillna(0)
 
 
