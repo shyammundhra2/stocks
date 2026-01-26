@@ -69,17 +69,17 @@ def _get_model_bundle(model_path):
     return joblib.load(model_path)
 
 
-def compute_features(data, model_type):
-    """Compute features depending on model type with MultiIndex safety"""
+# ----------------- Feature Computation -----------------
+
+def compute_risk_features(data):
+    """Compute features specific to risk models"""
     horizon_q = 63
     horizon_1m = 21
     X = pd.DataFrame(index=data.index)
     cols = data.columns
 
-    # Forward fill once
     data = data.ffill().fillna(method='bfill')
 
-    # --- Macro features ---
     if 'DX-Y.NYB' in cols:
         X['DXY_mom'] = data['DX-Y.NYB'].pct_change(horizon_q)
         X['DXY_Mom'] = data['DX-Y.NYB'].pct_change(horizon_1m)
@@ -97,55 +97,105 @@ def compute_features(data, model_type):
         X['Credit_Spread'] = data['LQD'] / data['HYG']
         X['Credit_Spread_Proxy'] = X['Credit_Spread']
 
-    # --- Risk-specific features ---
-    if model_type == 'risk':
-        if 'RSP' in cols and 'SPY' in cols:
-            breadth_ratio = data['RSP'] / data['SPY']
-            X['Breadth_Ratio'] = breadth_ratio
-            X['Breadth_MA_Diff'] = breadth_ratio - breadth_ratio.rolling(50).mean()
-            X['SPY_Trend'] = data['SPY'] / data['SPY'].rolling(200).mean()
+    # Risk-specific calculations
+    if 'RSP' in cols and 'SPY' in cols:
+        breadth_ratio = data['RSP'] / data['SPY']
+        X['Breadth_Ratio'] = breadth_ratio
+        X['Breadth_MA_Diff'] = breadth_ratio - breadth_ratio.rolling(50).mean()
+        X['SPY_Trend'] = data['SPY'] / data['SPY'].rolling(200).mean()
 
-        required_rot = ['XLU', 'XLP', 'XLK', 'XLY']
-        if all(s in cols for s in required_rot):
-            X['Defensive_Rotation'] = (data['XLU'] + data['XLP']) / (data['XLK'] + data['XLY'])
+    required_rot = ['XLU', 'XLP', 'XLK', 'XLY']
+    if all(s in cols for s in required_rot):
+        X['Defensive_Rotation'] = (data['XLU'] + data['XLP']) / (data['XLK'] + data['XLY'])
 
-        if 'XLF' in cols and 'SPY' in cols:
-            X['XLF_Relative_Strength'] = data['XLF'] / data['SPY']
+    if 'XLF' in cols and 'SPY' in cols:
+        X['XLF_Relative_Strength'] = data['XLF'] / data['SPY']
 
-        # Vectorized momentum calculations
-        sectors = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
-        available_sectors = [s for s in sectors if s in cols]
-        if available_sectors:
-            sector_data = data[available_sectors]
-            sector_mom = sector_data.pct_change(63)
-            for s in available_sectors:
-                X[f'{s}_3M_Mom'] = sector_mom[s]
+    # Vectorized momentum calculations
+    sectors = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
+    available_sectors = [s for s in sectors if s in cols]
+    if available_sectors:
+        sector_data = data[available_sectors]
+        sector_mom = sector_data.pct_change(horizon_q)
+        for s in available_sectors:
+            X[f'{s}_3M_Mom'] = sector_mom[s]
 
-        if 'Yield_Curve' in X.columns and 'Defensive_Rotation' in X.columns:
-            def_rot_ma = X['Defensive_Rotation'].rolling(126).mean()
-            X['Labor_Stress_Proxy'] = ((X['Yield_Curve'] < 0.1) &
-                                       (X['Defensive_Rotation'] > def_rot_ma)).astype(int)
-
-    # --- Commodity and Country specific features ---
-    if model_type in ['commodity', 'country']:
-        target_dict = COMMODITIES if model_type == 'commodity' else COUNTRIES
-        tickers = [c for c in cols if c in target_dict.keys()]
-
-        if tickers:
-            # Vectorized feature computation
-            ticker_data = data[tickers]
-            pct_q = ticker_data.pct_change(horizon_q)
-            pct_1m = ticker_data.pct_change(horizon_1m)
-            vol_q = ticker_data.rolling(horizon_q).std()
-            vol_1m = ticker_data.rolling(horizon_1m).std()
-
-            for c in tickers:
-                X[f'{c}_mom'] = pct_q[c]
-                X[f'{c}_vol'] = vol_q[c]
-                X[f'{c}_mom_1m'] = pct_1m[c]
-                X[f'{c}_vol_1m'] = vol_1m[c]
+    if 'Yield_Curve' in X.columns and 'Defensive_Rotation' in X.columns:
+        def_rot_ma = X['Defensive_Rotation'].rolling(126).mean()
+        X['Labor_Stress_Proxy'] = ((X['Yield_Curve'] < 0.1) &
+                                   (X['Defensive_Rotation'] > def_rot_ma)).astype(int)
 
     return X
+
+
+def compute_sector_features(data):
+    """Compute features specific to sector models"""
+    # Currently same as risk sectors but can be extended
+    return compute_risk_features(data)  # minimal change
+
+
+def compute_commodity_features(data):
+    """Compute features specific to commodity models"""
+    horizon_q = 63
+    horizon_1m = 21
+    X = pd.DataFrame(index=data.index)
+    cols = data.columns
+    data = data.ffill().fillna(method='bfill')
+
+    tickers = [c for c in cols if c in COMMODITIES.keys()]
+    if tickers:
+        ticker_data = data[tickers]
+        pct_q = ticker_data.pct_change(horizon_q)
+        pct_1m = ticker_data.pct_change(horizon_1m)
+        vol_q = ticker_data.rolling(horizon_q).std()
+        vol_1m = ticker_data.rolling(horizon_1m).std()
+
+        for c in tickers:
+            X[f'{c}_mom'] = pct_q[c]
+            X[f'{c}_vol'] = vol_q[c]
+            X[f'{c}_mom_1m'] = pct_1m[c]
+            X[f'{c}_vol_1m'] = vol_1m[c]
+
+    return X
+
+
+def compute_country_features(data):
+    """Compute features specific to country models"""
+    horizon_q = 63
+    horizon_1m = 21
+    X = pd.DataFrame(index=data.index)
+    cols = data.columns
+    data = data.ffill().fillna(method='bfill')
+
+    tickers = [c for c in cols if c in COUNTRIES.keys()]
+    if tickers:
+        ticker_data = data[tickers]
+        pct_q = ticker_data.pct_change(horizon_q)
+        pct_1m = ticker_data.pct_change(horizon_1m)
+        vol_q = ticker_data.rolling(horizon_q).std()
+        vol_1m = ticker_data.rolling(horizon_1m).std()
+
+        for c in tickers:
+            X[f'{c}_mom'] = pct_q[c]
+            X[f'{c}_vol'] = vol_q[c]
+            X[f'{c}_mom_1m'] = pct_1m[c]
+            X[f'{c}_vol_1m'] = vol_1m[c]
+
+    return X
+
+
+def compute_features(data, model_type):
+    """Dispatcher for feature computation by model type"""
+    if model_type == 'risk':
+        return compute_risk_features(data)
+    elif model_type == 'sector':
+        return compute_sector_features(data)
+    elif model_type == 'commodity':
+        return compute_commodity_features(data)
+    elif model_type == 'country':
+        return compute_country_features(data)
+    else:
+        return pd.DataFrame()
 
 
 def compute_trend_features(df, model_type='trend'):
