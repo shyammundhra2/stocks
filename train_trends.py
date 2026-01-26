@@ -11,6 +11,8 @@ import joblib
 # 1️⃣ Setup & Asset Universe
 # ===============================
 from macro.constants import TREND_ASSETS
+from sklearn.metrics import accuracy_score
+
 
 MACRO_TICKERS = {
     "DX-Y.NYB": "DXY",     # Dollar Index
@@ -194,6 +196,39 @@ joblib.dump(
     },
     "trend_model.joblib"
 )
+
+
+# ------------------ MODEL ACCURACY ------------------
+
+def compute_topk_accuracy(model, X, y, label, k=3):
+    proba = model.predict_proba(X)
+    classes = model.classes_
+
+    # Top-1
+    top1_preds = classes[np.argmax(proba, axis=1)]
+    top1_acc = accuracy_score(y, top1_preds)
+
+    # Top-k
+    topk_correct = 0
+    for i in range(len(y)):
+        topk_idx = np.argsort(proba[i])[-k:]
+        topk_classes = classes[topk_idx]
+        if y.iloc[i] in topk_classes:
+            topk_correct += 1
+    topk_acc = topk_correct / len(y)
+
+    print(f"\n📊 {label} Model Accuracy")
+    print("===================================")
+    print(f"✅ Top-1 Accuracy: {top1_acc:.2%}")
+    print(f"✅ Top-{k} Accuracy: {topk_acc:.2%}")
+    print("===================================")
+
+    return top1_acc, topk_acc
+
+
+# Compute accuracies
+fast_top1, fast_top3 = compute_topk_accuracy(model_fast, X_scaled, y_f, "FAST (5D)")
+slow_top1, slow_top3 = compute_topk_accuracy(model_slow, X_scaled, y_s, "SLOW (21D)")
 
 print("\n✅ trend_model.joblib saved with macro-aware feature rankings.")
 
