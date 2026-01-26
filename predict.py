@@ -7,6 +7,7 @@ from datetime import timedelta, datetime
 from functools import lru_cache
 from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS, TREND_ASSETS
 from macro.helpers import compute_RSI, compute_ATR
+import numpy as np
 
 # Suppress sklearn warnings about feature names
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
@@ -128,8 +129,6 @@ def compute_risk_features(data):
     return X
 
 
-
-
 def compute_sector_features(df):
     """
     Compute sector features exactly as done during training.
@@ -165,8 +164,8 @@ def compute_sector_features(df):
         )
 
         # Risk-adjusted momentum
-        vol = df[s].pct_change().rolling(window).std()
-        X[f'{s}_Risk_Adj_Mom'] = df[s].pct_change(window) / (vol + 1e-6)
+        vol = df[s].pct_change(fill_method=None).rolling(window).std()
+        X[f'{s}_Risk_Adj_Mom'] = df[s].pct_change(window, fill_method=None) / (vol + 1e-6)
 
     # --- Macro / Market Features ---
     if '^TYX' in df.columns and '^TNX' in df.columns:
@@ -283,7 +282,7 @@ def compute_trend_features(df, model_type='trend'):
 
 def explain_tree_prediction(model, X_scaled, feature_names, class_idx, top_n=5):
     """
-    Extract feature contributions for tree-based models using decision path analysis.
+    Extract feature contributions for tree-based models using class-specific importance.
 
     Args:
         model: Trained model (RandomForest, GradientBoosting, etc.)
@@ -296,22 +295,41 @@ def explain_tree_prediction(model, X_scaled, feature_names, class_idx, top_n=5):
         List of tuples (feature_name, contribution_score)
     """
     try:
-        # Check if model has feature_importances_ attribute
-        if hasattr(model, 'feature_importances_'):
-            # Get global feature importances
+        from sklearn.ensemble import GradientBoostingClassifier
+
+        # For GradientBoosting, extract class-specific tree importances
+        if isinstance(model, GradientBoostingClassifier):
+            # Get estimators for this specific class
+            n_classes = len(model.classes_)
+
+            if n_classes == 2:
+                # Binary classification: use all estimators
+                class_estimators = model.estimators_[:, 0]
+            else:
+                # Multi-class: get estimators for this class
+                class_estimators = model.estimators_[:, class_idx]
+
+            # Compute average importance across this class's trees
+            importances = np.zeros(len(feature_names))
+            for tree in class_estimators:
+                importances += tree.feature_importances_
+            importances /= len(class_estimators)
+
+        elif hasattr(model, 'feature_importances_'):
+            # Fallback: use global feature importances
             importances = model.feature_importances_
-
-            # Weight by feature values (larger absolute values matter more)
-            feature_values = X_scaled[0]
-            weighted_importance = importances * abs(feature_values)
-
-            # Create feature contribution pairs
-            contributions = list(zip(feature_names, weighted_importance))
-            contributions.sort(key=lambda x: x[1], reverse=True)
-
-            return contributions[:top_n]
         else:
             return []
+
+        # Weight by feature values (larger absolute values matter more)
+        feature_values = X_scaled[0]
+        weighted_importance = importances * np.abs(feature_values)
+
+        # Create feature contribution pairs
+        contributions = list(zip(feature_names, weighted_importance))
+        contributions.sort(key=lambda x: x[1], reverse=True)
+
+        return contributions[:top_n]
     except Exception as e:
         print(f"  Warning: Could not extract feature importance: {e}")
         return []
