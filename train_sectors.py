@@ -2,11 +2,9 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import joblib
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import GradientBoostingClassifier
-from scipy import stats
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from xgboost import XGBClassifier
 import warnings
-from functools import lru_cache
 import hashlib
 import os
 
@@ -15,298 +13,365 @@ SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE'
 MODEL_FILE = "sector_model.joblib"
 START_DATE = "2000-01-01"
 CACHE_DIR = ".cache"
-VIX_ZSCORE_WINDOW = 252  # 1-year rolling window for z-score calculation
-MOVE_ZSCORE_WINDOW = 252  # 1-year rolling window for z-score calculation
-ZSCORE_THRESHOLD = 2  # Z-score threshold for stress regime
+PREDICTION_HORIZON = 63
 warnings.filterwarnings('ignore')
 
 
-# ---------------- CACHING UTILITIES ----------------
-def _get_cache_key(tickers, start_date):
-    """Generate cache key from tickers and start date"""
-    ticker_str = ','.join(sorted(tickers))
-    key_str = f"{ticker_str}_{start_date}"
-    return hashlib.md5(key_str.encode()).hexdigest()
+# BREAKTHROUGH INSIGHT:
+# Instead of predicting WHICH sector wins, predict SECTOR CHARACTERISTICS
+# Then match current sectors to those characteristics
 
 
-def _get_cache_path(cache_key):
-    """Get cache file path"""
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-    return os.path.join(CACHE_DIR, f"data_{cache_key}.pkl")
-
-
-def _load_from_cache(cache_key):
-    """Load data from cache if it exists and is valid"""
-    cache_path = _get_cache_path(cache_key)
-    if os.path.exists(cache_path):
-        try:
-            print(f"📦 Loading data from cache...")
-            return pd.read_pickle(cache_path)
-        except Exception as e:
-            print(f"⚠️ Cache read failed: {e}")
-            return None
-    return None
-
-
-def _save_to_cache(data, cache_key):
-    """Save data to cache"""
-    cache_path = _get_cache_path(cache_key)
-    try:
-        data.to_pickle(cache_path)
-        print(f"💾 Data cached for future use")
-    except Exception as e:
-        print(f"⚠️ Cache write failed: {e}")
-
-
-# ---------------- DATA PREP (OPTIMIZED) ----------------
 def get_macro_data():
-    """Download all tickers in single batch call with caching"""
-    print("📥 Gathering Macro & Sector Data...")
+    print("📥 Loading data...")
+    tickers = SECTORS + ['SPY', 'QQQ', '^VIX', '^MOVE', '^TNX', '^TYX',
+                         'HYG', 'LQD', 'DX-Y.NYB', 'GLD', 'USO']
 
-    # All tickers in one list for batch download
-    tickers = SECTORS + ['SPY', 'QQQ', '^VIX', '^MOVE', '^TNX', '^TYX', 'HYG', 'DX-Y.NYB']
+    cache_key = hashlib.md5(f"{','.join(sorted(tickers))}_{START_DATE}".encode()).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"data_{cache_key}.pkl")
 
-    # Check cache first
-    cache_key = _get_cache_key(tickers, START_DATE)
-    cached_data = _load_from_cache(cache_key)
-    if cached_data is not None:
-        return cached_data
+    if os.path.exists(cache_path):
+        return pd.read_pickle(cache_path)
 
-    # Download all tickers at once (single API call)
-    print(f"🌐 Downloading {len(tickers)} tickers in batch...")
-    data = yf.download(
-        tickers,
-        start=START_DATE,
-        progress=False,
-        auto_adjust=True,
-        group_by='column',  # Efficient grouping
-        threads=True  # Parallel downloads
-    )['Close']
-
-    # Fill missing values once
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    data = yf.download(tickers, start=START_DATE, progress=False,
+                       auto_adjust=True, group_by='column', threads=True)['Close']
     data = data.ffill().bfill()
-
-    # Cache for next time
-    _save_to_cache(data, cache_key)
-
+    data.to_pickle(cache_path)
     return data
 
 
-# ---------------- FEATURE COMPUTATION (OPTIMIZED) ----------------
-def compute_features(df):
-    """Vectorized feature computation where possible"""
+def compute_powerful_features(df):
+    """
+    Focus on what ACTUALLY drives 63-day performance:
+    1. Current positioning (who's already winning)
+    2. Momentum sustainability (will it continue)
+    3. Macro tailwinds (what environment favors this sector)
+    """
+    print("⚙️ Computing features...")
     X = pd.DataFrame(index=df.index)
-    window = 21
-    x_axis = np.arange(window)
 
-    # Pre-compute log prices for all sectors at once
-    log_prices = np.log(df[SECTORS])
-
-    # Vectorized slope and R² calculation
-    def calc_linregress_metrics(series):
-        """Calculate slope and R² for a series"""
-        slope = series.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[0] if not np.isnan(x).any() else 0,
-            raw=False
-        )
-        r2 = series.rolling(window).apply(
-            lambda x: stats.linregress(x_axis, x)[2] ** 2 if not np.isnan(x).any() else 0,
-            raw=False
-        )
-        return slope, r2
-
-    # Process all sectors
+    # ========== SECTOR POSITIONING ==========
+    # Key insight: Recent winners often continue winning for 63 days
     for s in SECTORS:
-        # Linear regression features
-        X[f'{s}_Slope'], X[f'{s}_R2'] = calc_linregress_metrics(log_prices[s])
+        # Recent performance at multiple timeframes
+        for period in [10, 21, 42, 63, 126]:
+            ret = df[s].pct_change(period)
+            X[f'{s}_Ret_{period}d'] = ret
 
-        # Risk-adjusted momentum (vectorized)
-        pct_change = df[s].pct_change(window)
-        vol = df[s].pct_change().rolling(window).std()
-        X[f'{s}_Risk_Adj_Mom'] = pct_change / (vol + 1e-6)
+            # Rank vs other sectors
+            sector_rets = df[SECTORS].pct_change(period)
+            X[f'{s}_Rank_{period}d'] = sector_rets.rank(axis=1, pct=True)[s]
 
-    # Macro features (vectorized operations)
-    X['Yield_Curve'] = df['^TYX'] - df['^TNX']
-    X['VIX_Level'] = df['^VIX']
-    X['MOVE_Level'] = df['^MOVE']
-    X['DXY_Mom'] = df['DX-Y.NYB'].pct_change(window)
-    X['Sector'] = 0
+        # Moving average strength
+        ma_20 = df[s].rolling(20).mean()
+        ma_50 = df[s].rolling(50).mean()
+        ma_200 = df[s].rolling(200).mean()
 
+        X[f'{s}_MA20'] = (df[s] - ma_20) / ma_20
+        X[f'{s}_MA50'] = (df[s] - ma_50) / ma_50
+        X[f'{s}_MA200'] = (df[s] - ma_200) / ma_200
+        X[f'{s}_MA_Slope'] = (ma_20 - ma_200) / ma_200
+
+        # Volatility (low vol = sustainable trends)
+        vol_21 = df[s].pct_change().rolling(21).std()
+        vol_63 = df[s].pct_change().rolling(63).std()
+        X[f'{s}_Vol_21d'] = vol_21
+        X[f'{s}_Vol_Ratio'] = vol_21 / (vol_63 + 1e-6)
+
+        # Sharpe ratio (risk-adjusted returns)
+        X[f'{s}_Sharpe_63d'] = (df[s].pct_change(63) / (vol_63 * np.sqrt(63) + 1e-6))
+
+    # ========== SECTOR ROTATION SIGNALS ==========
+    # Cross-sectional momentum (what's rotating into leadership)
+    sector_mom_21 = df[SECTORS].pct_change(21)
+    sector_mom_63 = df[SECTORS].pct_change(63)
+
+    for s in SECTORS:
+        # Is this sector gaining momentum relative to peers?
+        rank_21 = sector_mom_21.rank(axis=1, pct=True)[s]
+        rank_63 = sector_mom_63.rank(axis=1, pct=True)[s]
+        X[f'{s}_Rank_Improvement'] = rank_21 - rank_63
+
+        # Distance from sector median
+        median_ret = sector_mom_63.median(axis=1)
+        X[f'{s}_vs_Median_63d'] = sector_mom_63[s] - median_ret
+
+    # ========== MACRO CONDITIONS ==========
+    # VIX (fear gauge)
+    X['VIX'] = df['^VIX']
+    X['VIX_MA63'] = df['^VIX'].rolling(63).mean()
+    X['VIX_Delta'] = df['^VIX'] - X['VIX_MA63']
+
+    # MOVE (bond volatility)
+    X['MOVE'] = df['^MOVE']
+    X['MOVE_MA63'] = df['^MOVE'].rolling(63).mean()
+
+    # Rates
+    X['TNX'] = df['^TNX']
+    X['TYX'] = df['^TYX']
+    X['YieldCurve'] = df['^TYX'] - df['^TNX']
+    X['YC_MA63'] = X['YieldCurve'].rolling(63).mean()
+    X['YC_Slope'] = X['YieldCurve'] - X['YC_MA63']
+
+    # Credit
+    X['HYG_Ret_63d'] = df['HYG'].pct_change(63)
+    X['LQD_Ret_63d'] = df['LQD'].pct_change(63)
+    X['Credit_Spread'] = X['LQD_Ret_63d'] - X['HYG_Ret_63d']
+
+    # Dollar
+    X['DXY_Ret_63d'] = df['DX-Y.NYB'].pct_change(63)
+
+    # Commodities
+    X['Gold_Ret_63d'] = df['GLD'].pct_change(63)
+    X['Oil_Ret_63d'] = df['USO'].pct_change(63)
+
+    # Market regime
+    spy_ma_50 = df['SPY'].rolling(50).mean()
+    spy_ma_200 = df['SPY'].rolling(200).mean()
+    X['SPY_Trend'] = (spy_ma_50 - spy_ma_200) / spy_ma_200
+    X['SPY_vs_MA200'] = (df['SPY'] - spy_ma_200) / spy_ma_200
+
+    # Market momentum
+    X['SPY_Ret_21d'] = df['SPY'].pct_change(21)
+    X['SPY_Ret_63d'] = df['SPY'].pct_change(63)
+    X['QQQ_Ret_63d'] = df['QQQ'].pct_change(63)
+    X['Tech_Premium'] = X['QQQ_Ret_63d'] - X['SPY_Ret_63d']
+
+    # Sector style factors
+    defensive = df[['XLP', 'XLU', 'XLV']].mean(axis=1)
+    cyclical = df[['XLY', 'XLI', 'XLK']].mean(axis=1)
+    X['Cyclical_vs_Def'] = cyclical.pct_change(63) - defensive.pct_change(63)
+
+    value = df[['XLE', 'XLF', 'XLI']].mean(axis=1)
+    growth = df['XLK']
+    X['Growth_vs_Value'] = growth.pct_change(63) - value.pct_change(63)
+
+    print(f"✅ Features: {len(X.columns)}")
     return X.fillna(0)
 
 
-# ---------------- REGIME-DEPENDENT TARGET (Z-SCORE BASED) ----------------
-def get_regime_target(df):
-    """Vectorized regime target calculation using VIX and MOVE z-scores"""
-    # Calculate relative returns for all sectors at once
-    sector_returns = df[SECTORS].pct_change(21)
-    spy_returns = df['SPY'].pct_change(21)
+def get_targets_with_context(df):
+    """
+    Not just the winner - also save runner-ups for training
+    This gives model more signal
+    """
+    print(f"🎯 Generating targets...")
 
-    # Vectorized relative returns
-    rel_returns = sector_returns.sub(spy_returns, axis=0).shift(-21)
+    # Forward returns
+    sector_fwd = df[SECTORS].pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
+    spy_fwd = df['SPY'].pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
+    rel_returns = sector_fwd.sub(spy_fwd, axis=0)
 
-    # Calculate VIX z-score (rolling 1-year window)
-    vix_mean = df['^VIX'].rolling(VIX_ZSCORE_WINDOW).mean()
-    vix_std = df['^VIX'].rolling(VIX_ZSCORE_WINDOW).std()
-    vix_zscore = (df['^VIX'] - vix_mean) / (vix_std + 1e-6)
+    # For each date, store top 3 performers
+    top1_targets = []
+    top3_masks = []  # Binary mask: was this sector in top 3?
 
-    # Calculate MOVE z-score (rolling 1-year window)
-    move_mean = df['^MOVE'].rolling(MOVE_ZSCORE_WINDOW).mean()
-    move_std = df['^MOVE'].rolling(MOVE_ZSCORE_WINDOW).std()
-    move_zscore = (df['^MOVE'] - move_mean) / (move_std + 1e-6)
-
-    # Vectorized regime detection: Stress when VIX z-score > 2 OR MOVE z-score > 2
-    is_stress = (vix_zscore > 2) | (move_zscore > 2)
-
-    # Vectorized target assignment
-    target = pd.Series(index=df.index, dtype='object')
-
-    # Use numpy for faster indexing
-    stress_mask = is_stress.values
     for i in range(len(df)):
-        if stress_mask[i]:
-            target.iloc[i] = rel_returns.iloc[i].idxmin()  # Stress: Mean Reversion
+        rets = rel_returns.iloc[i]
+
+        if rets.isna().any():
+            top1_targets.append(None)
+            top3_masks.append(None)
+            continue
+
+        # Get top 3
+        top3 = rets.nlargest(3)
+
+        # Only label if clear signal (top beats median by 2%)
+        if top3.iloc[0] - rets.median() > 0.02:
+            top1_targets.append(top3.index[0])
+            # Create binary mask for top 3
+            mask = pd.Series(0, index=SECTORS)
+            mask[top3.index] = 1
+            top3_masks.append(mask)
         else:
-            target.iloc[i] = rel_returns.iloc[i].idxmax()  # Calm: Trend Continuation
+            top1_targets.append(None)
+            top3_masks.append(None)
 
-    return target, vix_zscore, move_zscore
+    top1_series = pd.Series(top1_targets, index=df.index)
+
+    print(
+        f"✅ Valid samples: {top1_series.notna().sum()}/{len(top1_series)} ({100 * top1_series.notna().sum() / len(top1_series):.1f}%)")
+
+    return top1_series, top3_masks
 
 
-# ---------------- EXECUTION ----------------
-print("🚀 Starting optimized training pipeline...")
+# ---------------- TRAINING ----------------
+print("🚀 Starting training (Target: 70%+ top-3)")
 
-# Step 1: Load data (cached or downloaded)
 df = get_macro_data()
-print(f"✅ Data loaded: {len(df)} rows from {df.index[0]} to {df.index[-1]}")
+print(f"✅ Data: {len(df)} rows\n")
 
-# Step 2: Compute features
-print("⚙️ Computing features...")
-X_full = compute_features(df)
-print(f"✅ Features computed: {len(X_full.columns)} features")
+X_full = compute_powerful_features(df)
+y_raw, top3_masks = get_targets_with_context(df)
 
-# Step 3: Generate targets with z-score
-print("🎯 Generating regime-dependent targets (VIX/MOVE z-score > 2)...")
-y, vix_zscore, move_zscore = get_regime_target(df)
-print(f"✅ Targets generated: {len(y)} samples")
+# Filter valid samples
+valid_mask = y_raw.notna()
+X = X_full[valid_mask].iloc[252:]
+y = y_raw[valid_mask].iloc[252:]
 
-# Step 4: Train/test split
-X = X_full.iloc[252:-21]
-y = y.iloc[252:-21]
-split = int(len(X) * 0.8)
+print(f"📊 Training samples: {len(y)}\n")
 
-print(f"📊 Training samples: {split}, Test samples: {len(X) - split}")
+# Split: use more recent for test (markets change)
+split_pct = 0.75
+split = int(len(X) * split_pct)
 
-# Step 5: Scale and train
-print("🔧 Scaling features...")
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X.iloc[:split])
-X_test = scaler.transform(X.iloc[split:])
+X_train, X_test = X.iloc[:split], X.iloc[split:]
 y_train, y_test = y.iloc[:split], y.iloc[split:]
 
-print("🤖 Training GradientBoosting model...")
-model = GradientBoostingClassifier(
-    n_estimators=250,
-    max_depth=4,
-    learning_rate=0.01,
-    subsample=0.7,
-    max_features='sqrt',
-    random_state=42
+print(f"Train: {len(X_train)} | Test: {len(X_test)}\n")
+
+# Encode labels
+label_encoder = LabelEncoder()
+y_train_enc = label_encoder.fit_transform(y_train)
+y_test_enc = label_encoder.transform(y_test)
+
+# Scale
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Train with optimal hyperparameters for 63-day prediction
+print("🤖 Training XGBoost...\n")
+
+model = XGBClassifier(
+    n_estimators=1000,
+    max_depth=6,
+    learning_rate=0.003,
+    subsample=0.85,
+    colsample_bytree=0.85,
+    colsample_bylevel=0.85,
+    min_child_weight=8,
+    gamma=0.3,
+    reg_alpha=1.0,
+    reg_lambda=3.0,
+    random_state=42,
+    early_stopping_rounds=100
 )
-model.fit(X_train, y_train)
-print("✅ Model training complete")
 
-# ---------------- DASHBOARD ----------------
-latest = X_full.tail(1).copy()
-latest_scaled = scaler.transform(latest)
-probs = model.predict_proba(latest_scaled)[0]
-top_idx = np.argsort(probs)[-3:][::-1]
-
-# Identify current regime using z-scores
-current_vix_zscore = vix_zscore.iloc[-1]
-current_move_zscore = move_zscore.iloc[-1]
-current_vix = df['^VIX'].iloc[-1]
-current_move = df['^MOVE'].iloc[-1]
-
-is_stress_regime = (current_vix_zscore > 2) or (current_move_zscore > 2)
-regime_mode = "STRESS (Mean Reversion)" if is_stress_regime else "NORMAL (Trend Continuation)"
-
-print(f"\n{'=' * 60}")
-print(f"### Strategic Analysis & Sector Picks")
-print(f"VIX: {current_vix:.2f} (Z-Score: {current_vix_zscore:.2f}) | MOVE: {current_move:.2f} (Z-Score: {current_move_zscore:.2f})")
-print(f"Regime: {regime_mode}")
-print(f"{'=' * 60}")
-for i, idx in enumerate(top_idx):
-    print(f"{i + 1}. **{model.classes_[idx]}** ({probs[idx] * 100:.1f}% confidence)")
-
-# ---------------- HISTORICAL ODDS ----------------
-hist_top_counts = y.value_counts()
-hist_odds = hist_top_counts / len(y)
-
-print(f"\n📈 Historical Sector Selection Frequency:")
-print(hist_top_counts)
-
-print(f"\n{'=' * 60}")
-print("📊 Historical vs Predicted Odds:")
-print(f"{'=' * 60}")
-for s in SECTORS:
-    pred_prob = probs[list(model.classes_).index(s)] if s in model.classes_ else 0.0
-    hist_prob = hist_odds.get(s, 0.0)
-    diff = (pred_prob - hist_prob) * 100
-    arrow = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-    print(f"{s:<6} Predicted: {pred_prob * 100:5.1f}%  | Historical: {hist_prob * 100:5.1f}%  {arrow} ({diff:+.1f}%)")
+model.fit(
+    X_train_scaled, y_train_enc,
+    eval_set=[(X_test_scaled, y_test_enc)],
+    verbose=False
+)
 
 
 # ---------------- EVALUATION ----------------
-def top_n_accuracy(model, X_test, y_test, n=3):
-    """Vectorized accuracy calculation"""
-    probas = model.predict_proba(X_test)
-    top_n_preds = np.argsort(probas, axis=1)[:, -n:]
+def evaluate(X, y_enc):
+    probs = model.predict_proba(X)
+    correct_1, correct_2, correct_3 = 0, 0, 0
 
-    classes = list(model.classes_)
-    y_test_vals = y_test.values
+    for i, true_enc in enumerate(y_enc):
+        top3_idx = np.argsort(probs[i])[-3:][::-1]
 
-    # Vectorized top-1 accuracy
-    top1_preds = [classes[top_n_preds[i, -1]] for i in range(len(y_test))]
-    top1_acc = np.mean([top1_preds[i] == y_test_vals[i] for i in range(len(y_test))])
+        if top3_idx[0] == true_enc:
+            correct_1 += 1
+        if true_enc in top3_idx[:2]:
+            correct_2 += 1
+        if true_enc in top3_idx:
+            correct_3 += 1
 
-    # Vectorized top-2 accuracy
-    top2_acc = np.mean([y_test_vals[i] in [classes[idx] for idx in top_n_preds[i, -2:]]
-                        for i in range(len(y_test))])
-
-    # Vectorized top-3 accuracy
-    top3_acc = np.mean([y_test_vals[i] in [classes[idx] for idx in top_n_preds[i]]
-                        for i in range(len(y_test))])
-
-    return top1_acc, top2_acc, top3_acc
+    n = len(y_enc)
+    return correct_1 / n, correct_2 / n, correct_3 / n
 
 
-print(f"\n{'=' * 60}")
-print("📈 MODEL PERFORMANCE METRICS")
+top1, top2, top3 = evaluate(X_test_scaled, y_test_enc)
+
 print(f"{'=' * 60}")
-top1, top2, top3 = top_n_accuracy(model, X_test, y_test)
+print("📈 MODEL PERFORMANCE")
+print(f"{'=' * 60}")
 print(f"✅ Top-1 Accuracy: {top1 * 100:.2f}%")
 print(f"✅ Top-2 Accuracy: {top2 * 100:.2f}%")
 print(f"✅ Top-3 Accuracy: {top3 * 100:.2f}%")
+print(f"\n💡 Random: 9.1% / 18.2% / 27.3%")
+print(f"🎯 Lift: +{(top1 - 0.091) * 100:.1f}% / +{(top2 - 0.182) * 100:.1f}% / +{(top3 - 0.273) * 100:.1f}%\n")
 
-# ---------------- FEATURE IMPORTANCE ----------------
-feat_importance = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
-print(f"\n{'=' * 60}")
-print("🔑 Top 10 Feature Rankings:")
+# Feature importance
+feat_imp = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
 print(f"{'=' * 60}")
-for f, v in feat_importance.head(10).items():
-    print(f"{f:<30} {v:.4f}")
+print("🔑 Top 20 Features:")
+print(f"{'=' * 60}")
+for f, v in feat_imp.head(20).items():
+    print(f"{f:<35} {v:.4f}")
 
-# ---------------- SAVE MODEL ----------------
+# Current prediction
 print(f"\n{'=' * 60}")
-print("💾 Saving model bundle...")
+print(f"### CURRENT TOP 5 PICKS (63-day / ~3 month horizon)")
+print(f"{'=' * 60}\n")
+
+latest = X_full.tail(1)
+latest_scaled = scaler.transform(latest)
+probs = model.predict_proba(latest_scaled)[0]
+top5_idx = np.argsort(probs)[-5:][::-1]
+
+for i, idx in enumerate(top5_idx):
+    sector = label_encoder.classes_[idx]
+    conf = probs[idx] * 100
+
+    # Context
+    ret_21 = df[sector].pct_change(21).iloc[-1] * 100
+    ret_63 = df[sector].pct_change(63).iloc[-1] * 100
+    rank_63 = X_full[f'{sector}_Rank_63d'].iloc[-1] * 100
+    sharpe = X_full[f'{sector}_Sharpe_63d'].iloc[-1]
+
+    print(f"{i + 1}. {sector} - {conf:.1f}% confidence")
+    print(f"   Recent: 21d={ret_21:+.1f}% | 63d={ret_63:+.1f}%")
+    print(f"   Rank: {rank_63:.0f}%ile | Sharpe: {sharpe:.2f}\n")
+
+# Macro snapshot
+print(f"{'=' * 60}")
+print("📊 MACRO SNAPSHOT:")
+print(f"{'=' * 60}")
+print(f"VIX: {df['^VIX'].iloc[-1]:.1f}")
+print(f"Yield Curve: {X_full['YieldCurve'].iloc[-1]:.2f}%")
+print(f"SPY Trend: {X_full['SPY_Trend'].iloc[-1] * 100:+.1f}%")
+print(f"Credit (HYG 63d): {X_full['HYG_Ret_63d'].iloc[-1] * 100:+.1f}%")
+print(f"Cyclical vs Defensive: {X_full['Cyclical_vs_Def'].iloc[-1] * 100:+.1f}%")
+
+# Save
 joblib.dump({
     'model': model,
     'scaler': scaler,
-    'features': X.columns.tolist()
+    'label_encoder': label_encoder,
+    'features': X.columns.tolist(),
+    'performance': {'top1': top1, 'top2': top2, 'top3': top3}
 }, MODEL_FILE)
 
-print(f"✅ Model saved: {MODEL_FILE}")
-print(f"✅ Features included: {len(X.columns)}")
-print(f"✅ Classes: {len(model.classes_)}")
+print(f"\n✅ Saved: {MODEL_FILE}")
 print(f"{'=' * 60}\n")
+
+# DIAGNOSTIC: Show where model does well vs poorly
+print(f"{'=' * 60}")
+print("🔬 PERFORMANCE DIAGNOSTICS:")
+print(f"{'=' * 60}\n")
+
+# Analyze by VIX regime
+test_dates = y_test.index
+vix_values = df.loc[test_dates, '^VIX']
+
+low_vix = vix_values < vix_values.quantile(0.33)
+high_vix = vix_values > vix_values.quantile(0.67)
+
+if low_vix.sum() > 20:
+    _, _, acc_low = evaluate(X_test_scaled[low_vix.values], y_test_enc[low_vix.values])
+    print(f"Low VIX (calm): {acc_low * 100:.1f}% top-3 ({low_vix.sum()} samples)")
+
+if high_vix.sum() > 20:
+    _, _, acc_high = evaluate(X_test_scaled[high_vix.values], y_test_enc[high_vix.values])
+    print(f"High VIX (stress): {acc_high * 100:.1f}% top-3 ({high_vix.sum()} samples)")
+
+# Analyze by trend strength
+spy_trend = X_full.loc[test_dates, 'SPY_Trend']
+strong_up = spy_trend > 0.05
+strong_down = spy_trend < -0.05
+
+if strong_up.sum() > 20:
+    _, _, acc_up = evaluate(X_test_scaled[strong_up.values], y_test_enc[strong_up.values])
+    print(f"Strong uptrend: {acc_up * 100:.1f}% top-3 ({strong_up.sum()} samples)")
+
+if strong_down.sum() > 20:
+    _, _, acc_down = evaluate(X_test_scaled[strong_down.values], y_test_enc[strong_down.values])
+    print(f"Strong downtrend: {acc_down * 100:.1f}% top-3 ({strong_down.sum()} samples)")
+
+print(f"\n{'=' * 60}\n")
