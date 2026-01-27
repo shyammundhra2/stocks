@@ -1,124 +1,166 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import joblib
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score
-import joblib
 
 from macro.constants import COUNTRIES, ML_MACRO_TICKERS, CURRENCIES
 
+
+# ------------------ CONFIG ------------------
 country_tickers = list(COUNTRIES.keys())
-macro_tickers = ML_MACRO_TICKERS
 currency_tickers = list(CURRENCIES.keys())
+
+# Ensure fallback short-rate is available
+macro_tickers = list(set(ML_MACRO_TICKERS + ['^FVX']))  # 2Y fallback
 
 
 def train_country_model_with_fx():
-    print("🚀 Training Country Model with Currency Trends...")
+    print("🚀 Training Country Model with FX (PRODUCTION SAFE)")
 
-    # 1. Download historical data
+    # ------------------ DATA DOWNLOAD ------------------
+    all_tickers = country_tickers + macro_tickers + currency_tickers
+
     data = yf.download(
-        country_tickers + macro_tickers + currency_tickers,
-        start="2000-01-01"
+        all_tickers,
+        start="2000-01-01",
+        auto_adjust=True,
+        progress=False
     )['Close'].ffill()
 
-    # 2. Feature Engineering
+    # ------------------ FEATURE FRAME ------------------
     X = pd.DataFrame(index=data.index)
 
-    # Macro features
+    # ------------------ MACRO FEATURES ------------------
+    # USD momentum
     X['DXY_mom'] = data['DX-Y.NYB'].pct_change(63)
+
+    # Volatility regime
     X['VIX_level'] = data['^VIX'].rolling(21).mean()
-    X['Yield_Curve'] = data['^TYX'] - data['^TNX']
-    X['Credit_Spread'] = data['LQD'] / data['HYG']
 
-    # Country-specific features
+    # ---- Yield Curve (robust) ----
+    if '^IRX' in data.columns:
+        # 10Y – 3M (best)
+        X['Yield_Curve'] = data['^TNX'] - data['^IRX']
+    elif '^FVX' in data.columns:
+        # 10Y – 2Y (fallback)
+        X['Yield_Curve'] = data['^TNX'] - data['^FVX']
+    else:
+        raise ValueError("No short-rate treasury (^IRX or ^FVX) available")
+
+    # ---- Credit Spread (stationary) ----
+    X['Credit_Spread'] = (
+        data['LQD'].pct_change(63) -
+        data['HYG'].pct_change(63)
+    )
+
+    # ------------------ COUNTRY + FX FEATURES ------------------
     for ticker in country_tickers:
-        X[f'{ticker}_mom'] = data[ticker].pct_change(63)
-        X[f'{ticker}_vol'] = data[ticker].rolling(63).std()
-        X[f'{ticker}_mom_1m'] = data[ticker].pct_change(21)
-        X[f'{ticker}_vol_1m'] = data[ticker].rolling(21).std()
+        rets = data[ticker].pct_change()
 
-        # Add currency trends
+        # Momentum
+        X[f'{ticker}_mom_3m'] = rets.rolling(63).sum()
+        X[f'{ticker}_mom_1m'] = rets.rolling(21).sum()
+
+        # Volatility (normalized regime)
+        vol = rets.rolling(63).std() * np.sqrt(252)
+        X[f'{ticker}_vol_z'] = vol / vol.rolling(252).mean()
+
+        # FX relative to USD
         country_name = COUNTRIES[ticker]
-        fx_pair = None
-        for k, v in CURRENCIES.items():
-            if v == country_name:
-                fx_pair = k
-                break
+        fx_pair = next((k for k, v in CURRENCIES.items() if v == country_name), None)
 
         if fx_pair and fx_pair in data.columns:
-            X[f'{ticker}_FX_mom'] = data[fx_pair].pct_change(63)
-            X[f'{ticker}_FX_mom_1m'] = data[fx_pair].pct_change(21)
+            X[f'{ticker}_FX_rel'] = (
+                data[fx_pair].pct_change(63) -
+                data['DX-Y.NYB'].pct_change(63)
+            )
 
-    # 3. Target: best-performing country ETF over next quarter
-    horizon = 63
-    returns = data[country_tickers].pct_change(horizon).shift(-horizon)
-    y = returns.idxmax(axis=1)
+    # ------------------ TARGET ------------------
+    horizon = 63  # ~1 quarter
+    fwd_returns = data[country_tickers].pct_change(horizon).shift(-horizon)
+    y = fwd_returns.idxmax(axis=1)
 
-    # 4. Clean and scale
+    # ------------------ CLEAN ------------------
     valid = pd.concat([X, y.rename('target')], axis=1).dropna()
-    X_train = valid.drop(columns=['target'])
-    y_train = valid['target']
+    X_all = valid.drop(columns='target')
+    y_all = valid['target']
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_train)
+    X_scaled = scaler.fit_transform(X_all)
 
-    # 5. Train Random Forest
+    # ------------------ MODEL ------------------
     model = RandomForestClassifier(
         n_estimators=1000,
         max_depth=7,
         min_samples_leaf=10,
         class_weight='balanced',
-        random_state=42
+        random_state=42,
+        n_jobs=-1
     )
-    model.fit(X_scaled, y_train)
 
-    # ------------------ TOP-K ACCURACY ------------------
+    # ------------------ WALK-FORWARD CV ------------------
+    tscv = TimeSeriesSplit(n_splits=5)
+    top1_scores, top3_scores = [], []
 
-    proba = model.predict_proba(X_scaled)
-    classes = model.classes_
+    for train_idx, test_idx in tscv.split(X_scaled):
+        X_tr, X_te = X_scaled[train_idx], X_scaled[test_idx]
+        y_tr, y_te = y_all.iloc[train_idx], y_all.iloc[test_idx]
 
-    # Top-1 Accuracy
-    top1_preds = classes[np.argmax(proba, axis=1)]
-    top1_acc = accuracy_score(y_train, top1_preds)
+        model.fit(X_tr, y_tr)
+        proba = model.predict_proba(X_te)
+        classes = model.classes_
 
-    # Top-3 Accuracy
-    top3_correct = 0
-    for i in range(len(y_train)):
-        top3_idx = np.argsort(proba[i])[-3:]
-        top3_classes = classes[top3_idx]
-        if y_train.iloc[i] in top3_classes:
-            top3_correct += 1
+        # Top-1
+        preds = classes[np.argmax(proba, axis=1)]
+        top1_scores.append(accuracy_score(y_te, preds))
 
-    top3_acc = top3_correct / len(y_train)
+        # Top-3
+        correct = sum(
+            y_te.iloc[i] in classes[np.argsort(proba[i])[-3:]]
+            for i in range(len(y_te))
+        )
+        top3_scores.append(correct / len(y_te))
 
-    print("\n📊 MODEL PERFORMANCE")
+    print("\n📊 WALK-FORWARD PERFORMANCE")
     print("===================================")
-    print(f"✅ Top-1 Accuracy: {top1_acc:.2%}")
-    print(f"✅ Top-3 Accuracy: {top3_acc:.2%}")
+    print(f"✅ Top-1 Accuracy: {np.mean(top1_scores):.2%}")
+    print(f"✅ Top-3 Accuracy: {np.mean(top3_scores):.2%}")
     print("===================================\n")
 
-    # 6. Save model
-    joblib.dump({
-        'model': model,
-        'scaler': scaler,
-        'features': X_train.columns.tolist()
-    }, 'country_model.joblib')
+    # ------------------ FINAL FIT ------------------
+    model.fit(X_scaled, y_all)
 
-    print("✅ Country model with FX trends trained!")
+    joblib.dump(
+        {
+            'model': model,
+            'scaler': scaler,
+            'features': X_all.columns.tolist()
+        },
+        'country_model.joblib'
+    )
+
     # ------------------ FEATURE IMPORTANCE ------------------
-    importances = model.feature_importances_
-    feature_ranking = pd.DataFrame({
-        'Feature': X_train.columns,
-        'Importance': importances
-    }).sort_values(by='Importance', ascending=False).reset_index(drop=True)
+    importance = (
+        pd.DataFrame({
+            'Feature': X_all.columns,
+            'Importance': model.feature_importances_
+        })
+        .sort_values('Importance', ascending=False)
+        .reset_index(drop=True)
+    )
 
-    print("\n============================================================")
-    print("🔑 Top Feature Rankings:")
-    print("============================================================")
-    for i, row in feature_ranking.iterrows():
-        print(f"{i + 1:02d}. {row['Feature']:20} {row['Importance']:.4f}")
-    print("============================================================\n")
+    print("🔑 TOP FEATURE IMPORTANCE")
+    print("===================================")
+    for i, row in importance.head(20).iterrows():
+        print(f"{i+1:02d}. {row['Feature']:30} {row['Importance']:.4f}")
+    print("===================================")
+
+    print("✅ Country model trained and saved successfully.")
 
 
 if __name__ == "__main__":
