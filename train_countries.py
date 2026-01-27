@@ -253,7 +253,7 @@ def train_gb_only_model():
         'country_model.joblib'
     )
 
-    print("✅ Model saved to 'country_model_gb_only.joblib'")
+    print("✅ Model saved to 'country_model.joblib'")
 
     # ------------------ FEATURE IMPORTANCE ------------------
     importance = (

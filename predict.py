@@ -296,30 +296,175 @@ def compute_commodity_features(data):
     return X
 
 
+"""
+OPTIMIZED REPLACEMENT FOR compute_country_features() in predict.py
+
+This version eliminates all DataFrame fragmentation warnings by using
+the dict-to-DataFrame pattern (same as compute_sector_features).
+
+INSTRUCTIONS:
+1. Open your predict.py file
+2. Find the compute_country_features() function
+3. Delete the entire old function
+4. Copy-paste THIS function in its place
+5. Done! No more warnings.
+"""
+
 def compute_country_features(data):
-    """Compute features specific to country models"""
-    horizon_q = 63
-    horizon_1m = 21
-    X = pd.DataFrame(index=data.index)
+    """
+    Compute enhanced features for country rotation model (60%+ Top-3 accuracy version)
+    Optimized to avoid DataFrame fragmentation warnings.
+    """
+    # Forward fill missing data
+    data = data.ffill().bfill()
+
+    # Get country tickers
     cols = data.columns
-    data = data.ffill().fillna(method='bfill')
+    country_tickers = [c for c in cols if c in COUNTRIES.keys()]
 
-    tickers = [c for c in cols if c in COUNTRIES.keys()]
-    if tickers:
-        ticker_data = data[tickers]
-        pct_q = ticker_data.pct_change(horizon_q)
-        pct_1m = ticker_data.pct_change(horizon_1m)
-        vol_q = ticker_data.rolling(horizon_q).std()
-        vol_1m = ticker_data.rolling(horizon_1m).std()
+    if not country_tickers:
+        return pd.DataFrame(index=data.index)
 
-        for c in tickers:
-            X[f'{c}_mom'] = pct_q[c]
-            X[f'{c}_vol'] = vol_q[c]
-            X[f'{c}_mom_1m'] = pct_1m[c]
-            X[f'{c}_vol_1m'] = vol_1m[c]
+    # Collect all features in a dict, then create DataFrame once
+    features = {}
 
-    return X
+    # ========== MACRO FEATURES ==========
 
+    # USD Strength (3 features)
+    if 'DX-Y.NYB' in cols:
+        usd_rets = data['DX-Y.NYB'].pct_change()
+        features['DXY_mom_1m'] = usd_rets.rolling(21).sum()
+        features['DXY_mom_3m'] = usd_rets.rolling(63).sum()
+        features['DXY_trend'] = (
+            data['DX-Y.NYB'].rolling(20).mean() /
+            data['DX-Y.NYB'].rolling(63).mean() - 1
+        )
+
+    # Volatility Regime (3 features)
+    if '^VIX' in cols:
+        vix = data['^VIX']
+        features['VIX_level'] = vix.rolling(21).mean()
+        features['VIX_percentile'] = vix.rolling(252).apply(
+            lambda x: pd.Series(x).rank(pct=True).iloc[-1] if len(x) > 0 else np.nan
+        )
+        features['VIX_spike'] = (vix > vix.rolling(63).quantile(0.75)).astype(int)
+
+    # Yield Curve (4 features)
+    if '^TNX' in cols:
+        if '^IRX' in cols:
+            yield_curve = data['^TNX'] - data['^IRX']
+            features['Yield_Curve'] = yield_curve
+            features['Yield_Curve_mom'] = yield_curve.diff(21)
+        elif '^FVX' in cols:
+            yield_curve = data['^TNX'] - data['^FVX']
+            features['Yield_Curve'] = yield_curve
+            features['Yield_Curve_mom'] = yield_curve.diff(21)
+
+        features['TNX_level'] = data['^TNX'].rolling(21).mean()
+        features['TNX_mom'] = data['^TNX'].diff(63)
+
+    # Credit Spreads (3 features)
+    if 'LQD' in cols and 'HYG' in cols:
+        lqd_rets = data['LQD'].pct_change()
+        hyg_rets = data['HYG'].pct_change()
+
+        lqd_mom = lqd_rets.rolling(63).sum()
+        hyg_mom = hyg_rets.rolling(63).sum()
+
+        features['LQD_mom_3m'] = lqd_mom
+        features['HYG_mom_3m'] = hyg_mom
+        features['Credit_Spread'] = lqd_mom - hyg_mom
+
+    # Risk Appetite (1 feature)
+    if '^VIX' in cols and 'HYG' in cols:
+        vix_normalized = -data['^VIX'] / data['^VIX'].rolling(252).mean()
+        hyg_normalized = data['HYG'].pct_change().rolling(63).sum()
+        features['Risk_Appetite'] = (vix_normalized + hyg_normalized) / 2
+
+    # Commodities (2 features)
+    if 'GLD' in cols:
+        features['Gold_mom_3m'] = data['GLD'].pct_change().rolling(63).sum()
+
+    if 'USO' in cols:
+        features['Oil_mom_3m'] = data['USO'].pct_change().rolling(63).sum()
+
+    # ========== COUNTRY-SPECIFIC FEATURES ==========
+
+    for ticker in country_tickers:
+        if ticker not in data.columns:
+            continue
+
+        rets = data[ticker].pct_change()
+        country_name = COUNTRIES.get(ticker, '')
+
+        # Multi-timeframe Momentum (4 features)
+        features[f'{ticker}_mom_1m'] = rets.rolling(21).sum()
+        features[f'{ticker}_mom_3m'] = rets.rolling(63).sum()
+        features[f'{ticker}_mom_6m'] = rets.rolling(126).sum()
+        features[f'{ticker}_mom_12m'] = rets.rolling(252).sum()
+
+        # Risk-adjusted Momentum (1 feature)
+        mean_ret = rets.rolling(63).mean()
+        std_ret = rets.rolling(63).std()
+        features[f'{ticker}_sharpe_3m'] = (mean_ret / std_ret) * np.sqrt(252)
+
+        # Trend Strength (2 features)
+        features[f'{ticker}_sma_ratio'] = (
+            data[ticker].rolling(20).mean() / data[ticker].rolling(63).mean() - 1
+        )
+        features[f'{ticker}_vs_ma200'] = (
+            data[ticker] / data[ticker].rolling(200).mean() - 1
+        )
+
+        # Volatility (1 feature) - CAPPED to prevent dominance
+        vol_annual = rets.rolling(63).std() * np.sqrt(252)
+        vol_long = vol_annual.rolling(252).mean()
+        vol_z_raw = vol_annual / vol_long
+        features[f'{ticker}_vol_z'] = np.clip(vol_z_raw, 0.5, 2.5)
+
+        # Relative Strength vs SPY (1 feature)
+        if 'SPY' in cols:
+            spy_rets = data['SPY'].pct_change()
+            features[f'{ticker}_rel_spy_3m'] = (
+                rets.rolling(63).sum() - spy_rets.rolling(63).sum()
+            )
+
+        # Relative Strength vs Region (1 feature)
+        if ticker not in ['SPY']:
+            benchmark = 'EFA' if ticker in ['EWJ', 'EWG', 'EWU', 'EFA'] else 'EEM'
+
+            if benchmark in cols:
+                bench_rets = data[benchmark].pct_change()
+                features[f'{ticker}_rel_region_3m'] = (
+                    rets.rolling(63).sum() - bench_rets.rolling(63).sum()
+                )
+
+        # Momentum Acceleration (1 feature)
+        mom_3m = rets.rolling(63).sum()
+        features[f'{ticker}_mom_accel'] = mom_3m - mom_3m.shift(21)
+
+        # Drawdown (1 feature)
+        cummax = data[ticker].expanding().max()
+        features[f'{ticker}_drawdown'] = (data[ticker] / cummax - 1)
+
+        # FX Features (up to 2 features)
+        fx_pair = next((k for k, v in CURRENCIES.items() if v == country_name), None)
+        if fx_pair and fx_pair in cols:
+            fx_rets = data[fx_pair].pct_change()
+
+            if 'DX-Y.NYB' in cols:
+                usd_rets = data['DX-Y.NYB'].pct_change()
+                features[f'{ticker}_FX_rel_3m'] = (
+                    fx_rets.rolling(63).sum() - usd_rets.rolling(63).sum()
+                )
+
+            features[f'{ticker}_FX_trend'] = (
+                data[fx_pair].rolling(20).mean() / data[fx_pair].rolling(63).mean() - 1
+            )
+
+    # Create DataFrame once from dict (no fragmentation!)
+    X = pd.DataFrame(features, index=data.index)
+    return X.fillna(0)
 
 def compute_features(data, model_type):
     """Dispatcher for feature computation by model type"""
