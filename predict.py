@@ -272,29 +272,105 @@ def compute_sector_features(df):
 
 
 def compute_commodity_features(data):
-    """Compute features specific to commodity models"""
-    horizon_q = 63
-    horizon_1m = 21
-    X = pd.DataFrame(index=data.index)
+    """
+    Compute features specific to commodity models - optimized version.
+    Fixes DataFrame fragmentation and handles NaN values properly.
+    """
     cols = data.columns
     data = data.ffill().bfill()
 
-    tickers = [c for c in cols if c in COMMODITIES.keys()]
-    if tickers:
-        ticker_data = data[tickers]
-        pct_q = ticker_data.pct_change(horizon_q)
-        pct_1m = ticker_data.pct_change(horizon_1m)
-        vol_q = ticker_data.rolling(horizon_q).std()
-        vol_1m = ticker_data.rolling(horizon_1m).std()
+    commodity_tickers = [c for c in cols if c in COMMODITIES.keys()]
 
-        for c in tickers:
-            X[f'{c}_mom'] = pct_q[c]
-            X[f'{c}_vol'] = vol_q[c]
-            X[f'{c}_mom_1m'] = pct_1m[c]
-            X[f'{c}_vol_1m'] = vol_1m[c]
+    # Collect all features in a dictionary first (avoids fragmentation)
+    features = {}
+
+    # --- Macro Features ---
+    if 'DX-Y.NYB' in cols:
+        dxy_ma_63 = data['DX-Y.NYB'].rolling(63, min_periods=1).mean()
+        dxy_ma_252 = data['DX-Y.NYB'].rolling(252, min_periods=1).mean()
+
+        features['DXY_mom_3m'] = data['DX-Y.NYB'].pct_change(63)
+        features['DXY_mom_1m'] = data['DX-Y.NYB'].pct_change(21)
+        # Add small epsilon to avoid division by zero
+        features['DXY_trend'] = dxy_ma_63 / (dxy_ma_252 + 1e-10)
+
+    if '^VIX' in cols:
+        vix_ma_252 = data['^VIX'].rolling(252, min_periods=1).mean()
+
+        features['VIX_level'] = data['^VIX'].rolling(21, min_periods=1).mean()
+        features['VIX_change'] = data['^VIX'].pct_change(21)
+        features['VIX_regime'] = (data['^VIX'] > vix_ma_252).astype(int)
+
+    if '^TYX' in cols and '^TNX' in cols:
+        yield_curve = data['^TYX'] - data['^TNX']
+        features['Yield_Curve'] = yield_curve
+        features['Yield_Curve_change'] = yield_curve.diff(21)
+
+    if 'LQD' in cols and 'HYG' in cols:
+        credit_spread = data['LQD'] / (data['HYG'] + 1e-10)
+        features['Credit_Spread'] = credit_spread
+        features['Credit_Spread_change'] = credit_spread.pct_change(21)
+
+    # --- Commodity-Specific Features ---
+    for ticker in commodity_tickers:
+        if ticker not in cols:
+            continue
+
+        price = data[ticker]
+
+        # Pre-calculate rolling windows
+        ma_63 = price.rolling(63, min_periods=1).mean()
+        ema_21 = price.ewm(span=21, min_periods=1).mean()
+        rolling_high = price.rolling(63, min_periods=1).max()
+        rolling_low = price.rolling(63, min_periods=1).min()
+
+        # Momentum features (multiple timeframes)
+        features[f'{ticker}_mom_3m'] = price.pct_change(63)
+        features[f'{ticker}_mom_1m'] = price.pct_change(21)
+        features[f'{ticker}_mom_1w'] = price.pct_change(5)
+
+        # Volatility features
+        features[f'{ticker}_vol_3m'] = price.rolling(63, min_periods=1).std()
+        features[f'{ticker}_vol_1m'] = price.rolling(21, min_periods=1).std()
+
+        # Trend features (add epsilon to avoid division by zero)
+        features[f'{ticker}_sma_ratio'] = price / (ma_63 + 1e-10)
+        features[f'{ticker}_ema_ratio'] = price / (ema_21 + 1e-10)
+
+        # Range features (add epsilon to avoid division by zero)
+        range_size = rolling_high - rolling_low
+        features[f'{ticker}_pct_rank'] = (price - rolling_low) / (range_size + 1e-10)
+
+        # RSI-like feature
+        delta = price.diff()
+        gain = delta.where(delta > 0, 0).rolling(14, min_periods=1).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14, min_periods=1).mean()
+        rs = gain / (loss + 1e-10)
+        features[f'{ticker}_rsi'] = 100 - (100 / (1 + rs))
+
+    # --- Cross-Commodity Features ---
+    if commodity_tickers:
+        commodity_prices = data[commodity_tickers]
+
+        # Calculate correlation (handle with min_periods)
+        corr_rolling = commodity_prices.rolling(63, min_periods=20).corr()
+        features['commodity_corr_avg'] = corr_rolling.groupby(level=0).mean().mean(axis=1)
+
+        # Relative strength across commodities
+        commodity_returns = commodity_prices.pct_change(21)
+        commodity_avg_return = commodity_returns.mean(axis=1)
+
+        for ticker in commodity_tickers:
+            if ticker in cols:
+                features[f'{ticker}_rel_strength'] = commodity_returns[ticker] - commodity_avg_return
+
+    # Create DataFrame once from dictionary (avoids fragmentation)
+    X = pd.DataFrame(features, index=data.index)
+
+    # Fill any remaining NaN values with 0
+    X = X.fillna(0)
 
     return X
-
 
 """
 OPTIMIZED REPLACEMENT FOR compute_country_features() in predict.py
