@@ -16,8 +16,9 @@ from scipy.fft import fft, fftfreq
 import pywt
 import warnings
 
-# Suppress future warnings for cleaner output
+# Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 
 
 # =============================================
@@ -335,7 +336,7 @@ def extrapolate_cycles(reconstructed, dates, future_periods=60):
         else:
             # Periodic extrapolation for cycles
             # Fit sine wave to last portion of signal
-            recent_signal = component_signal[-72:]  # Last 6 years
+            recent_signal = component_signal[-72:] if len(component_signal) >= 72 else component_signal
 
             # Use FFT to estimate frequency
             yf = fft(recent_signal)
@@ -343,21 +344,25 @@ def extrapolate_cycles(reconstructed, dates, future_periods=60):
 
             # Find dominant frequency
             positive_idx = xf > 0
-            dominant_freq_idx = np.argmax(np.abs(yf[positive_idx]))
-            dominant_freq = xf[positive_idx][dominant_freq_idx]
+            if positive_idx.sum() > 0:
+                dominant_freq_idx = np.argmax(np.abs(yf[positive_idx]))
+                dominant_freq = xf[positive_idx][dominant_freq_idx]
 
-            # Estimate amplitude and phase
-            amplitude = np.std(recent_signal) * 2
-            phase = np.angle(yf[positive_idx][dominant_freq_idx])
+                # Estimate amplitude and phase
+                amplitude = np.std(recent_signal) * 2
+                phase = np.angle(yf[positive_idx][dominant_freq_idx])
 
-            # Generate future signal
-            future_t = np.arange(future_periods)
-            future_cycle = amplitude * np.sin(2 * np.pi * dominant_freq *
-                                              (future_t + len(component_signal)) + phase)
+                # Generate future signal
+                future_t = np.arange(future_periods)
+                future_cycle = amplitude * np.sin(2 * np.pi * dominant_freq *
+                                                  (future_t + len(component_signal)) + phase)
 
-            # Add damping factor (cycles tend to decay over time)
-            damping = np.exp(-future_t / (future_periods * 2))
-            future_cycle *= damping
+                # Add damping factor (cycles tend to decay over time)
+                damping = np.exp(-future_t / (future_periods * 2))
+                future_cycle *= damping
+            else:
+                # Fallback to zeros if no frequency detected
+                future_cycle = np.zeros(future_periods)
 
             extrapolated[component_name] = future_cycle
 
