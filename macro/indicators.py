@@ -226,7 +226,7 @@ def get_ml_sector_prediction():
 @ttl_cache(30)
 def get_ml_country_prediction():
     try:
-        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS
+        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS + ['SPY']  # SPY needed by compute_country_features()
         res = predict_assets("country_model.joblib", tickers, COUNTRIES, "country")
         probs = res["probabilities"]
         ranked = [
@@ -294,20 +294,18 @@ def get_vix_signal():
         ma50_ratio = float(ratio.tail(50).mean())
         breadth_failing = current_ratio < ma50_ratio
 
-        # Vectorized signal determination
+        # FIX: flattened signal chain — the trim/hold checks were previously
+        # nested inside the z > 1.0 block where they could never trigger.
         if z > 2.0:
             signal = "AGGRESSIVE_BUY"
         elif z > 1.0:
             signal = "SCALE_IN"
-            # Proposed logic for a more nuanced exit
-            if z < -1.5:
-                signal = "AGGRESSIVE_TRIM"  # Hard exit/Hedge
-            elif z < -1.0 and breadth_failing:
-                signal = "CAUTIOUS_TRIM"  # Trim due to poor breadth
-            else:
-                signal = "HOLD"
+        elif z < -1.5:
+            signal = "AGGRESSIVE_TRIM"
+        elif z < -1.0 and breadth_failing:
+            signal = "CAUTIOUS_TRIM"
         else:
-            signal = "NEUTRAL"
+            signal = "HOLD"
 
         return {"vix": round(v_last, 2), "z": round(z, 2), "signal": signal}
     except:
