@@ -20,15 +20,18 @@ COUNTRIES = {
     "EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany"
 }
 
-# --- Commodity Mapping ---
+# --- Updated Commodity Mapping ---
 COMMODITIES = {
-    "DBC":"Broad Commodities","GC=F":"Gold","SI=F":"Silver","HG=F":"Copper",
-    "ALI=F":"Aluminium","PL=F":"Platinum","PA=F":"Palladium","CL=F":"Crude Oil (WTI)",
-    "BZ=F":"Brent Oil","NG=F":"Natural Gas","ZS=F":"Soybeans","ZC=F":"Corn",
-    "ZW=F":"Wheat","KC=F":"Coffee","SB=F":"Sugar","CT=F":"Cotton","LE=F":"Live Cattle",
-    "HE=F":"Lean Hogs","LBR=F":"Lumber"
-}
+    "DBC": "Broad Commodities", "GC=F": "Gold", "SI=F": "Silver", "HG=F": "Copper",
+    "ALI=F": "Aluminium", "PL=F": "Platinum", "PA=F": "Palladium", "CL=F": "Crude Oil (WTI)",
+    "BZ=F": "Brent Oil", "NG=F": "Natural Gas", "ZS=F": "Soybeans", "ZC=F": "Corn",
+    "ZW=F": "Wheat", "KC=F": "Coffee", "SB=F": "Sugar", "CT=F": "Cotton", "LE=F": "Live Cattle",
+    "HE=F": "Lean Hogs", "LBR=F": "Lumber",
 
+    # New Industrial Additions
+    "TIO=F": "Iron Ore (62% FE CFR)",
+    "HRC=F": "U.S. Midwest Domestic Hot-Rolled Steel"
+}
 # --- Currency Mapping ---
 CURRENCIES = {
     "EURUSD=X":"EUR","JPY=X":"JPY","GBPUSD=X":"GBP","AUDUSD=X":"AUD", "USDINR=X":"INR"

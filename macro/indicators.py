@@ -415,7 +415,7 @@ def get_country_rotation():
 
         results = []
         for s, n in COUNTRIES.items():
-            slope, r2 = _trend_stats(data[s], 60, 60)
+            slope, r2 = _trend_stats(data[s], 20, 20)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
             results.append({
@@ -440,7 +440,7 @@ def get_commodity_rotation():
 
         results = []
         for s, n in COMMODITIES.items():
-            slope, r2 = _trend_stats(data[s], 60, 60)
+            slope, r2 = _trend_stats(data[s], 20, 20)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
             results.append({
