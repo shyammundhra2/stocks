@@ -273,33 +273,57 @@ def compute_sector_features(df):
 
 def compute_commodity_features(data):
     """
-    Compute features specific to commodity models - optimized version.
-    Fixes DataFrame fragmentation and handles NaN values properly.
+    Compute enhanced commodity features with cross-sectional analysis.
+    Compatible with hierarchical sector→commodity prediction while maintaining
+    the same output format for UI.
     """
     cols = data.columns
     data = data.ffill().bfill()
 
-    commodity_tickers = [c for c in cols if c in COMMODITIES.keys()]
+    # Define commodities and sectors (matching training script)
+    COMMODITY_TICKERS = list(COMMODITIES.keys())
 
-    # Collect all features in a dictionary first (avoids fragmentation)
+    SECTOR_MAP = {
+        'GC=F': 'Precious_Metals',
+        'SI=F': 'Precious_Metals',
+        'PL=F': 'Precious_Metals',
+        'PA=F': 'Precious_Metals',
+        'HG=F': 'Industrial_Metals',
+        'CL=F': 'Energy',
+        'NG=F': 'Energy',
+        'RB=F': 'Energy',
+        'ZC=F': 'Grains',
+        'ZS=F': 'Grains',
+        'ZW=F': 'Grains',
+        'KC=F': 'Softs',
+        'SB=F': 'Softs',
+        'CT=F': 'Softs',
+        'CC=F': 'Softs',
+    }
+
+    commodity_tickers = [c for c in COMMODITY_TICKERS if c in cols]
+
+    # Collect all features in a dictionary (avoids fragmentation)
     features = {}
 
-    # --- Macro Features ---
-    if 'DX-Y.NYB' in cols:
-        dxy_ma_63 = data['DX-Y.NYB'].rolling(63, min_periods=1).mean()
-        dxy_ma_252 = data['DX-Y.NYB'].rolling(252, min_periods=1).mean()
+    # ========== MACRO FEATURES ==========
 
-        features['DXY_mom_3m'] = data['DX-Y.NYB'].pct_change(63)
-        features['DXY_mom_1m'] = data['DX-Y.NYB'].pct_change(21)
-        # Add small epsilon to avoid division by zero
+    if 'DX-Y.NYB' in cols:
+        dxy = data['DX-Y.NYB']
+        dxy_ma_63 = dxy.rolling(63, min_periods=1).mean()
+        dxy_ma_252 = dxy.rolling(252, min_periods=1).mean()
+
+        features['DXY_mom_3m'] = dxy.pct_change(63)
+        features['DXY_mom_1m'] = dxy.pct_change(21)
         features['DXY_trend'] = dxy_ma_63 / (dxy_ma_252 + 1e-10)
 
     if '^VIX' in cols:
-        vix_ma_252 = data['^VIX'].rolling(252, min_periods=1).mean()
+        vix = data['^VIX']
+        vix_ma_252 = vix.rolling(252, min_periods=1).mean()
 
-        features['VIX_level'] = data['^VIX'].rolling(21, min_periods=1).mean()
-        features['VIX_change'] = data['^VIX'].pct_change(21)
-        features['VIX_regime'] = (data['^VIX'] > vix_ma_252).astype(int)
+        features['VIX_level'] = vix.rolling(21, min_periods=1).mean()
+        features['VIX_change'] = vix.pct_change(21)
+        features['VIX_regime'] = (vix > vix_ma_252).astype(int)
 
     if '^TYX' in cols and '^TNX' in cols:
         yield_curve = data['^TYX'] - data['^TNX']
@@ -311,80 +335,163 @@ def compute_commodity_features(data):
         features['Credit_Spread'] = credit_spread
         features['Credit_Spread_change'] = credit_spread.pct_change(21)
 
-    # --- Commodity-Specific Features ---
-    for ticker in commodity_tickers:
-        if ticker not in cols:
-            continue
+    # ========== COMMODITY FEATURES WITH CROSS-SECTIONAL ANALYSIS ==========
 
+    # First pass: Calculate all commodity returns and volatilities
+    commodity_returns_3m = {}
+    commodity_returns_1m = {}
+    commodity_vols_3m = {}
+    commodity_vols_1m = {}
+
+    for ticker in commodity_tickers:
         price = data[ticker]
 
-        # Pre-calculate rolling windows
+        # Calculate returns and volatility
+        ret_3m = price.pct_change(63)
+        ret_1m = price.pct_change(21)
+        vol_3m = price.pct_change(1).rolling(63, min_periods=1).std()
+        vol_1m = price.pct_change(1).rolling(21, min_periods=1).std()
+
+        # Store for cross-sectional analysis
+        commodity_returns_3m[ticker] = ret_3m
+        commodity_returns_1m[ticker] = ret_1m
+        commodity_vols_3m[ticker] = vol_3m
+        commodity_vols_1m[ticker] = vol_1m
+
+        # Absolute features
+        features[f'{ticker}_mom_3m'] = ret_3m
+        features[f'{ticker}_mom_1m'] = ret_1m
+        features[f'{ticker}_mom_1w'] = price.pct_change(5)
+        features[f'{ticker}_vol_3m'] = vol_3m
+        features[f'{ticker}_vol_1m'] = vol_1m
+
+        # Trend features
         ma_63 = price.rolling(63, min_periods=1).mean()
         ema_21 = price.ewm(span=21, min_periods=1).mean()
-        rolling_high = price.rolling(63, min_periods=1).max()
-        rolling_low = price.rolling(63, min_periods=1).min()
 
-        # Momentum features (multiple timeframes)
-        features[f'{ticker}_mom_3m'] = price.pct_change(63)
-        features[f'{ticker}_mom_1m'] = price.pct_change(21)
-        features[f'{ticker}_mom_1w'] = price.pct_change(5)
-
-        # Volatility features
-        features[f'{ticker}_vol_3m'] = price.rolling(63, min_periods=1).std()
-        features[f'{ticker}_vol_1m'] = price.rolling(21, min_periods=1).std()
-
-        # Trend features (add epsilon to avoid division by zero)
         features[f'{ticker}_sma_ratio'] = price / (ma_63 + 1e-10)
         features[f'{ticker}_ema_ratio'] = price / (ema_21 + 1e-10)
 
-        # Range features (add epsilon to avoid division by zero)
+        # Range features
+        rolling_high = price.rolling(63, min_periods=1).max()
+        rolling_low = price.rolling(63, min_periods=1).min()
         range_size = rolling_high - rolling_low
         features[f'{ticker}_pct_rank'] = (price - rolling_low) / (range_size + 1e-10)
 
-        # RSI-like feature
+        # RSI
         delta = price.diff()
         gain = delta.where(delta > 0, 0).rolling(14, min_periods=1).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14, min_periods=1).mean()
         rs = gain / (loss + 1e-10)
         features[f'{ticker}_rsi'] = 100 - (100 / (1 + rs))
 
-    # --- Cross-Commodity Features ---
-    if commodity_tickers:
+    # ========== NEW: CROSS-SECTIONAL FEATURES ==========
+
+    if len(commodity_returns_3m) > 0:
+        # Calculate means across all commodities
+        mean_ret_3m = pd.DataFrame(commodity_returns_3m).mean(axis=1)
+        mean_ret_1m = pd.DataFrame(commodity_returns_1m).mean(axis=1)
+        mean_vol_3m = pd.DataFrame(commodity_vols_3m).mean(axis=1)
+
+        for ticker in commodity_tickers:
+            if ticker not in commodity_returns_3m:
+                continue
+
+            # Relative momentum (vs all commodities)
+            features[f'{ticker}_mom_3m_vs_all'] = commodity_returns_3m[ticker] - mean_ret_3m
+            features[f'{ticker}_mom_1m_vs_all'] = commodity_returns_1m[ticker] - mean_ret_1m
+
+            # Relative volatility
+            features[f'{ticker}_vol_3m_vs_all'] = commodity_vols_3m[ticker] - mean_vol_3m
+
+            # Risk-adjusted momentum
+            features[f'{ticker}_risk_adj_mom'] = (
+                    commodity_returns_3m[ticker] / (commodity_vols_3m[ticker] + 1e-10)
+            )
+
+    # ========== NEW: SECTOR-LEVEL FEATURES ==========
+
+    # Group returns by sector
+    sector_returns_3m = {}
+    for ticker in commodity_tickers:
+        sector = SECTOR_MAP.get(ticker, 'Other')
+        if sector not in sector_returns_3m:
+            sector_returns_3m[sector] = []
+        if ticker in commodity_returns_3m:
+            sector_returns_3m[sector].append(commodity_returns_3m[ticker])
+
+    # Calculate sector averages
+    sector_avg_3m = {}
+    for sector, rets_list in sector_returns_3m.items():
+        if rets_list:
+            sector_avg_3m[sector] = pd.DataFrame(rets_list).mean(axis=0)
+
+    # Add sector momentum features
+    for sector, avg_ret in sector_avg_3m.items():
+        features[f'Sector_{sector}_mom_3m'] = avg_ret
+
+    # Add relative to sector features
+    for ticker in commodity_tickers:
+        sector = SECTOR_MAP.get(ticker, 'Other')
+        if sector in sector_avg_3m and ticker in commodity_returns_3m:
+            features[f'{ticker}_mom_3m_vs_sector'] = (
+                    commodity_returns_3m[ticker] - sector_avg_3m[sector]
+            )
+
+    # ========== NEW: CORRELATION FEATURES ==========
+
+    if len(commodity_tickers) >= 3:
+        # Calculate rolling correlation matrix
         commodity_prices = data[commodity_tickers]
 
-        # Calculate correlation (handle with min_periods)
-        corr_rolling = commodity_prices.rolling(63, min_periods=20).corr()
-        features['commodity_corr_avg'] = corr_rolling.groupby(level=0).mean().mean(axis=1)
+        # Use 63-day window for correlation
+        corr_values = []
+        for i in range(len(commodity_prices)):
+            if i >= 63:
+                window = commodity_prices.iloc[i - 63:i]
+                corr_matrix = window.corr()
+                # Get upper triangle (excluding diagonal)
+                triu_indices = np.triu_indices_from(corr_matrix.values, k=1)
+                avg_corr = corr_matrix.values[triu_indices].mean()
+                std_corr = corr_matrix.values[triu_indices].std()
+                corr_values.append({'avg': avg_corr, 'std': std_corr})
+            else:
+                corr_values.append({'avg': 0, 'std': 0})
 
-        # Relative strength across commodities
+        features['commodity_corr_avg'] = pd.Series([c['avg'] for c in corr_values], index=data.index)
+        features['commodity_corr_std'] = pd.Series([c['std'] for c in corr_values], index=data.index)
+
+    # ========== NEW: SEASONALITY FEATURES ==========
+
+    for ticker in commodity_tickers:
+        if ticker not in data.columns:
+            continue
+
+        price = data[ticker]
+        rets = price.pct_change(21)
+
+        # Calculate average return by month
+        seasonal_avg = rets.groupby(rets.index.month).transform('mean')
+        seasonal_std = rets.groupby(rets.index.month).transform('std')
+
+        features[f'{ticker}_seasonal_avg'] = seasonal_avg
+        features[f'{ticker}_seasonal_std'] = seasonal_std
+
+    # ========== LEGACY: CROSS-COMMODITY FEATURES (keep for compatibility) ==========
+
+    if commodity_tickers:
+        commodity_prices = data[commodity_tickers]
         commodity_returns = commodity_prices.pct_change(21)
         commodity_avg_return = commodity_returns.mean(axis=1)
 
         for ticker in commodity_tickers:
-            if ticker in cols:
+            if ticker in commodity_returns.columns:
                 features[f'{ticker}_rel_strength'] = commodity_returns[ticker] - commodity_avg_return
 
-    # Create DataFrame once from dictionary (avoids fragmentation)
+    # Create DataFrame once from dictionary
     X = pd.DataFrame(features, index=data.index)
+    return X.fillna(0)
 
-    # Fill any remaining NaN values with 0
-    X = X.fillna(0)
-
-    return X
-
-"""
-OPTIMIZED REPLACEMENT FOR compute_country_features() in predict.py
-
-This version eliminates all DataFrame fragmentation warnings by using
-the dict-to-DataFrame pattern (same as compute_sector_features).
-
-INSTRUCTIONS:
-1. Open your predict.py file
-2. Find the compute_country_features() function
-3. Delete the entire old function
-4. Copy-paste THIS function in its place
-5. Done! No more warnings.
-"""
 
 def compute_country_features(data):
     """
@@ -412,8 +519,8 @@ def compute_country_features(data):
         features['DXY_mom_1m'] = usd_rets.rolling(21).sum()
         features['DXY_mom_3m'] = usd_rets.rolling(63).sum()
         features['DXY_trend'] = (
-            data['DX-Y.NYB'].rolling(20).mean() /
-            data['DX-Y.NYB'].rolling(63).mean() - 1
+                data['DX-Y.NYB'].rolling(20).mean() /
+                data['DX-Y.NYB'].rolling(63).mean() - 1
         )
 
     # Volatility Regime (3 features)
@@ -486,10 +593,10 @@ def compute_country_features(data):
 
         # Trend Strength (2 features)
         features[f'{ticker}_sma_ratio'] = (
-            data[ticker].rolling(20).mean() / data[ticker].rolling(63).mean() - 1
+                data[ticker].rolling(20).mean() / data[ticker].rolling(63).mean() - 1
         )
         features[f'{ticker}_vs_ma200'] = (
-            data[ticker] / data[ticker].rolling(200).mean() - 1
+                data[ticker] / data[ticker].rolling(200).mean() - 1
         )
 
         # Volatility (1 feature) - CAPPED to prevent dominance
@@ -502,7 +609,7 @@ def compute_country_features(data):
         if 'SPY' in cols:
             spy_rets = data['SPY'].pct_change()
             features[f'{ticker}_rel_spy_3m'] = (
-                rets.rolling(63).sum() - spy_rets.rolling(63).sum()
+                    rets.rolling(63).sum() - spy_rets.rolling(63).sum()
             )
 
         # Relative Strength vs Region (1 feature)
@@ -512,7 +619,7 @@ def compute_country_features(data):
             if benchmark in cols:
                 bench_rets = data[benchmark].pct_change()
                 features[f'{ticker}_rel_region_3m'] = (
-                    rets.rolling(63).sum() - bench_rets.rolling(63).sum()
+                        rets.rolling(63).sum() - bench_rets.rolling(63).sum()
                 )
 
         # Momentum Acceleration (1 feature)
@@ -531,16 +638,17 @@ def compute_country_features(data):
             if 'DX-Y.NYB' in cols:
                 usd_rets = data['DX-Y.NYB'].pct_change()
                 features[f'{ticker}_FX_rel_3m'] = (
-                    fx_rets.rolling(63).sum() - usd_rets.rolling(63).sum()
+                        fx_rets.rolling(63).sum() - usd_rets.rolling(63).sum()
                 )
 
             features[f'{ticker}_FX_trend'] = (
-                data[fx_pair].rolling(20).mean() / data[fx_pair].rolling(63).mean() - 1
+                    data[fx_pair].rolling(20).mean() / data[fx_pair].rolling(63).mean() - 1
             )
 
     # Create DataFrame once from dict (no fragmentation!)
     X = pd.DataFrame(features, index=data.index)
     return X.fillna(0)
+
 
 def compute_features(data, model_type):
     """Dispatcher for feature computation by model type"""
@@ -959,6 +1067,226 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
     return result
 
 
+def predict_commodities(
+        sector_model_path,
+        commodity_model_path,
+        friendly_names,
+        as_of_date=None,
+        use_cache=True,
+        explain=True,
+        top_n_sectors=3,
+        top_n_per_sector=1
+):
+    """
+    Two-stage hierarchical commodity prediction.
+
+    Stage 1: Use sector model to identify promising sectors
+    Stage 2: Within those sectors, pick best commodities
+
+    Returns same format as predict_assets() for UI compatibility.
+
+    Args:
+        sector_model_path: Path to sector model (commodity_sector_model.joblib)
+        commodity_model_path: Path to commodity model (fallback)
+        friendly_names: Dict mapping tickers to names
+        as_of_date: Date to predict for
+        use_cache: Whether to use data cache
+        explain: Whether to include explanations
+        top_n_sectors: Number of sectors to select (default 3)
+        top_n_per_sector: Commodities per sector (default 1)
+
+    Returns:
+        Dict with same structure as predict_assets() output
+    """
+    if as_of_date is None:
+        as_of_date = pd.Timestamp.today()
+    else:
+        as_of_date = pd.Timestamp(as_of_date)
+
+    tickers = list(COMMODITIES.keys()) + ML_MACRO_TICKERS
+
+    # Define sector mapping
+    SECTOR_MAP = {
+        'GC=F': 'Precious_Metals',
+        'SI=F': 'Precious_Metals',
+        'PL=F': 'Precious_Metals',
+        'PA=F': 'Precious_Metals',
+        'HG=F': 'Industrial_Metals',
+        'CL=F': 'Energy',
+        'NG=F': 'Energy',
+        'RB=F': 'Energy',
+        'ZC=F': 'Grains',
+        'ZS=F': 'Grains',
+        'ZW=F': 'Grains',
+        'KC=F': 'Softs',
+        'SB=F': 'Softs',
+        'CT=F': 'Softs',
+        'CC=F': 'Softs',
+    }
+
+    # Inverse mapping: sector -> commodities
+    sector_to_commodities = {}
+    for commodity, sector in SECTOR_MAP.items():
+        if sector not in sector_to_commodities:
+            sector_to_commodities[sector] = []
+        sector_to_commodities[sector].append(commodity)
+
+    try:
+        # Load sector model
+        bundle = _get_model_bundle(sector_model_path)
+        sector_model = bundle['model']
+        sector_features = bundle['features']
+
+        # Scaler is optional for RandomForest models
+        sector_scaler = bundle.get('scaler', None)
+
+        # Download data
+        max_rolling = 252
+        buffer_days = 10
+        start_date = as_of_date - pd.Timedelta(days=int(max_rolling * 1.5 + buffer_days))
+        fetch_end = as_of_date + timedelta(days=1)
+
+        if use_cache:
+            raw_data = _get_shared_predict_data(tickers, start_date, fetch_end)
+        else:
+            raw_data = yf.download(tickers, start=start_date, end=fetch_end,
+                                   progress=False, auto_adjust=False, group_by='column')
+
+        # Extract Close prices
+        data = raw_data['Close'] if isinstance(raw_data.columns, pd.MultiIndex) else raw_data
+
+        # Compute features
+        X = compute_commodity_features(data)
+
+        # Ensure all sector features exist
+        missing_features = {feat: 0 for feat in sector_features if feat not in X.columns}
+        if missing_features:
+            missing_df = pd.DataFrame(missing_features, index=X.index)
+            X = pd.concat([X, missing_df], axis=1)
+
+        # ========== STAGE 1: SECTOR PREDICTION ==========
+
+        # Prepare features - scale only if scaler exists
+        X_sector = X.tail(1)[sector_features]
+
+        if sector_scaler is not None:
+            X_sector_scaled = sector_scaler.transform(X_sector)
+        else:
+            # No scaling needed for RandomForest
+            X_sector_scaled = X_sector.values
+
+        sector_probs = sector_model.predict_proba(X_sector_scaled)[0]
+
+        # Get sector classes
+        sector_classes = sector_model.classes_
+
+        # Decode if label encoder exists
+        label_encoder = bundle.get('label_encoder', None)
+        if label_encoder is not None:
+            sector_classes = label_encoder.inverse_transform(sector_classes)
+
+        # Create sector probability dict
+        sector_prob_dict = {sector: prob for sector, prob in zip(sector_classes, sector_probs)}
+
+        # Get top N sectors
+        top_sectors = sorted(sector_prob_dict.items(), key=lambda x: x[1], reverse=True)[:top_n_sectors]
+
+        # ========== STAGE 2: COMMODITY SELECTION WITHIN SECTORS ==========
+
+        # Calculate momentum scores for commodities
+        commodity_scores = {}
+
+        for ticker in tickers:
+            if ticker not in data.columns:
+                continue
+
+            price = data[ticker]
+
+            # Calculate risk-adjusted momentum
+            ret_3m = price.pct_change(63, fill_method=None).iloc[-1]
+            ret_1m = price.pct_change(21, fill_method=None).iloc[-1]
+            vol_3m = price.pct_change(1, fill_method=None).tail(63).std()
+
+            if not np.isnan(ret_3m) and not np.isnan(ret_1m) and vol_3m > 0:
+                risk_adj_mom = ret_3m / vol_3m
+                momentum_trend = ret_1m / ret_3m if abs(ret_3m) > 1e-6 else 0
+
+                score = 0.7 * risk_adj_mom + 0.3 * momentum_trend
+                commodity_scores[ticker] = score
+
+        # Select commodities from top sectors
+        final_probabilities = {}
+        explanations = {}
+
+        for sector, sector_prob in top_sectors:
+            # Get commodities in this sector
+            sector_commodities = [c for c in sector_to_commodities.get(sector, [])
+                                  if c in commodity_scores]
+
+            if not sector_commodities:
+                continue
+
+            # Sort by momentum score
+            sorted_commodities = sorted(
+                [(c, commodity_scores[c]) for c in sector_commodities],
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            # Pick top N per sector
+            for i, (commodity, score) in enumerate(sorted_commodities[:top_n_per_sector]):
+                # Weight by sector probability
+                commodity_prob = sector_prob * (1.0 - i * 0.2)  # Slight penalty for rank
+
+                display_name = friendly_names.get(commodity, commodity)
+                final_probabilities[display_name] = commodity_prob
+
+                # Add explanation if requested
+                if explain:
+                    explanations[display_name] = [
+                        f"Sector: {sector:<20} (probability: {sector_prob:.1%})",
+                        f"Rank in sector: #{i + 1:<10} (score: {score:.3f})",
+                        f"Selection strategy: Hierarchical (sector-based)"
+                    ]
+
+        # Normalize probabilities to sum to 1
+        total_prob = sum(final_probabilities.values())
+        if total_prob > 0:
+            final_probabilities = {k: v / total_prob for k, v in final_probabilities.items()}
+
+        # Build result in same format as predict_assets
+        result = {
+            'date': as_of_date.strftime('%Y-%m-%d'),
+            'probabilities': dict(sorted(final_probabilities.items(),
+                                         key=lambda x: x[1], reverse=True))
+        }
+
+        if explain:
+            result['explanations'] = explanations
+
+        return result
+
+    except FileNotFoundError as e:
+        print(f"⚠️  Sector model not found: {e}")
+        print("   Falling back to standard commodity prediction...")
+
+        # Fallback to regular prediction
+        return predict_assets(
+            commodity_model_path, tickers, friendly_names, 'commodity',
+            as_of_date, use_cache, explain
+        )
+
+    except Exception as e:
+        print(f"❌ Error in hierarchical prediction: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Fallback to regular prediction
+        return predict_assets(
+            commodity_model_path, tickers, friendly_names, 'commodity',
+            as_of_date, use_cache, explain
+        )
+
 def print_prediction(title, result, show_explanations=True):
     """Pretty-print predictions with feature explanations"""
     print(f"\n📊 {title.upper()} PREDICTIONS ({result['date']})")
@@ -1017,10 +1345,8 @@ if __name__ == "__main__":
         ("Risk Regime", "risk_model.joblib", list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))),
          {}, 'risk'),
         ("Sector Rotation", "sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS + ['QQQ', 'GLD', 'USO'],
-         SECTOR_NAMES,
-         'sector'),
-        ("Commodities", "commodity_model.joblib", list(COMMODITIES.keys()) + ML_MACRO_TICKERS, COMMODITIES,
-         'commodity'),
+         SECTOR_NAMES, 'sector'),
+        # Commodities handled separately below with hierarchical prediction
         ("Countries", "country_model.joblib", list(COUNTRIES.keys()) + ML_MACRO_TICKERS + list(CURRENCIES.keys()),
          COUNTRIES, 'country')
     ]
@@ -1034,6 +1360,27 @@ if __name__ == "__main__":
             print(f"\n⚠️ File '{path}' not found. Skipping {title}.")
         except Exception as e:
             print(f"\n❌ Error processing {title}: {e}")
+
+    # Special handling for commodities with hierarchical prediction
+    print("\n" + "=" * 80)
+    try:
+
+        res = predict_commodities(
+            sector_model_path="commodity_sector_model.joblib",
+            commodity_model_path="commodity_model.joblib",  # fallback
+            friendly_names=COMMODITIES,
+            as_of_date=args.date,
+            use_cache=use_cache,
+            explain=show_explain,
+            top_n_sectors=3,
+            top_n_per_sector=1
+        )
+        print_prediction("Commodities (Hierarchical)", res, show_explanations=show_explain)
+
+    except FileNotFoundError:
+        print(f"\n⚠️ Commodity models not found. Skipping commodities.")
+    except Exception as e:
+        print(f"\n❌ Error processing Commodities: {e}")
 
     # Add trend predictions
     print("\n" + "=" * 80)

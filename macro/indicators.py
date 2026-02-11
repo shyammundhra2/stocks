@@ -11,7 +11,7 @@ from macro.constants import (
     SECTOR_NAMES, SECTORS, COUNTRIES, COMMODITIES,
     CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS
 )
-from predict import predict_assets
+from predict import predict_assets, predict_commodities
 
 
 # TTL cache with cleanup
@@ -248,9 +248,14 @@ def get_ml_country_prediction():
 @ttl_cache(30)
 def get_ml_commodity_prediction():
     try:
-        res = predict_assets("commodity_model.joblib",
-                             list(COMMODITIES.keys()) + ML_MACRO_TICKERS,
-                             COMMODITIES, "commodity")
+        res =  predict_commodities(
+            sector_model_path="commodity_sector_model.joblib",
+            commodity_model_path="commodity_model.joblib",  # fallback
+            friendly_names=COMMODITIES,
+            use_cache=True,
+            top_n_sectors=5,
+            top_n_per_sector=5
+        )
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": COMMODITIES.get(k, k), "confidence": round(v * 100, 1)}
