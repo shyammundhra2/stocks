@@ -243,6 +243,32 @@ def load_company_names_from_csv():
         return {}
 
 
+# --- ADD THIS TO YOUR LOGIC ---
+def get_kelly_size(row):
+    if row['Signal'] != 'BUY':
+        return 0.0
+
+    p = row['Prob']
+    q = 1 - p
+
+    # Calculate 'b' (Reward/Risk)
+    # Reward: Expected move over 21 days based on Slope
+    projected_reward = row['Slope_1M'] * 21
+    # Risk: The % distance to your ATR stop
+    stop_distance_pct = (row['ATR'] * 2.5 / row['Current_Price']) * 100
+
+    if stop_distance_pct <= 0: return 0
+
+    b = projected_reward / stop_distance_pct
+
+    # Standard Kelly Formula
+    if b <= 0: return 0
+    kelly_f = p - (q / b)
+
+    # Apply Quarter-Kelly and 10% cap for "Senior Strategist" safety
+    return round(max(0, min(kelly_f / 4, 0.10))*100000, 2)
+
+
 # ---------------- INFERENCE PIPELINE ----------------
 def infer_today(top_n=25, avoid_n=25):
     print("🚀 Starting inference pipeline with slope/R² analysis...")
@@ -335,7 +361,6 @@ def infer_today(top_n=25, avoid_n=25):
         row['Slope_ZScore'] = sig['Slope_ZScore']
         row['Signal'] = sig['Signal']
         row['Prob'] = prob
-
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -354,9 +379,10 @@ def infer_today(top_n=25, avoid_n=25):
     df['R2_1M'] = df['R2_1M'].round(3)
     df['Slope_3M_Avg'] = df['Slope_3M_Avg'].round(3)
     df['Slope_ZScore'] = df['Slope_ZScore'].round(2)
+    df['Size_Allocation'] = df.apply(get_kelly_size, axis=1)
 
     output_cols = ['Ticker', 'Name', 'Prob', 'Signal', 'Slope_1M', 'R2_1M',
-                   'Slope_3M_Avg', 'Slope_ZScore', 'RSI', 'Current_Price']
+                   'Slope_3M_Avg', 'Slope_ZScore', 'RSI', 'Current_Price', "Size_Allocation"]
 
     print("\n" + "=" * 140)
     print("TOP STRATEGIC HOLDS (Enhanced with Slope/R² Analysis)")
