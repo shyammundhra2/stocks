@@ -248,7 +248,7 @@ def get_ml_country_prediction():
 @ttl_cache(30)
 def get_ml_commodity_prediction():
     try:
-        res =  predict_commodities(
+        res = predict_commodities(
             sector_model_path="commodity_sector_model.joblib",
             commodity_model_path="commodity_model.joblib",  # fallback
             friendly_names=COMMODITIES,
@@ -411,6 +411,7 @@ def get_sector_rotation():
     except:
         return {"all_ranked": []}
 
+
 @ttl_cache(30)
 def get_country_rotation():
     try:
@@ -527,7 +528,6 @@ def get_trends():
             last = float(c.iloc[-1])
 
             # Structural levels
-            stop = float(c_tail_20.max()) - (2.5 * atr)
             s50 = float(ma_50.iloc[-1])
             s200 = float(ma_200.iloc[-1])
 
@@ -544,8 +544,11 @@ def get_trends():
             slope_std = np.std(hist_slopes)
             slope_z = (slope - slope_mean) / slope_std if slope_std > 0 else 0
 
+            # Enhanced: Use slope-based Kelly sizing with dynamic R/R
+            position = _compute_kelly_size(last, slope, atr, ml_conf, r2)
+
             # Decision logic
-            if last < stop:
+            if last < position['stop']:
                 status = "SELL (STOP)"
             elif last < s50:
                 status = "SELL (MA50)"
@@ -558,7 +561,6 @@ def get_trends():
             else:
                 status = "HOLD"
 
-            pos_size = _compute_kelly_size(ml_conf, last, stop)
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
             results.append({
@@ -571,8 +573,13 @@ def get_trends():
                 "rsi14": round(rsi14, 1),
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 1),
-                "stop": round(stop, 2),
-                "pos_size": f"${pos_size:,.0f}"
+                "stop": position['stop'],
+                "target": position['target'],
+                "rr_ratio": position['rr_ratio'],
+                "pos_size": f"${position['dollar_amount']:,.0f}",
+                "shares": position['shares'],
+                "risk_dollar": position['risk_dollar'],
+                "exp_return": position['exp_return']
             })
 
         except Exception as e:
@@ -582,20 +589,88 @@ def get_trends():
     return sorted(results, key=lambda x: x["slope"], reverse=True)
 
 
-def _compute_kelly_size(ml_conf, price, stop, portfolio_value=100000):
+def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=100000,
+                        projection_days=63, atr_stop_multiplier=2.5,
+                        kelly_fraction=0.25, max_allocation=0.15):
     """
-    Quarter Kelly sizing logic: f* = (p - q/b) / 4
-    b (odds) is set to 2.0 based on a conservative 2:1 Reward/Risk.
-    """
-    if ml_conf <= 50:
-        return 0.0
+    Enhanced Kelly sizing using slope projection for target and ATR for stop.
+    No assumed reward/risk ratios - calculates dynamically from 3-month slope projection.
 
+    Returns 0 for negative slope (no short positions).
+    """
+    # Filter: Negative or zero slope → No position
+    if slope <= 0:
+        return {
+            'dollar_amount': 0.0, 'shares': 0,
+            'stop': round(price - (atr * atr_stop_multiplier), 2),
+            'target': round(price, 2), 'rr_ratio': 0.0,
+            'risk_dollar': 0.0, 'exp_return': 0.0
+        }
+
+    # Filter: ML confidence must be above 50%
+    if ml_conf <= 50:
+        return {
+            'dollar_amount': 0.0, 'shares': 0,
+            'stop': round(price - (atr * atr_stop_multiplier), 2),
+            'target': round(price, 2), 'rr_ratio': 0.0,
+            'risk_dollar': 0.0, 'exp_return': 0.0
+        }
+
+    # Calculate stop loss (risk per share)
+    stop_price = price - (atr * atr_stop_multiplier)
+    risk_per_share = price - stop_price
+
+    if stop_price >= price or risk_per_share <= 0:
+        return {
+            'dollar_amount': 0.0, 'shares': 0,
+            'stop': round(stop_price, 2), 'target': round(price, 2),
+            'rr_ratio': 0.0, 'risk_dollar': 0.0, 'exp_return': 0.0
+        }
+
+    # Project target price from slope (3-month projection)
+    daily_return_pct = slope / price if price > 0 else 0
+    projected_price = price * ((1 + daily_return_pct) ** projection_days)
+
+    # Weight by R² (trend quality)
+    target_price = price + (projected_price - price) * r2
+    reward_per_share = target_price - price
+
+    # Calculate actual reward/risk ratio
+    rr_ratio = reward_per_share / risk_per_share if risk_per_share > 0 else 0
+
+    # Filter: Reward/risk must be at least 1.0
+    if rr_ratio < 1.0:
+        return {
+            'dollar_amount': 0.0, 'shares': 0,
+            'stop': round(stop_price, 2), 'target': round(target_price, 2),
+            'rr_ratio': round(rr_ratio, 2), 'risk_dollar': 0.0, 'exp_return': 0.0
+        }
+
+    # Kelly calculation with dynamic R/R
     p = ml_conf / 100.0
     q = 1.0 - p
-    b = 2.0
+    b = rr_ratio
 
-    full_kelly = p - (q / b)
-    fractional_kelly = full_kelly / 4.0
-    final_allocation = min(fractional_kelly, 0.15)
+    kelly = (b * p - q) / b
+    fractional_kelly = kelly * kelly_fraction
+    final_allocation = max(0, min(fractional_kelly, max_allocation))
 
-    return round(portfolio_value * max(0, final_allocation), 2)
+    # Position sizing
+    position_value = portfolio_value * final_allocation
+    shares = int(position_value / price)
+    actual_investment = shares * price
+
+    # Risk & reward metrics
+    risk_per_position = shares * risk_per_share
+    reward_per_position = shares * reward_per_share
+    expected_return = reward_per_position * p - risk_per_position * q
+
+    return {
+        'dollar_amount': round(actual_investment, 2),
+        'shares': shares,
+        'stop': round(stop_price, 2),
+        'target': round(target_price, 2),
+        'rr_ratio': round(rr_ratio, 2),
+        'risk_dollar': round(risk_per_position, 2),
+        'exp_return': round(expected_return, 2)
+    }
