@@ -262,6 +262,7 @@ def get_ml_commodity_prediction():
             for k, v in probs.items()
         ]
         top, bottom = ranked[0], ranked[-1]
+
         return {
             "top": top,
             "bottom": bottom,
@@ -299,11 +300,10 @@ def get_vix_signal():
         ma50_ratio = float(ratio.tail(50).mean())
         breadth_failing = current_ratio < ma50_ratio
 
-        # FIX: flattened signal chain — the trim/hold checks were previously
-        # nested inside the z > 1.0 block where they could never trigger.
-        if z > 2.0:
+
+        if z > 4.0:
             signal = "AGGRESSIVE_BUY"
-        elif z > 1.0:
+        elif z > 2.0:
             signal = "SCALE_IN"
         elif z < -1.5:
             signal = "AGGRESSIVE_TRIM"
@@ -351,33 +351,48 @@ import math
 
 
 def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
-    """Optimized gradient calculation"""
     if len(series) < window + slice_len:
         return 0.0
 
-    # Current week
-    slope_now, r2_now = _trend_stats(series.tail(window), window, scale)
-    # Last week
+    slope_now, r2_now   = _trend_stats(series.tail(window), window, scale)
     slope_prev, r2_prev = _trend_stats(series.tail(window + 5).iloc[:-5], window, scale)
 
-    dx = slope_now - slope_prev
-    dy = r2_now - r2_prev
+    dx_raw = slope_now - slope_prev
+    dy_raw = r2_now - r2_prev
+
+    # Normalize by the actual typical range of each axis
+    # slope range: max possible change ≈ 2 * max(|slope_now|, |slope_prev|)
+    # R² range: always [-1, 1] so max change = 2.0
+    slope_scale = max(abs(slope_now), abs(slope_prev), 1e-6) * 2
+    r2_scale = 2.0  # R² is always bounded [-1, 1]
+
+    dx = dx_raw / slope_scale
+    dy = dy_raw / r2_scale
 
     angle_rad = math.atan2(dy, dx)
     angle_deg = math.degrees(angle_rad)
     if angle_deg < 0:
         angle_deg += 360
+
     return round(angle_deg, 1)
 
-
 def _compute_slope_change(series, window=20):
-    """Compute slope change from last week"""
     if len(series) < window + 5:
         return 0.0
-    slope_this_week, _ = _trend_stats(series.tail(window), window, window)
-    slope_last_week, _ = _trend_stats(series.tail(window + 5)[:-5], window, window)
-    return round(slope_this_week - slope_last_week, 2)
 
+    slope_now, r2_now   = _trend_stats(series.tail(window), window, window)
+    slope_prev, r2_prev = _trend_stats(series.tail(window + 5)[:-5], window, window)
+
+    dx_raw = slope_now - slope_prev
+    dy_raw = r2_now - r2_prev
+
+    slope_scale = max(abs(slope_now), abs(slope_prev), 1e-6) * 2
+    r2_scale = 2.0
+
+    dx = dx_raw / slope_scale
+    dy = dy_raw / r2_scale
+
+    return round(math.sqrt(dx**2 + dy**2), 4)
 
 @ttl_cache(30)
 def get_sector_rotation():
