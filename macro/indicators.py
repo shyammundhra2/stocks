@@ -148,7 +148,7 @@ def get_risk_regime():
             history_points.append(conf_val)
 
         current_conf = history_points[-1]
-        is_risk_on_ml = current_conf > 50
+        is_risk_on_ml = current_conf > 60
 
         # 3. Vectorized macro calculations
         last_vals = data.iloc[-1]
@@ -571,8 +571,10 @@ def get_trends():
                 status = "TRIM (GRADIENT)"
             elif ml_conf < 45 and last > s50:
                 status = "TRIM (ML FADE)"
+            elif slope < -2 :
+                status = "TRIM (NEGATIVE SLOPE)"
             elif (s50 > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
-                status = "STRONG BUY" if ml_conf > 75 else "BUY"
+                status = "STRONG BUY" if ml_conf > 60 else "BUY"
             else:
                 status = "HOLD"
 
