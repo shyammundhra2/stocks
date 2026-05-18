@@ -573,7 +573,7 @@ def get_trends():
                 status = "TRIM (ML FADE)"
             elif slope < -2 :
                 status = "TRIM (NEGATIVE SLOPE)"
-            elif (s50 > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
+            elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 status = "STRONG BUY" if ml_conf > 60 else "BUY"
             else:
                 status = "HOLD"
@@ -606,7 +606,7 @@ def get_trends():
     return sorted(results, key=lambda x: x["slope"], reverse=True)
 
 
-def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=100000,
+def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
                         projection_days=63, atr_stop_multiplier=2.5,
                         kelly_fraction=0.25, max_allocation=0.15):
     """
