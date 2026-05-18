@@ -561,6 +561,7 @@ def get_trends():
 
             # Enhanced: Use slope-based Kelly sizing with dynamic R/R
             position = _compute_kelly_size(last, slope, atr, ml_conf, r2)
+            pos_size =  position['dollar_amount']
 
             # Decision logic
             if last < position['stop']:
@@ -568,11 +569,13 @@ def get_trends():
             elif last < s50:
                 status = "SELL (MA50)"
             elif slope_z > 2.0 and r2 > 0.8:
-                status = "TRIM (GRADIENT)"
+                status = "BREAKOUT OR TRIM (GRADIENT)"
             elif ml_conf < 45 and last > s50:
                 status = "TRIM (ML FADE)"
             elif slope < -2 :
                 status = "TRIM (NEGATIVE SLOPE)"
+            elif pos_size == 0:
+                status = "TRIM (POSITION SIZE)"
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 status = "STRONG BUY" if ml_conf > 60 else "BUY"
             else:
