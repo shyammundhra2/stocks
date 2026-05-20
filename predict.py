@@ -664,34 +664,59 @@ def compute_features(data, model_type):
         return pd.DataFrame()
 
 
-def compute_trend_features(df, model_type='trend'):
+def compute_trend_features(df):
     """
     Compute features for trend prediction models.
-    Uses the same logic as ml_engine.py for consistency.
+    Must match exactly the features used in train_trends.py.
     """
     if len(df) < 200:
         return pd.DataFrame()
 
     close = df['Close'].squeeze()
 
-    # Pre-compute rolling means
-    rolling_50 = close.rolling(50, min_periods=1).mean()
-    rolling_200 = close.rolling(200, min_periods=1).mean()
+    # --- Trend / Technical ---
+    rsi = compute_RSI(close, 14)
+    sma50 = close.rolling(50, min_periods=1).mean()
+    sma200 = close.rolling(200, min_periods=1).mean()
+    sma50_dist = (close - sma50) / sma50
+    sma200_dist = (close - sma200) / sma200
 
-    # Get last values
-    last_close = close.iloc[-1]
-    s50 = rolling_50.iloc[-1]
-    s200 = rolling_200.iloc[-1]
+    # --- Linear Regression (14-day) ---
+    period = 14
+    x = np.arange(period)
+    x_mean = x.mean()
+    ss_xx = ((x - x_mean) ** 2).sum()
+    vals = close.values
+    slopes = np.full(len(vals), np.nan)
+    r2s = np.full(len(vals), np.nan)
+    for i in range(period - 1, len(vals)):
+        y = vals[i - period + 1:i + 1]
+        if np.isnan(y).any():
+            continue
+        y_mean = y.mean()
+        ss_xy = ((x - x_mean) * (y - y_mean)).sum()
+        ss_yy = ((y - y_mean) ** 2).sum()
+        slope = ss_xy / ss_xx
+        slopes[i] = slope / y_mean
+        r2s[i] = (ss_xy ** 2) / (ss_xx * ss_yy + 1e-9)
+    lr_slope = pd.Series(slopes, index=close.index)
+    lr_r2 = pd.Series(r2s, index=close.index)
 
-    # Compute indicators
-    rsi = compute_RSI(close, 14).iloc[-1]
-    atr = compute_ATR(df, 14).iloc[-1]
+    # --- Volatility Regime ---
+    log_returns = np.log(close / close.shift(1))
+    real_vol = log_returns.rolling(21).std() * np.sqrt(252)
+    high_low = close.rolling(2).max() - close.rolling(2).min()
+    atr21_pct = high_low.rolling(21).mean() / close
 
-    # Build feature dataframe
-    X = pd.DataFrame(index=[df.index[-1]])
-    X['RSI14'] = rsi
-    X['SMA50_dist'] = (last_close - s50) / s50
-    X['SMA200_dist'] = (last_close - s200) / s200
+    X = pd.DataFrame({
+        'RSI14':       rsi,
+        'SMA50_dist':  sma50_dist,
+        'SMA200_dist': sma200_dist,
+        'LR14_slope':  lr_slope,
+        'LR14_r2':     lr_r2,
+        'RealVol21':   real_vol,
+        'ATR21_pct':   atr21_pct,
+    }, index=close.index)
 
     return X
 
@@ -770,9 +795,13 @@ def get_feature_descriptions():
         'Defensive_Rotation': 'Defensive vs Growth sectors',
         'XLF_Relative_Strength': 'Financials vs Market',
         'Labor_Stress_Proxy': 'Labor market stress signal',
-        'RSI14': 'Relative Strength Index',
-        'SMA50_dist': 'Distance from 50-day MA',
+        'RSI14':       'Relative Strength Index',
+        'SMA50_dist':  'Distance from 50-day MA',
         'SMA200_dist': 'Distance from 200-day MA',
+        'LR14_slope':  '14-day linear regression slope',
+        'LR14_r2':     '14-day linear regression R²',
+        'RealVol21':   '21-day realised volatility',
+        'ATR21_pct':   '21-day ATR as % of price',
     }
 
 
@@ -854,10 +883,7 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
     if isinstance(raw_data.columns, pd.MultiIndex):
         data = raw_data
     else:
-        if len(tickers) == 1:
-            data = raw_data
-        else:
-            data = raw_data
+        data = raw_data
 
     # Process each ticker
     predictions = {}
@@ -906,8 +932,8 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
                 }
                 continue
 
-            # Compute features
-            X = compute_trend_features(ticker_data, 'trend')
+            # Compute features for the full series, take last row
+            X = compute_trend_features(ticker_data)
 
             if X.empty:
                 predictions[friendly_names.get(ticker, ticker)] = {
@@ -915,8 +941,10 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
                 }
                 continue
 
+            X_last = X.iloc[[-1]]
+
             # Fill missing features
-            X_live_dict = {f: X[f].iloc[0] if f in X.columns else 0.0 for f in features}
+            X_live_dict = {f: X_last[f].iloc[0] if f in X_last.columns else 0.0 for f in features}
             X_live = pd.DataFrame([X_live_dict], columns=features)
 
             # Scale and predict
@@ -997,7 +1025,9 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
 
     # Load model bundle (cached)
     bundle = _get_model_bundle(model_path)
-    model, scaler, feature_names = bundle['model'], bundle['scaler'], bundle['features']
+    model = bundle['model']
+    scaler = bundle.get('scaler', None)  # FIX: use .get() — some models (e.g. RandomForest) have no scaler
+    feature_names = bundle['features']
 
     # Check if model has label_encoder (new sector model format)
     label_encoder = bundle.get('label_encoder', None)
@@ -1026,8 +1056,10 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         missing_df = pd.DataFrame(missing_features, index=X.index)
         X = pd.concat([X, missing_df], axis=1)
 
-    # Scale and predict
-    X_scaled = scaler.transform(X.tail(1)[feature_names])
+    # Scale and predict (FIX: handle missing scaler)
+    X_tail = X.tail(1)[feature_names]
+    X_scaled = scaler.transform(X_tail) if scaler is not None else X_tail.values
+
     proba = model.predict_proba(X_scaled)[0]
 
     # Handle class labels (could be integers or strings)
@@ -1193,26 +1225,30 @@ def predict_commodities(
 
         # ========== STAGE 2: COMMODITY SELECTION WITHIN SECTORS ==========
 
-        # Calculate momentum scores for commodities
+        # Calculate momentum scores for commodities.
+        # FIX: skip macro tickers; dropna() so .iloc[-1] lands on real data
+        # even when the most recent row is NaN (e.g. market closed today).
         commodity_scores = {}
 
         for ticker in tickers:
             if ticker not in data.columns:
                 continue
+            if ticker not in COMMODITIES:
+                continue
 
-            price = data[ticker]
+            price = data[ticker].dropna()
 
-            # Calculate risk-adjusted momentum
-            ret_3m = price.pct_change(63, fill_method=None).iloc[-1]
-            ret_1m = price.pct_change(21, fill_method=None).iloc[-1]
-            vol_3m = price.pct_change(1, fill_method=None).tail(63).std()
+            if len(price) < 63:
+                continue
 
-            if not np.isnan(ret_3m) and not np.isnan(ret_1m) and vol_3m > 0:
+            ret_3m = price.pct_change(63).iloc[-1]
+            ret_1m = price.pct_change(21).iloc[-1]
+            vol_3m = price.pct_change(1).tail(63).std()
+
+            if not np.isnan(ret_3m) and not np.isnan(ret_1m) and not np.isnan(vol_3m) and vol_3m > 1e-10:
                 risk_adj_mom = ret_3m / vol_3m
                 momentum_trend = ret_1m / ret_3m if abs(ret_3m) > 1e-6 else 0
-
-                score = 0.7 * risk_adj_mom + 0.3 * momentum_trend
-                commodity_scores[ticker] = score
+                commodity_scores[ticker] = 0.7 * risk_adj_mom + 0.3 * momentum_trend
 
         # Select commodities from top sectors
         final_probabilities = {}
@@ -1286,6 +1322,7 @@ def predict_commodities(
             commodity_model_path, tickers, friendly_names, 'commodity',
             as_of_date, use_cache, explain
         )
+
 
 def print_prediction(title, result, show_explanations=True):
     """Pretty-print predictions with feature explanations"""
@@ -1364,7 +1401,6 @@ if __name__ == "__main__":
     # Special handling for commodities with hierarchical prediction
     print("\n" + "=" * 80)
     try:
-
         res = predict_commodities(
             sector_model_path="commodity_sector_model.joblib",
             commodity_model_path="commodity_model.joblib",  # fallback
