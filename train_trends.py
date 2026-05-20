@@ -5,25 +5,15 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.inspection import permutation_importance
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import classification_report, roc_auc_score
 import joblib
 
 # ===============================
 # 1️⃣ Setup & Asset Universe
 # ===============================
 from macro.constants import TREND_ASSETS
-from sklearn.metrics import accuracy_score
-
 
 MACRO_TICKERS = {
-    "DX-Y.NYB": "DXY",     # Dollar Index
-    "^VIX": "VIX",         # Equity Volatility
-    "^MOVE": "MOVE",       # Bond Volatility
-    "^TNX": "10Y_Yield",   # 10Y Treasury
-    "^IRX": "3M_Yield",    # 3M T-Bill
-    "HYG": "High_Yield",   # Credit Risk
-    "IEF": "Treasuries",   # Risk-Free Proxy
-    "XLY": "Disc",         # Consumer Discretionary
-    "XLP": "Staples",       # Consumer Staples
     "SPY": "SP500"
 }
 
@@ -38,6 +28,39 @@ def compute_RSI(series, period=14):
     loss = -delta.where(delta < 0, 0.0).rolling(period).mean()
     rs = gain / (loss + 1e-9)
     return 100 - (100 / (1 + rs))
+
+
+def compute_linreg_features(series, period=14):
+    slopes = np.full(len(series), np.nan)
+    r2s = np.full(len(series), np.nan)
+    x = np.arange(period)
+    x_mean = x.mean()
+    ss_xx = ((x - x_mean) ** 2).sum()
+
+    vals = series.values
+    for i in range(period - 1, len(vals)):
+        y = vals[i - period + 1:i + 1]
+        if np.isnan(y).any():
+            continue
+        y_mean = y.mean()
+        ss_xy = ((x - x_mean) * (y - y_mean)).sum()
+        ss_yy = ((y - y_mean) ** 2).sum()
+        slope = ss_xy / ss_xx
+        slopes[i] = slope / y_mean  # normalise by price level
+        r2s[i] = (ss_xy ** 2) / (ss_xx * ss_yy + 1e-9)
+
+    return pd.Series(slopes, index=series.index), pd.Series(r2s, index=series.index)
+
+
+def compute_realised_vol(series, period=21):
+    log_returns = np.log(series / series.shift(1))
+    return log_returns.rolling(period).std() * np.sqrt(252)
+
+
+def compute_atr_pct(series, period=21):
+    high_low = series.rolling(2).max() - series.rolling(2).min()
+    atr = high_low.rolling(period).mean()
+    return atr / series
 
 
 def rank_features(model, X, y, label, n_splits=5):
@@ -79,10 +102,24 @@ def rank_features(model, X, y, label, n_splits=5):
     return ranking
 
 
+def evaluate_model(model, X, y, label):
+    preds = model.predict(X)
+    proba = model.predict_proba(X)[:, 1]
+    auc = roc_auc_score(y, proba)
+
+    print(f"\n📊 {label} Model Evaluation")
+    print("===================================")
+    print(classification_report(y, preds, target_names=["Down", "Up"]))
+    print(f"AUC: {auc:.4f}")
+    print("===================================")
+
+    return auc
+
+
 # ===============================
 # 3️⃣ Data Acquisition
 # ===============================
-print("📡 Downloading market & macro data (25y)...")
+print("📡 Downloading market data (25y)...")
 
 raw_data = yf.download(
     ALL_TICKERS,
@@ -110,14 +147,11 @@ spy = close_prices["SPY"]
 df["RSI14"] = compute_RSI(spy, 14)
 df["SMA50_dist"] = (spy - spy.rolling(50).mean()) / spy.rolling(50).mean()
 df["SMA200_dist"] = (spy - spy.rolling(200).mean()) / spy.rolling(200).mean()
+df["LR14_slope"], df["LR14_r2"] = compute_linreg_features(spy, 14)
 
-# --- Macro / Regime ---
-df["DXY_mom"] = close_prices["DX-Y.NYB"].pct_change(63)
-df["VIX_level"] = close_prices["^VIX"].rolling(21).mean()
-df["MOVE_level"] = close_prices["^MOVE"].ffill()
-df["Yield_Curve"] = close_prices["^TNX"] - close_prices["^IRX"]
-df["Credit_Stress"] = close_prices["HYG"] / close_prices["IEF"]
-df["Consumer_Health"] = close_prices["XLY"] / close_prices["XLP"]
+# --- Volatility Regime ---
+df["RealVol21"] = compute_realised_vol(spy, 21)
+df["ATR21_pct"] = compute_atr_pct(spy, 21)
 
 # ===============================
 # 5️⃣ Targets
@@ -131,12 +165,10 @@ FEATURE_COLS = [
     "RSI14",
     "SMA50_dist",
     "SMA200_dist",
-    "DXY_mom",
-    "VIX_level",
-    "MOVE_level",
-    "Yield_Curve",
-    "Credit_Stress",
-    "Consumer_Health"
+    "LR14_slope",
+    "LR14_r2",
+    "RealVol21",
+    "ATR21_pct",
 ]
 
 X = df[FEATURE_COLS]
@@ -183,7 +215,13 @@ fast_rank = rank_features(model_fast, X_scaled, y_f, "FAST (5D)")
 slow_rank = rank_features(model_slow, X_scaled, y_s, "SLOW (21D)")
 
 # ===============================
-# 9️⃣ Save Bundle
+# 9️⃣ Model Evaluation
+# ===============================
+fast_auc = evaluate_model(model_fast, X_scaled, y_f, "FAST (5D)")
+slow_auc = evaluate_model(model_slow, X_scaled, y_s, "SLOW (21D)")
+
+# ===============================
+# 🔟 Save Bundle
 # ===============================
 joblib.dump(
     {
@@ -192,54 +230,11 @@ joblib.dump(
         "scaler": scaler,
         "features": FEATURE_COLS,
         "fast_feature_rank": fast_rank,
-        "slow_feature_rank": slow_rank
+        "slow_feature_rank": slow_rank,
+        "fast_auc": fast_auc,
+        "slow_auc": slow_auc,
     },
     "trend_model.joblib"
 )
 
-
-# ------------------ MODEL ACCURACY ------------------
-
-def compute_topk_accuracy(model, X, y, label, k=3):
-    proba = model.predict_proba(X)
-    classes = model.classes_
-
-    # Top-1
-    top1_preds = classes[np.argmax(proba, axis=1)]
-    top1_acc = accuracy_score(y, top1_preds)
-
-    # Top-k
-    topk_correct = 0
-    for i in range(len(y)):
-        topk_idx = np.argsort(proba[i])[-k:]
-        topk_classes = classes[topk_idx]
-        if y.iloc[i] in topk_classes:
-            topk_correct += 1
-    topk_acc = topk_correct / len(y)
-
-    print(f"\n📊 {label} Model Accuracy")
-    print("===================================")
-    print(f"✅ Top-1 Accuracy: {top1_acc:.2%}")
-    print(f"✅ Top-{k} Accuracy: {topk_acc:.2%}")
-    print("===================================")
-
-    return top1_acc, topk_acc
-
-
-# Compute accuracies
-fast_top1, fast_top3 = compute_topk_accuracy(model_fast, X_scaled, y_f, "FAST (5D)")
-slow_top1, slow_top3 = compute_topk_accuracy(model_slow, X_scaled, y_s, "SLOW (21D)")
-
-print("\n✅ trend_model.joblib saved with macro-aware feature rankings.")
-
-# ===============================
-# 🔟 Macro Danger Zone Alert
-# ===============================
-current_curve = df["Yield_Curve"].iloc[-1]
-
-if current_curve < 0:
-    print("\n🚨 DANGER ZONE: Yield Curve Inverted")
-elif 0 < current_curve < 0.2:
-    print("\n⚠️ WARNING: Curve De-Inverting — Sahm Watch Active")
-else:
-    print("\n🟢 Curve Normal — No Macro Stress Signal")
+print("\n✅ trend_model.joblib saved.")
