@@ -53,7 +53,6 @@ def _get_shared_market_data():
     Single bulk download for all tickers used across functions.
     This eliminates redundant yfinance calls and is the biggest performance win.
     """
-    # Collect all unique tickers from all functions
     all_tickers = list(set(
         list(SECTORS.keys()) +
         list(COUNTRIES.keys()) +
@@ -65,7 +64,6 @@ def _get_shared_market_data():
          'JPY=X', 'HG=F', 'GC=F', 'QQQ']
     ))
 
-    # Single bulk download with threading
     raw = yf.download(all_tickers, period="1y", progress=False,
                       auto_adjust=False, threads=True, group_by='column')
 
@@ -126,12 +124,9 @@ def _trend_stats(series, window, scale):
 @ttl_cache(30)
 def get_risk_regime():
     try:
-        # Get extended data for ML history
         raw, risk_tickers = _get_extended_data()
         data = raw['Close'].ffill()
 
-        # 2. ML Logic: Current & 20-Point History
-        # We use the logic from your predict.py by iterating over the last 20 valid trading dates
         history_points = []
         recent_dates = data.index[::-20][:5][::-1]
 
@@ -150,29 +145,23 @@ def get_risk_regime():
         current_conf = history_points[-1]
         is_risk_on_ml = current_conf > 60
 
-        # 3. Vectorized macro calculations
         last_vals = data.iloc[-1]
         ma50 = data.rolling(50).mean().iloc[-1]
 
-        # Credit Stress
         credit_ratio = data['HYG'] / data['IEF']
         credit_pass = bool(last_vals['HYG'] / last_vals['IEF'] > credit_ratio.rolling(50).mean().iloc[-1])
 
-        # Yield Curve
         curve_spread = last_vals['^TNX'] - last_vals['^IRX']
         curve_pass = bool(curve_spread > 0)
 
-        # Carry Trade (vectorized volatility calculation)
         jpy_ret = data['JPY=X'].pct_change()
         jpy_vol = jpy_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
         carry_pass = bool(last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15)
 
-        # Existing Technicals
         spy_ma200 = data['SPY'].rolling(200).mean().iloc[-1]
         spy_trend = bool(last_vals['SPY'] > spy_ma200)
         vix_low = bool(last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110)
 
-        # Breadth Logic: RSP/SPY Ratio vs its 50-day Moving Average
         rsp_spy_ratio = data['RSP'] / data['SPY']
         breadth_pass = bool(rsp_spy_ratio.iloc[-1] > rsp_spy_ratio.rolling(50).mean().iloc[-1])
 
@@ -226,7 +215,7 @@ def get_ml_sector_prediction():
 @ttl_cache(30)
 def get_ml_country_prediction():
     try:
-        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS + ['SPY']  # SPY needed by compute_country_features()
+        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS + ['SPY']
         res = predict_assets("country_model.joblib", tickers, COUNTRIES, "country")
         probs = res["probabilities"]
         ranked = [
@@ -250,7 +239,7 @@ def get_ml_commodity_prediction():
     try:
         res = predict_commodities(
             sector_model_path="commodity_sector_model.joblib",
-            commodity_model_path="commodity_model.joblib",  # fallback
+            commodity_model_path="commodity_model.joblib",
             friendly_names=COMMODITIES,
             use_cache=True,
             top_n_sectors=5,
@@ -280,18 +269,15 @@ def get_ml_commodity_prediction():
 @ttl_cache(30)
 def get_vix_signal():
     try:
-        # Use shared data instead of separate download
         shared_data = _get_shared_market_data()
         vix = shared_data['Close']['^VIX'].dropna()
 
-        # Single pass calculations
         vix_tail = vix.tail(50)
         v_last = float(vix.iloc[-1])
         vix_mean = vix_tail.mean()
         vix_std = vix_tail.std()
         z = float((v_last - vix_mean) / vix_std)
 
-        # 2. Breadth Calculations (RSP/SPY Ratio)
         rsp = shared_data['Close']['RSP']
         spy = shared_data['Close']['SPY']
         ratio = rsp / spy
@@ -300,11 +286,18 @@ def get_vix_signal():
         ma50_ratio = float(ratio.tail(50).mean())
         breadth_failing = current_ratio < ma50_ratio
 
+        spy_ma50 = float(spy.rolling(50).mean().iloc[-1])
+        spy_ma200 = float(spy.rolling(200).mean().iloc[-1])
+        spy_last = float(spy.iloc[-1])
+        spy_in_uptrend = spy_last > spy_ma50 and spy_last > spy_ma200
+
+        spy_slope, spy_r2 = _trend_stats(spy, 10, 10)
+        spy_trending = spy_slope > 0 and spy_r2 > 0.6
 
         if z > 4.0:
-            signal = "AGGRESSIVE_BUY"
+            signal = "AGGRESSIVE_BUY" if spy_trending else "SCALE_IN"
         elif z > 2.0:
-            signal = "SCALE_IN"
+            signal = "SCALE_IN" if spy_in_uptrend else "HOLD"
         elif z < -1.5:
             signal = "AGGRESSIVE_TRIM"
         elif z < -1.0 and breadth_failing:
@@ -320,16 +313,13 @@ def get_vix_signal():
 @ttl_cache(30)
 def get_mean_reversion():
     try:
-        # Use shared data instead of separate download
         shared_data = _get_shared_market_data()
         c = shared_data['Close']['QQQ'].dropna()
 
-        # Parallel calculations
         rsi2 = float(compute_RSI(c, 2).iloc[-1])
         price = float(c.iloc[-1])
         s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
 
-        # Signal determination
         if rsi2 >= 70:
             signal = "EXIT"
         elif price < s200:
@@ -360,11 +350,8 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
     dx_raw = slope_now - slope_prev
     dy_raw = r2_now - r2_prev
 
-    # Normalize by the actual typical range of each axis
-    # slope range: max possible change ≈ 2 * max(|slope_now|, |slope_prev|)
-    # R² range: always [-1, 1] so max change = 2.0
     slope_scale = max(abs(slope_now), abs(slope_prev), 1e-6) * 2
-    r2_scale = 2.0  # R² is always bounded [-1, 1]
+    r2_scale = 2.0
 
     dx = dx_raw / slope_scale
     dy = dy_raw / r2_scale
@@ -375,6 +362,7 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
         angle_deg += 360
 
     return round(angle_deg, 1)
+
 
 def _compute_slope_change(series, window=20):
     if len(series) < window + 5:
@@ -394,14 +382,28 @@ def _compute_slope_change(series, window=20):
 
     return round(math.sqrt(dx**2 + dy**2), 4)
 
+
+def _compute_delta_slope(series, window=20):
+    """
+    Signed slope acceleration.
+    Positive = trend accelerating, negative = trend fading.
+    Uses same window as _compute_slope_change for consistency.
+    """
+    if len(series) < window + 5:
+        return 0.0
+
+    slope_now, _  = _trend_stats(series.tail(window), window, window)
+    slope_prev, _ = _trend_stats(series.tail(window + 5).iloc[:-5], window, window)
+
+    return round(slope_now - slope_prev, 4)
+
+
 @ttl_cache(30)
 def get_sector_rotation():
     try:
-        # Use shared data - no separate download needed
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
 
-        # Vectorized relative strength calculation
         sector_data = data[list(SECTORS.keys())]
         rel = sector_data.div(data["SPY"], axis=0).pct_change(63).iloc[-1]
 
@@ -421,7 +423,6 @@ def get_sector_rotation():
                 "slope_change": slope_change
             })
 
-        # Sort by slope instead of gain
         return {"all_ranked": sorted(out, key=lambda x: x["slope"], reverse=True)}
     except:
         return {"all_ranked": []}
@@ -430,7 +431,6 @@ def get_sector_rotation():
 @ttl_cache(30)
 def get_country_rotation():
     try:
-        # Use shared data
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
 
@@ -455,7 +455,6 @@ def get_country_rotation():
 @ttl_cache(30)
 def get_commodity_rotation():
     try:
-        # Use shared data
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
 
@@ -480,7 +479,6 @@ def get_commodity_rotation():
 @ttl_cache(30)
 def get_currency_rotation():
     try:
-        # Use shared data
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
 
@@ -512,7 +510,6 @@ def get_currency_rotation():
 def get_trends():
     from macro.ml_engine import get_ml_confidence
 
-    # Use shared data - no separate download needed!
     shared_data = _get_shared_market_data()
 
     results = []
@@ -520,7 +517,6 @@ def get_trends():
 
     for sym, name in TREND_ASSETS.items():
         try:
-            # Extract symbol data from shared download
             if len(symbols) > 1:
                 df = shared_data.xs(sym, level=1, axis=1).dropna()
             else:
@@ -531,26 +527,22 @@ def get_trends():
 
             c = df["Close"].squeeze()
 
-            # Pre-compute rolling windows once
             c_tail_20 = c.tail(20)
             ma_50 = c.rolling(50, min_periods=1).mean()
             ma_200 = c.rolling(200, min_periods=1).mean()
 
-            # Parallel metric calculations
             slope, r2 = _trend_stats(c, 10, 10)
             ml_conf = get_ml_confidence(df)
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
 
-            # Structural levels
             s50 = float(ma_50.iloc[-1])
             s200 = float(ma_200.iloc[-1])
 
-            # Vectorized gradient Z-score
+            # Slope Z-score (60-day window preserved as original)
             c_len = len(c)
             start_idx = max(0, c_len - 60)
 
-            # Pre-allocate array for speed
             hist_slopes = np.empty(c_len - start_idx - 10)
             for idx, i in enumerate(range(start_idx + 10, c_len)):
                 hist_slopes[idx] = _trend_stats(c.iloc[i - 10:i], 10, 10)[0]
@@ -559,25 +551,63 @@ def get_trends():
             slope_std = np.std(hist_slopes)
             slope_z = (slope - slope_mean) / slope_std if slope_std > 0 else 0
 
-            # Enhanced: Use slope-based Kelly sizing with dynamic R/R
-            position = _compute_kelly_size(last, slope, atr, ml_conf, r2)
-            pos_size =  position['dollar_amount']
+            # Signed delta slope: positive = accelerating, negative = fading
+            delta_slope = _compute_delta_slope(c, window=20)
 
+            # Kelly sizing with delta_slope passed in for fraction adjustment
+            position = _compute_kelly_size(last, slope, atr, ml_conf, r2,
+                                           delta_slope=delta_slope)
+            pos_size = position['dollar_amount']
+
+            # -------------------------------------------------------
             # Decision logic
+            # Priority order matters — breakout check must come before
+            # the generic extended/trim checks so it is not swallowed.
+            # -------------------------------------------------------
             if last < position['stop']:
+                # Price has broken below ATR-based stop
                 status = "SELL (STOP)"
+
             elif last < s50:
+                # Price below 50MA — structural breakdown
                 status = "SELL (MA50)"
+
+            elif slope_z > 2.0 and ml_conf > 60 and r2 > 0.7:
+                # Slope statistically extended BUT ML confirms strength and
+                # trend fit is high — genuine breakout, not overextension
+                status = "BUY (BREAKOUT)"
+
             elif slope_z > 2.0 and r2 > 0.8:
-                status = "BREAKOUT OR TRIM (GRADIENT)"
+                # Extended slope, high trend quality, but ML not confirming
+                # — overextended, likely to mean-revert
+                status = "TRIM (EXTENDED)"
+
+            elif slope_z > 1.5 and ml_conf < 50:
+                # Slope elevated but ML fading — momentum losing conviction
+                status = "TRIM (FADING MOMENTUM)"
+
             elif ml_conf < 45 and last > s50:
+                # ML has lost confidence while price still above 50MA
                 status = "TRIM (ML FADE)"
-            elif slope < -2 :
+
+            elif slope < -2:
+                # Raw slope deeply negative — trend broken
                 status = "TRIM (NEGATIVE SLOPE)"
+
             elif pos_size == 0:
+                # Kelly returned zero — RR or ML filter failed sizing
                 status = "TRIM (POSITION SIZE)"
+
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
-                status = "STRONG BUY" if ml_conf > 60 else "BUY"
+                if slope_z < -1.0:
+                    # Slope unusually depressed vs own history — early entry edge
+                    status = "STRONG BUY"
+                elif ml_conf > 50:
+                    # Trend intact, ML confirms — standard buy
+                    status = "BUY"
+                else:
+                    status = "HOLD"
+
             else:
                 status = "HOLD"
 
@@ -592,7 +622,8 @@ def get_trends():
                 "ml_conf": ml_conf,
                 "rsi14": round(rsi14, 1),
                 "slope": round(slope, 2),
-                "slope_z": round(slope_z, 1),
+                "slope_z": round(slope_z, 2),
+                "delta_slope": round(delta_slope, 4),
                 "stop": position['stop'],
                 "target": position['target'],
                 "rr_ratio": position['rr_ratio'],
@@ -611,10 +642,15 @@ def get_trends():
 
 def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
                         projection_days=63, atr_stop_multiplier=2.5,
-                        kelly_fraction=0.25, max_allocation=0.15):
+                        kelly_fraction=0.25, max_allocation=0.15,
+                        delta_slope=0.0):
     """
     Enhanced Kelly sizing using slope projection for target and ATR for stop.
-    No assumed reward/risk ratios - calculates dynamically from 3-month slope projection.
+    No assumed reward/risk ratios — calculates dynamically from 3-month slope projection.
+
+    delta_slope adjusts the kelly fraction:
+      - Positive (accelerating trend): boost fraction by 25%, capped at 0.40
+      - Negative (fading trend): reduce fraction by 25%
 
     Returns 0 for negative slope (no short positions).
     """
@@ -635,6 +671,14 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
             'target': round(price, 2), 'rr_ratio': 0.0,
             'risk_dollar': 0.0, 'exp_return': 0.0
         }
+
+    # Adjust kelly fraction based on signed delta slope
+    if delta_slope > 0:
+        # Trend accelerating — increase conviction
+        kelly_fraction = min(kelly_fraction * 1.25, 0.40)
+    elif delta_slope < 0:
+        # Trend fading — reduce conviction
+        kelly_fraction = kelly_fraction * 0.75
 
     # Calculate stop loss (risk per share)
     stop_price = price - (atr * atr_stop_multiplier)
