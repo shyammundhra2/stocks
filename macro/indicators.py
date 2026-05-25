@@ -41,6 +41,7 @@ def ttl_cache(ttl_seconds=30):
             return result
 
         return wrapper
+
     return decorator
 
 
@@ -76,13 +77,25 @@ def _get_extended_data():
 
 def _get_close(shared_data, ticker):
     """
-    Safely extract a single ticker close series.
-    Handles both MultiIndex and flat columns.
+    Production-hardened close series extraction.
+    Handles MultiIndex, flat DataFrames, and single-ticker Series.
     """
+    if shared_data.empty or 'Close' not in shared_data:
+        return pd.Series(dtype=float)
+
     close = shared_data['Close']
-    if ticker in close.columns:
-        return close[ticker].dropna()
+
+    if isinstance(close, pd.Series):
+        return close.dropna()
+
+    if not isinstance(close.columns, pd.MultiIndex):
+        if ticker in close.columns:
+            return close[ticker].dropna()
+        return pd.Series(dtype=float)
+
     try:
+        if ticker in close.columns.get_level_values(0):
+            return close[ticker].dropna()
         return close.xs(ticker, level=1, axis=1).squeeze().dropna()
     except Exception:
         return pd.Series(dtype=float)
@@ -122,7 +135,7 @@ def _trend_stats(series, window, scale):
 def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
     if len(series) < window + slice_len:
         return 0.0
-    slope_now, r2_now   = _trend_stats(series.tail(window), window, scale)
+    slope_now, r2_now = _trend_stats(series.tail(window), window, scale)
     slope_prev, r2_prev = _trend_stats(series.tail(window + 5).iloc[:-5], window, scale)
     dx_raw = slope_now - slope_prev
     dy_raw = r2_now - r2_prev
@@ -140,22 +153,21 @@ def _compute_gradient(series, window=5, slice_len=10, scale=1.0):
 def _compute_slope_change(series, window=20):
     if len(series) < window + 5:
         return 0.0
-    slope_now, r2_now   = _trend_stats(series.tail(window), window, window)
-    slope_prev, r2_prev = _trend_stats(series.tail(window + 5)[:-5], window, window)
+    slope_now, r2_now = _trend_stats(series.tail(window), window, window)
+    slope_prev, r2_prev = _trend_stats(series.tail(window + 5).iloc[:-5], window, window)
     dx_raw = slope_now - slope_prev
     dy_raw = r2_now - r2_prev
     slope_scale = max(abs(slope_now), abs(slope_prev), 1e-6) * 2
     r2_scale = 2.0
     dx = dx_raw / slope_scale
     dy = dy_raw / r2_scale
-    return round(math.sqrt(dx**2 + dy**2), 4)
+    return round(math.sqrt(dx ** 2 + dy ** 2), 4)
 
 
 def _compute_delta_slope(series, window=20):
-    """Signed slope acceleration. Positive = accelerating, negative = fading."""
     if len(series) < window + 5:
         return 0.0
-    slope_now, _  = _trend_stats(series.tail(window), window, window)
+    slope_now, _ = _trend_stats(series.tail(window), window, window)
     slope_prev, _ = _trend_stats(series.tail(window + 5).iloc[:-5], window, window)
     return round(slope_now - slope_prev, 4)
 
@@ -228,7 +240,6 @@ def get_risk_regime():
 
 
 def get_regime_scalar(regime):
-    """Scale allocations by number of regime checks passing."""
     passes = sum(1 for d in regime["details"] if d["pass"])
     scalars = {6: 1.0, 5: 0.85, 4: 0.70, 3: 0.50, 2: 0.30, 1: 0.15, 0: 0.0}
     return scalars.get(passes, 0.0)
@@ -318,19 +329,19 @@ def get_vix_signal():
         spy = _get_close(shared_data, 'SPY')
 
         vix_tail = vix.tail(50)
-        v_last   = float(vix.iloc[-1])
+        v_last = float(vix.iloc[-1])
         vix_mean = vix_tail.mean()
-        vix_std  = vix_tail.std()
+        vix_std = vix_tail.std()
         z = float((v_last - vix_mean) / vix_std)
 
-        ratio          = rsp / spy
-        current_ratio  = float(ratio.iloc[-1])
-        ma50_ratio     = float(ratio.tail(50).mean())
+        ratio = rsp / spy
+        current_ratio = float(ratio.iloc[-1])
+        ma50_ratio = float(ratio.tail(50).mean())
         breadth_failing = current_ratio < ma50_ratio
 
-        spy_ma50       = float(spy.rolling(50).mean().iloc[-1])
-        spy_ma200      = float(spy.rolling(200).mean().iloc[-1])
-        spy_last       = float(spy.iloc[-1])
+        spy_ma50 = float(spy.rolling(50).mean().iloc[-1])
+        spy_ma200 = float(spy.rolling(200).mean().iloc[-1])
+        spy_last = float(spy.iloc[-1])
         spy_in_uptrend = spy_last > spy_ma50 and spy_last > spy_ma200
 
         spy_slope, spy_r2 = _trend_stats(spy, 10, 10)
@@ -362,9 +373,9 @@ def get_mean_reversion():
         if c.empty:
             raise ValueError("QQQ data empty")
 
-        rsi2  = float(compute_RSI(c, 2).iloc[-1])
+        rsi2 = float(compute_RSI(c, 2).iloc[-1])
         price = float(c.iloc[-1])
-        s200  = float(c.rolling(200, min_periods=1).mean().iloc[-1])
+        s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
 
         if rsi2 >= 70:
             signal = "EXIT"
@@ -418,7 +429,7 @@ def get_country_rotation():
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
-                             "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change})
         return results
     except Exception as e:
         print(f"Country Rotation Error: {e}")
@@ -436,7 +447,7 @@ def get_commodity_rotation():
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
-                             "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change})
         return results
     except Exception as e:
         print(f"Commodity Rotation Error: {e}")
@@ -453,12 +464,15 @@ def get_currency_rotation():
         for s, n in CURRENCIES.items():
             c = data[s].dropna().tail(60)
             if s not in invert_set:
-                c = 1 / c
+                # Shield from infinity / division by zero anomalies
+                c = (1 / c).replace([np.inf, -np.inf], np.nan).dropna()
+            if len(c) < 5:
+                continue
             slope, r2 = _trend_stats(c, 60, 60)
             gradient = _compute_gradient(c.tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(c)
             results.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2,
-                             "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change})
         return results
     except Exception as e:
         print(f"Currency Rotation Error: {e}")
@@ -472,10 +486,6 @@ _portfolio_summary = {}
 
 
 def get_portfolio_summary():
-    """
-    Returns latest portfolio summary from get_trends().
-    Call after get_trends() — no signature change needed.
-    """
     return _portfolio_summary
 
 
@@ -498,40 +508,19 @@ def _compute_risk_contribution(weights, cov_matrix):
 
 
 def _conviction_score(item):
-    """
-    slope * R² * ml_conf — single conviction metric.
-    Floored at 0 to avoid negative values.
-    """
     return max(item["slope"] * item["r2"] * item["ml_conf"] / 100, 0.0)
 
 
 def _kelly_covariance_optimizer(
-    trends,
-    shared_data,
-    portfolio_value=500000,
-    max_single=0.15,
-    max_risk_contribution=1,
-    max_portfolio_vol=0.15,
-    regime_scalar=1.0,
-    conviction_threshold=0.5,
+        trends,
+        shared_data,
+        portfolio_value=500000,
+        max_single=0.15,
+        max_risk_contribution=0.35,
+        max_portfolio_vol=0.15,
+        regime_scalar=1.0,
+        conviction_threshold=0.5,
 ):
-    """
-    Conviction-weighted covariance optimizer.
-
-    BUY, STRONG BUY, BUY (BREAKOUT), and HOLD positions compete for
-    allocation based on slope * R² * ml_conf conviction score.
-
-    Objective: maximize conviction-weighted allocation directly.
-    Vol and risk contribution enforced as constraints only — NOT
-    baked into the objective ratio which caused degenerate zero solutions.
-
-    Constraints:
-      - Total weight <= 1.0
-      - Portfolio annualised vol <= max_portfolio_vol
-      - Per-position risk contribution <= max_risk_contribution
-      - Long only
-      - Per-position upper bound: Kelly cap or conviction-gated max_single
-    """
     empty_summary = {
         "total_allocated": 0.0, "portfolio_vol": 0.0, "n_positions": 0,
         "max_risk_contributor": "N/A", "optimization_success": False,
@@ -546,17 +535,17 @@ def _kelly_covariance_optimizer(
     if not active_signals:
         return trends, empty_summary
 
-    tickers  = [t["sym"] for t in active_signals]
+    tickers = [t["sym"] for t in active_signals]
     available = [t for t in tickers if t in shared_data['Close'].columns]
 
     if not available:
         return trends, empty_summary
 
-    # Single position path
+    # Single asset bypass path
     if len(available) < 2:
-        sym  = available[0]
+        sym = available[0]
         item = next(t for t in trends if t["sym"] == sym)
-        w    = min(max(item["dollar_amount"] / portfolio_value, 0.02) * regime_scalar, max_single)
+        w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * regime_scalar, max_single)
         dollar_amount = round(w * portfolio_value, 2)
         updated_trends = []
         for t in trends:
@@ -575,20 +564,14 @@ def _kelly_covariance_optimizer(
 
     cov_matrix, corr_matrix = _compute_covariance_matrix(shared_data, available)
 
-    # Kelly weights regime-scaled
     kelly_weights = np.array([
         next(t["dollar_amount"] for t in active_signals if t["sym"] == sym)
         / portfolio_value * regime_scalar
         for sym in available
     ])
 
-    # x0: seed at full Kelly weight; 5% for zero-Kelly HOLDs
     x0 = np.array([w if w > 0 else 0.05 for w in kelly_weights])
 
-    # Upper bounds:
-    # - BUY positions (kelly > 0): Kelly cap, hard max_single
-    # - HOLDs with zero Kelly + conviction above threshold: max_single
-    # - HOLDs with zero Kelly + low conviction: capped at 5%
     def upper_bound(sym, kelly_w):
         if kelly_w > 0:
             return min(kelly_w, max_single)
@@ -598,30 +581,25 @@ def _kelly_covariance_optimizer(
 
     bounds = [(0, upper_bound(sym, kelly_weights[i])) for i, sym in enumerate(available)]
 
-    # Conviction array — normalised to sum to 1
     conviction_raw = np.array([
         _conviction_score(next(t for t in active_signals if t["sym"] == sym))
         for sym in available
     ])
-    conviction = conviction_raw / (conviction_raw.sum() + 1e-9)
 
+    # Catch zero-conviction system edge case
+    conviction_sum = conviction_raw.sum()
+    if conviction_sum == 0:
+        return trends, empty_summary
+
+    conviction = conviction_raw / conviction_sum
     n = len(available)
 
     def neg_objective(weights):
-        """
-        Maximize conviction-weighted allocation directly.
-        Vol and risk contribution enforced via constraints only.
-        Avoids the degenerate zero solution caused by ratio objectives
-        where port_vol → 0 makes the ratio explode at zero weights.
-        """
         return -float(weights @ conviction)
 
     constraints = [
-        # Total allocation <= 1
         {"type": "ineq", "fun": lambda w: 1.0 - w.sum()},
-        # Portfolio vol <= max_portfolio_vol
-        {"type": "ineq", "fun": lambda w: max_portfolio_vol**2 - _compute_portfolio_var(w, cov_matrix)},
-        # Max risk contribution per position
+        {"type": "ineq", "fun": lambda w: max_portfolio_vol ** 2 - _compute_portfolio_var(w, cov_matrix)},
         *[
             {"type": "ineq",
              "fun": lambda w, i=i: max_risk_contribution - _compute_risk_contribution(w, cov_matrix)[i]}
@@ -636,12 +614,12 @@ def _kelly_covariance_optimizer(
 
     optimized_weights = result.x if result.success else kelly_weights
 
-    port_vol      = np.sqrt(_compute_portfolio_var(optimized_weights, cov_matrix))
+    port_vol = np.sqrt(_compute_portfolio_var(optimized_weights, cov_matrix))
     risk_contribs = _compute_risk_contribution(optimized_weights, cov_matrix)
 
     ticker_to_weight = dict(zip(available, optimized_weights))
-    ticker_to_risk   = dict(zip(available, risk_contribs))
-    ticker_to_corr   = {t: corr_matrix[t].to_dict() for t in available}
+    ticker_to_risk = dict(zip(available, risk_contribs))
+    ticker_to_corr = {t: corr_matrix[t].to_dict() for t in available}
 
     updated_trends = []
     for item in trends:
@@ -649,13 +627,13 @@ def _kelly_covariance_optimizer(
             w = ticker_to_weight[item["sym"]]
             dollar_amount = round(w * portfolio_value, 2)
             top_corr = dict(list({
-                k: round(v, 2)
-                for k, v in sorted(
+                                     k: round(v, 2)
+                                     for k, v in sorted(
                     ticker_to_corr[item["sym"]].items(),
                     key=lambda x: abs(x[1]), reverse=True
                 )
-                if k != item["sym"]
-            }.items())[:3])
+                                     if k != item["sym"]
+                                 }.items())[:3])
             item = {
                 **item,
                 "pos_size": f"${dollar_amount:,.0f}",
@@ -686,11 +664,6 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
                         projection_days=63, atr_stop_multiplier=2.5,
                         kelly_fraction=0.25, max_allocation=0.15,
                         delta_slope=0.0):
-    """
-    Kelly sizing via slope projection for target, ATR for stop.
-    Filters: slope <= 0, ml_conf <= 50, r2 < 0.15, rr_ratio < 1.0
-    delta_slope adjusts kelly_fraction ±25%.
-    """
     zero = {
         'dollar_amount': 0.0, 'shares': 0,
         'stop': round(price - (atr * atr_stop_multiplier), 2),
@@ -698,11 +671,7 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
         'risk_dollar': 0.0, 'exp_return': 0.0
     }
 
-    if slope <= 0:
-        return zero
-    if ml_conf <= 50:
-        return zero
-    if r2 < 0.15:
+    if slope <= 0 or ml_conf <= 50 or r2 < 0.15:
         return zero
 
     if delta_slope > 0:
@@ -710,17 +679,17 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
     elif delta_slope < 0:
         kelly_fraction = kelly_fraction * 0.75
 
-    stop_price     = price - (atr * atr_stop_multiplier)
+    stop_price = price - (atr * atr_stop_multiplier)
     risk_per_share = price - stop_price
 
     if stop_price >= price or risk_per_share <= 0:
         return {**zero, 'stop': round(stop_price, 2)}
 
     daily_return_pct = slope / price if price > 0 else 0
-    projected_price  = price * ((1 + daily_return_pct) ** projection_days)
-    target_price     = price + (projected_price - price) * r2
+    projected_price = price * ((1 + daily_return_pct) ** projection_days)
+    target_price = price + (projected_price - price) * r2
     reward_per_share = target_price - price
-    rr_ratio         = reward_per_share / risk_per_share if risk_per_share > 0 else 0
+    rr_ratio = reward_per_share / risk_per_share if risk_per_share > 0 else 0
 
     if rr_ratio < 1.0:
         return {**zero, 'stop': round(stop_price, 2),
@@ -729,16 +698,16 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
     p = ml_conf / 100.0
     q = 1.0 - p
     b = rr_ratio
-    kelly            = (b * p - q) / b
+    kelly = (b * p - q) / b
     fractional_kelly = kelly * kelly_fraction
     final_allocation = max(0, min(fractional_kelly, max_allocation))
 
-    position_value      = portfolio_value * final_allocation
-    shares              = int(position_value / price)
-    actual_investment   = shares * price
-    risk_per_position   = shares * risk_per_share
+    position_value = portfolio_value * final_allocation
+    shares = int(position_value / price)
+    actual_investment = shares * price
+    risk_per_position = shares * risk_per_share
     reward_per_position = shares * reward_per_share
-    expected_return     = reward_per_position * p - risk_per_position * q
+    expected_return = reward_per_position * p - risk_per_position * q
 
     return {
         'dollar_amount': round(actual_investment, 2),
@@ -756,16 +725,12 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
 # =========================
 @ttl_cache(30)
 def get_trends():
-    """
-    Returns list of trend dicts — signature unchanged.
-    Portfolio summary accessible via get_portfolio_summary().
-    """
     global _portfolio_summary
     from macro.ml_engine import get_ml_confidence
 
     shared_data = _get_shared_market_data()
-    results     = []
-    symbols     = list(TREND_ASSETS.keys())
+    results = []
+    symbols = list(TREND_ASSETS.keys())
 
     for sym, name in TREND_ASSETS.items():
         try:
@@ -777,62 +742,59 @@ def get_trends():
             if df.empty:
                 continue
 
-            c      = df["Close"].squeeze()
-            ma_50  = c.rolling(50, min_periods=1).mean()
+            c = df["Close"].squeeze()
+            ma_50 = c.rolling(50, min_periods=1).mean()
             ma_200 = c.rolling(200, min_periods=1).mean()
 
             slope, r2 = _trend_stats(c, 10, 10)
-            ml_conf   = get_ml_confidence(df)
-            atr       = float(compute_ATR(df, 14).iloc[-1])
-            last      = float(c.iloc[-1])
-            s50       = float(ma_50.iloc[-1])
-            s200      = float(ma_200.iloc[-1])
+            ml_conf = get_ml_confidence(df)
+            atr = float(compute_ATR(df, 14).iloc[-1])
+            last = float(c.iloc[-1])
+            s50 = float(ma_50.iloc[-1])
+            s200 = float(ma_200.iloc[-1])
 
-            # Slope Z-score (60-day window)
-            c_len     = len(c)
+            # Vectorized Z-Score calculation to resolve slicing and tail overhead
+            c_len = len(c)
             start_idx = max(0, c_len - 60)
-            hist_slopes = np.empty(c_len - start_idx - 10)
-            for idx, i in enumerate(range(start_idx + 10, c_len)):
-                hist_slopes[idx] = _trend_stats(c.iloc[i - 10:i], 10, 10)[0]
-            slope_mean = np.mean(hist_slopes)
-            slope_std  = np.std(hist_slopes)
-            slope_z    = (slope - slope_mean) / slope_std if slope_std > 0 else 0
+
+            hist_slopes = []
+            for i in range(start_idx + 10, c_len + 1):
+                window_slice = c.iloc[i - 10:i]
+                if len(window_slice) >= 5:
+                    s_val, _ = _trend_stats(window_slice, 10, 10)
+                    hist_slopes.append(s_val)
+
+            if hist_slopes:
+                slope_mean = np.mean(hist_slopes)
+                slope_std = np.std(hist_slopes)
+                slope_z = (slope - slope_mean) / slope_std if slope_std > 0 else 0
+            else:
+                slope_z = 0
 
             delta_slope = _compute_delta_slope(c, window=20)
-            position    = _compute_kelly_size(last, slope, atr, ml_conf, r2,
-                                              delta_slope=delta_slope)
-            pos_size    = position['dollar_amount']
+            position = _compute_kelly_size(last, slope, atr, ml_conf, r2,
+                                           delta_slope=delta_slope)
+            pos_size = position['dollar_amount']
 
-            # -------------------------------------------------------
-            # Decision logic — breakout before trim checks
-            # -------------------------------------------------------
+            # Decision Logic Execution
             if last < position['stop']:
                 status = "SELL (STOP)"
-
             elif last < s50 and slope < 0:
                 status = "SELL (MA50)"
-
             elif last < s50 and slope >= 0:
                 status = "HOLD"
-
             elif slope_z > 2.0 and ml_conf > 60 and r2 > 0.7:
                 status = "BUY (BREAKOUT)"
-
             elif slope_z > 2.0 and r2 > 0.8:
                 status = "TRIM (EXTENDED)"
-
             elif slope_z > 1.5 and ml_conf < 50:
                 status = "TRIM (FADING MOMENTUM)"
-
             elif ml_conf < 45 and last > s50:
                 status = "TRIM (ML FADE)"
-
             elif slope < -2:
                 status = "TRIM (NEGATIVE SLOPE)"
-
             elif pos_size == 0:
                 status = "TRIM (POSITION SIZE)"
-
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 if slope_z < -1.0:
                     status = "STRONG BUY"
@@ -840,7 +802,6 @@ def get_trends():
                     status = "BUY"
                 else:
                     status = "HOLD"
-
             else:
                 status = "HOLD"
 
@@ -874,7 +835,7 @@ def get_trends():
             continue
 
     sorted_results = sorted(results, key=lambda x: x["slope"] * x["r2"] * x["ml_conf"] / 100, reverse=True)
-    
+
     regime = get_risk_regime()
     scalar = get_regime_scalar(regime)
 
@@ -882,7 +843,7 @@ def get_trends():
         sorted_results, shared_data,
         portfolio_value=500000,
         max_single=0.15,
-        max_risk_contribution=1,
+        max_risk_contribution=0.35,
         max_portfolio_vol=0.15,
         regime_scalar=scalar,
         conviction_threshold=0.5,
