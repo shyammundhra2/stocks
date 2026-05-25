@@ -1,3 +1,41 @@
+{% if portfolio_summary %}
+<div class="card mb-4">
+    <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-4">Portfolio Summary</h2>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Deployed</p>
+            <p class="text-lg font-black text-white">{{ portfolio_summary.total_allocated }}%</p>
+        </div>
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Portfolio Vol</p>
+            <p class="text-lg font-black {{ 'text-red-400' if portfolio_summary.portfolio_vol > 15 else 'text-green-400' }}">
+                {{ portfolio_summary.portfolio_vol }}%
+            </p>
+        </div>
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Positions</p>
+            <p class="text-lg font-black text-white">{{ portfolio_summary.n_positions }}</p>
+        </div>
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Regime Scalar</p>
+            <p class="text-lg font-black {{ 'text-green-400' if portfolio_summary.regime_scalar >= 0.85 else 'text-yellow-400' if portfolio_summary.regime_scalar >= 0.5 else 'text-red-400' }}">
+                {{ (portfolio_summary.regime_scalar * 100) | int }}%
+            </p>
+        </div>
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Top Risk</p>
+            <p class="text-lg font-black text-orange-400">{{ portfolio_summary.max_risk_contributor }}</p>
+        </div>
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Optimizer</p>
+            <p class="text-lg font-black {{ 'text-green-400' if portfolio_summary.optimization_success else 'text-red-400' }}">
+                {{ 'OK' if portfolio_summary.optimization_success else 'FALLBACK' }}
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card">
     <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (Regression + ML + Kelly)</h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -13,6 +51,7 @@
                     <div class="text-right">
                         <p class="text-xl font-black
                             {{ 'status-purple' if item.status=='STRONG BUY'
+                               else 'text-cyan-400' if item.status=='BUY (BREAKOUT)'
                                else 'status-green' if item.status=='BUY'
                                else 'text-orange-400' if 'TRIM' in item.status
                                else 'text-red-500' if 'SELL' in item.status or 'LIQUIDATE' in item.status
@@ -29,7 +68,7 @@
                         <span class="label-small font-mono">{{ item.ml_conf }}%</span>
                     </div>
                     <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
-                        <div class="bg-blue-500 h-full" style="width: {{ item.ml_conf }}%"></div>
+                        <div class="h-full {{ 'bg-red-500' if item.ml_conf < 45 else 'bg-yellow-400' if item.ml_conf < 55 else 'bg-blue-500' }}" style="width: {{ item.ml_conf }}%"></div>
                     </div>
                 </div>
 
@@ -40,7 +79,31 @@
                     {% if item.slope_z %}
                     <p class="label-small font-mono text-purple-400">Z: {{ item.slope_z }}</p>
                     {% endif %}
+                    {% if item.delta_slope %}
+                    <p class="label-small font-mono {{ 'text-green-400' if item.delta_slope > 0 else 'text-red-400' }}">
+                        Δ: {{ item.delta_slope }}
+                    </p>
+                    {% endif %}
                 </div>
+
+                {% if item.weight_pct or item.risk_contribution %}
+                <div class="flex gap-4 mt-2 border-t border-slate-700 pt-2">
+                    {% if item.weight_pct %}
+                    <p class="label-small font-mono text-slate-400">Wt: {{ item.weight_pct }}%</p>
+                    {% endif %}
+                    {% if item.risk_contribution %}
+                    <p class="label-small font-mono {{ 'text-red-400' if item.risk_contribution > 15 else 'text-slate-400' }}">
+                        Risk: {{ item.risk_contribution }}%
+                    </p>
+                    {% endif %}
+                    {% if item.top_correlations %}
+                    <p class="label-small font-mono text-slate-500">
+                        Corr: {% for k, v in item.top_correlations.items() %}{{ k }}({{ v }}) {% endfor %}
+                    </p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
             </div>
         </div>
         {% endfor %}
