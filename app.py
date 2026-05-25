@@ -16,12 +16,16 @@ def index():
         get_commodity_rotation,
         get_currency_rotation,
         get_trends,
+        get_portfolio_summary,
         get_ml_sector_prediction,
         get_ml_country_prediction,
         get_ml_commodity_prediction
     )
 
-    # Collect all data
+    # get_trends() must be called before get_portfolio_summary()
+    # so the optimizer runs and populates the module-level cache
+    trends = get_trends()
+
     all_data = {
         "regime": get_risk_regime(),
         "vix_mr": get_vix_signal(),
@@ -30,13 +34,13 @@ def index():
         "countries": get_country_rotation(),
         "commodities": get_commodity_rotation(),
         "currencies": get_currency_rotation(),
-        "trends": get_trends(),
+        "trends": trends,
+        "portfolio_summary": get_portfolio_summary(),
         "ml_sector": get_ml_sector_prediction(),
         "ml_country": get_ml_country_prediction(),
         "ml_commodity": get_ml_commodity_prediction()
     }
 
-    # Custom JSON encoder to handle non-serializable types
     def convert_to_serializable(obj):
         """Recursively convert non-JSON-serializable objects"""
         if isinstance(obj, dict):
@@ -46,10 +50,8 @@ def index():
         elif isinstance(obj, (bool, int, float, str)) or obj is None:
             return obj
         else:
-            # Convert other types to string
             return str(obj)
 
-    # Convert data to JSON-serializable format
     serializable_data = convert_to_serializable(all_data)
 
     return render_template(
@@ -62,10 +64,11 @@ def index():
         commodities=all_data["commodities"],
         currencies=all_data["currencies"],
         trends=all_data["trends"],
+        portfolio_summary=all_data["portfolio_summary"],
         ml_sector=all_data["ml_sector"],
         ml_country=all_data["ml_country"],
         ml_commodity=all_data["ml_commodity"],
-        all_data_json=json.dumps(serializable_data)  # Pass serialized data to template
+        all_data_json=json.dumps(serializable_data)
     )
 
 
