@@ -873,8 +873,8 @@ def get_trends():
             print(f"Error in trend loop for {sym}: {e}")
             continue
 
-    sorted_results = sorted(results, key=lambda x: x["slope"], reverse=True)
-
+    sorted_results = sorted(results, key=lambda x: x["slope"] * x["r2"] * x["ml_conf"] / 100, reverse=True)
+    
     regime = get_risk_regime()
     scalar = get_regime_scalar(regime)
 
