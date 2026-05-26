@@ -781,8 +781,6 @@ def get_trends():
                 status = "SELL (STOP)"
             elif last < s50 and slope < 0:
                 status = "SELL (MA50)"
-            elif last < s50 and slope >= 0:
-                status = "HOLD"
             elif slope_z > 2.0 and ml_conf > 60 and r2 > 0.7:
                 status = "BUY (BREAKOUT)"
             elif slope_z > 2.0 and r2 > 0.8:
@@ -797,7 +795,7 @@ def get_trends():
                 status = "TRIM (POSITION SIZE)"
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 if slope_z < -1.0:
-                    status = "STRONG BUY"
+                    status = "BUY (SCALE IN)"
                 elif ml_conf > 50:
                     status = "BUY"
                 else:
