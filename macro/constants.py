@@ -17,7 +17,8 @@ SECTORS = {
 # --- Country Mapping ---
 COUNTRIES = {
     "SPY":"USA","EFA":"Dev ex-US","EEM":"Emerging","EWJ":"Japan",
-    "EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany"
+    "EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany", "EWY":  "South Korea"
+
 }
 
 # --- Updated Commodity Mapping ---
@@ -27,10 +28,9 @@ COMMODITIES = {
     "BZ=F": "Brent Oil", "NG=F": "Natural Gas", "ZS=F": "Soybeans", "ZC=F": "Corn",
     "ZW=F": "Wheat", "KC=F": "Coffee", "SB=F": "Sugar", "CT=F": "Cotton", "LE=F": "Live Cattle",
     "HE=F": "Lean Hogs", "LBR=F": "Lumber",
-
-    # New Industrial Additions
     "TIO=F": "Iron Ore (62% FE CFR)",
     "HRC=F": "U.S. Midwest Domestic Hot-Rolled Steel"
+    #"U-UN.TO": "Uranium"
 }
 # --- Currency Mapping ---
 CURRENCIES = {
@@ -39,8 +39,48 @@ CURRENCIES = {
 
 # --- Trend Assets ---
 TREND_ASSETS = {
-    "VGT":"Tech","VDE":"Energy","VIS":"Industrials","XME":"Metals",
-    "GLD":"Gold","IBIT":"Bitcoin","TLT":"30yr Bond", "RKT": "Rocket"
+    # US Equity Sectors
+    "XLK": "Tech",
+    "XLE": "Energy",
+    "XLI": "Industrials",
+    "XLB": "Materials",
+    "XLV": "Healthcare",
+    "XLF": "Financials",
+    "XLY": "Discretionary",
+    "XLP": "Staples",
+    "XLU" : "Utilities",
+    "XLRE" : "Real Estate",
+
+    # Subsectors
+    "SOXX": "Semiconductors",
+    "IGV": "Software",
+    "CIBR": "Cyber Security",
+    "ITA": "Defense",
+
+    # Commodities & Real Assets
+    "GLD": "Gold",
+    "SLV": "Silver",
+    "XME": "Metals",
+    "DBC": "Commodities",
+    "MOO": "Agri",
+    "FCG": "FCG Natural Gas Stocks",
+    "COAL": "Coal Stocks",
+    "CCJ": "Cameco",
+    "COPX": "Copper Stocks",
+
+    # International Equities
+    "INDA": "India",
+    "EWY": "Korea",
+    "EWJ": "Japan",
+    "EWZ": "Brazil",
+    "IEV": "Europe",
+
+    # Fixed Income & Crypto
+    "TLT": "30yr Bond",
+    "IBIT": "Bitcoin",
+
+    # Single Stocks
+    "RKT": "Rocket",
 }
 
 # --- ML Macro Tickers ---
