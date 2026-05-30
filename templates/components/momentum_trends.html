@@ -1,7 +1,7 @@
 {% if portfolio_summary %}
 <div class="card mb-4">
     <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-4">Portfolio Summary</h2>
-    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Deployed</p>
             <p class="text-lg font-black text-white">{{ portfolio_summary.total_allocated }}%</p>
@@ -33,6 +33,35 @@
             </p>
         </div>
     </div>
+
+    {# --- Active Positions Strip --- #}
+    {% set active = trends | selectattr('dollar_amount', 'gt', 0) | list %}
+    {% if active %}
+    <div class="border-t border-slate-700 pt-3">
+        <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-2">Active Positions</p>
+        <div class="flex flex-wrap gap-2">
+            {% for item in active | sort(attribute='dollar_amount', reverse=True) %}
+            <div class="flex items-center gap-2 bg-slate-800 rounded px-3 py-2">
+                <div>
+                    <p class="text-[11px] font-black text-white">{{ item.sym }}</p>
+                    <p class="text-[10px] font-mono text-green-400">{{ item.pos_size }}</p>
+                </div>
+                <div class="text-right ml-2">
+                    <p class="text-[10px] font-black
+                        {{ 'text-purple-400' if 'STRONG' in item.status
+                           else 'text-cyan-400' if 'BREAKOUT' in item.status
+                           else 'text-green-400' if 'BUY' in item.status
+                           else 'text-orange-400' if 'TRIM' in item.status or 'SELL' in item.status
+                           else 'text-yellow-400' }}">
+                        {{ item.status }}
+                    </p>
+                    <p class="text-[9px] text-slate-500 font-mono">{{ item.weight_pct }}% wt</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endif %}
 
