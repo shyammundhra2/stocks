@@ -41,7 +41,6 @@ def ttl_cache(ttl_seconds=30):
             return result
 
         return wrapper
-
     return decorator
 
 
@@ -76,23 +75,15 @@ def _get_extended_data():
 
 
 def _get_close(shared_data, ticker):
-    """
-    Production-hardened close series extraction.
-    Handles MultiIndex, flat DataFrames, and single-ticker Series.
-    """
     if shared_data.empty or 'Close' not in shared_data:
         return pd.Series(dtype=float)
-
     close = shared_data['Close']
-
     if isinstance(close, pd.Series):
         return close.dropna()
-
     if not isinstance(close.columns, pd.MultiIndex):
         if ticker in close.columns:
             return close[ticker].dropna()
         return pd.Series(dtype=float)
-
     try:
         if ticker in close.columns.get_level_values(0):
             return close[ticker].dropna()
@@ -259,11 +250,8 @@ def get_ml_sector_prediction():
             for k, v in probs.items()
         ]
         top, bottom = ranked[0], ranked[-1]
-        return {
-            "top": top, "bottom": bottom,
-            "spread": round(top["confidence"] - bottom["confidence"], 1),
-            "all": ranked
-        }
+        return {"top": top, "bottom": bottom,
+                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Sector Error: {e}")
         return {"top": {"name": "N/A", "ticker": "N/A", "confidence": 0}, "all": []}
@@ -280,11 +268,8 @@ def get_ml_country_prediction():
             for k, v in probs.items()
         ]
         top, bottom = ranked[0], ranked[-1]
-        return {
-            "top": top, "bottom": bottom,
-            "spread": round(top["confidence"] - bottom["confidence"], 1),
-            "all": ranked
-        }
+        return {"top": top, "bottom": bottom,
+                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Country Error: {e}")
         return {"top": {"name": "N/A", "confidence": 0}, "all": []}
@@ -307,11 +292,8 @@ def get_ml_commodity_prediction():
             for k, v in probs.items()
         ]
         top, bottom = ranked[0], ranked[-1]
-        return {
-            "top": top, "bottom": bottom,
-            "spread": round(top["confidence"] - bottom["confidence"], 1),
-            "all": ranked
-        }
+        return {"top": top, "bottom": bottom,
+                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Commodity Error: {e}")
         return {"top": {"name": "N/A", "confidence": 0}, "all": []}
@@ -369,7 +351,6 @@ def get_mean_reversion():
     try:
         shared_data = _get_shared_market_data()
         c = _get_close(shared_data, 'QQQ')
-
         if c.empty:
             raise ValueError("QQQ data empty")
 
@@ -464,7 +445,6 @@ def get_currency_rotation():
         for s, n in CURRENCIES.items():
             c = data[s].dropna().tail(60)
             if s not in invert_set:
-                # Shield from infinity / division by zero anomalies
                 c = (1 / c).replace([np.inf, -np.inf], np.nan).dropna()
             if len(c) < 5:
                 continue
@@ -516,8 +496,8 @@ def _kelly_covariance_optimizer(
         shared_data,
         portfolio_value=500000,
         max_single=0.15,
-        max_risk_contribution=0.35,
-        max_portfolio_vol=0.15,
+        max_risk_contribution=0.30,
+        max_portfolio_vol=0.10,
         regime_scalar=1.0,
         conviction_threshold=0.5,
 ):
@@ -570,23 +550,23 @@ def _kelly_covariance_optimizer(
         for sym in available
     ])
 
-    x0 = np.array([w if w > 0 else 0.05 for w in kelly_weights])
-
+    # FIX: instruments with zero Kelly weight get zero upper bound
+    # Prevents optimizer allocating to instruments below Kelly quality threshold
     def upper_bound(sym, kelly_w):
         if kelly_w > 0:
             return min(kelly_w, max_single)
-        item = next(t for t in active_signals if t["sym"] == sym)
-        cs = _conviction_score(item)
-        return max_single if cs > conviction_threshold else 0.05
+        return 0.0  # Kelly returned zero — do not allocate
 
-    bounds = [(0, upper_bound(sym, kelly_weights[i])) for i, sym in enumerate(available)]
+    bounds = [(0.0, upper_bound(sym, kelly_weights[i])) for i, sym in enumerate(available)]
+
+    # FIX: x0 starts at zero for instruments with zero Kelly weight
+    x0 = np.array([w if w > 0 else 0.0 for w in kelly_weights])
 
     conviction_raw = np.array([
         _conviction_score(next(t for t in active_signals if t["sym"] == sym))
         for sym in available
     ])
 
-    # Catch zero-conviction system edge case
     conviction_sum = conviction_raw.sum()
     if conviction_sum == 0:
         return trends, empty_summary
@@ -627,13 +607,13 @@ def _kelly_covariance_optimizer(
             w = ticker_to_weight[item["sym"]]
             dollar_amount = round(w * portfolio_value, 2)
             top_corr = dict(list({
-                                     k: round(v, 2)
-                                     for k, v in sorted(
+                k: round(v, 2)
+                for k, v in sorted(
                     ticker_to_corr[item["sym"]].items(),
                     key=lambda x: abs(x[1]), reverse=True
                 )
-                                     if k != item["sym"]
-                                 }.items())[:3])
+                if k != item["sym"]
+            }.items())[:3])
             item = {
                 **item,
                 "pos_size": f"${dollar_amount:,.0f}",
@@ -659,11 +639,25 @@ def _kelly_covariance_optimizer(
 
 # =========================
 # VI. Kelly Sizing
+# FIX: slope / 1000 corrects dimensionality of daily_return_pct
+# NEW: accepts ml_conf_slow and divergence_discount separately
 # =========================
-def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
-                        projection_days=63, atr_stop_multiplier=2.5,
-                        kelly_fraction=0.25, max_allocation=0.15,
-                        delta_slope=0.0):
+def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
+                        portfolio_value=500000,
+                        projection_days=63,
+                        atr_stop_multiplier=2.5,
+                        kelly_fraction=0.25,
+                        max_allocation=0.15,
+                        delta_slope=0.0,
+                        divergence_discount=0.0):
+    """
+    Kelly position sizing using slow model probability.
+
+    Args:
+        ml_conf_slow:       Slow model confidence (0-100). Used as Kelly win probability.
+        divergence_discount: Fraction to reduce kelly_fraction when fast/slow diverge.
+                             Computed in ml_engine.get_dual_ml_confidence_for_kelly().
+    """
     zero = {
         'dollar_amount': 0.0, 'shares': 0,
         'stop': round(price - (atr * atr_stop_multiplier), 2),
@@ -671,13 +665,18 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
         'risk_dollar': 0.0, 'exp_return': 0.0
     }
 
-    if slope <= 0 or ml_conf <= 50 or r2 < 0.15:
+    # Gate: slow model must clear 50% and slope/r2 must be positive quality
+    if slope <= 0 or ml_conf_slow <= 50 or r2 < 0.15:
         return zero
 
+    # Adjust kelly_fraction for momentum direction
     if delta_slope > 0:
         kelly_fraction = min(kelly_fraction * 1.25, 0.40)
     elif delta_slope < 0:
         kelly_fraction = kelly_fraction * 0.75
+
+    # Apply divergence discount — reduce sizing when fast/slow disagree
+    kelly_fraction = kelly_fraction * (1.0 - divergence_discount)
 
     stop_price = price - (atr * atr_stop_multiplier)
     risk_per_share = price - stop_price
@@ -685,7 +684,11 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
     if stop_price >= price or risk_per_share <= 0:
         return {**zero, 'stop': round(stop_price, 2)}
 
-    daily_return_pct = slope / price if price > 0 else 0
+    # FIX: slope is in units of scale*100 from _trend_stats(window=10, scale=10)
+    # slope = log_slope * 10 * 100 = 1000 * daily_log_return
+    # So daily_return_pct = slope / 1000
+    daily_return_pct = slope / 1000
+
     projected_price = price * ((1 + daily_return_pct) ** projection_days)
     target_price = price + (projected_price - price) * r2
     reward_per_share = target_price - price
@@ -695,7 +698,8 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
         return {**zero, 'stop': round(stop_price, 2),
                 'target': round(target_price, 2), 'rr_ratio': round(rr_ratio, 2)}
 
-    p = ml_conf / 100.0
+    # Kelly formula using slow model probability
+    p = ml_conf_slow / 100.0
     q = 1.0 - p
     b = rr_ratio
     kelly = (b * p - q) / b
@@ -726,7 +730,7 @@ def _compute_kelly_size(price, slope, atr, ml_conf, r2, portfolio_value=500000,
 @ttl_cache(30)
 def get_trends():
     global _portfolio_summary
-    from macro.ml_engine import get_ml_confidence
+    from macro.ml_engine import get_dual_ml_confidence_for_kelly
 
     shared_data = _get_shared_market_data()
     results = []
@@ -747,16 +751,24 @@ def get_trends():
             ma_200 = c.rolling(200, min_periods=1).mean()
 
             slope, r2 = _trend_stats(c, 10, 10)
-            ml_conf = get_ml_confidence(df)
+
+            # Get dual model components
+            dual = get_dual_ml_confidence_for_kelly(df)
+            ml_conf_slow = dual['slow']
+            ml_conf_fast = dual['fast']
+            ml_conf = dual['blended']      # display value
+            divergence = dual['divergence']
+            divergence_discount = dual['divergence_discount']
+            regime = dual['regime']
+
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
             s50 = float(ma_50.iloc[-1])
             s200 = float(ma_200.iloc[-1])
 
-            # Vectorized Z-Score calculation to resolve slicing and tail overhead
+            # Z-Score calculation
             c_len = len(c)
             start_idx = max(0, c_len - 60)
-
             hist_slopes = []
             for i in range(start_idx + 10, c_len + 1):
                 window_slice = c.iloc[i - 10:i]
@@ -772,45 +784,103 @@ def get_trends():
                 slope_z = 0
 
             delta_slope = _compute_delta_slope(c, window=20)
-            position = _compute_kelly_size(last, slope, atr, ml_conf, r2,
-                                           delta_slope=delta_slope)
+
+            # Kelly sizing uses slow model and divergence discount
+            position = _compute_kelly_size(
+                last, slope, atr, ml_conf_slow, r2,
+                delta_slope=delta_slope,
+                divergence_discount=divergence_discount
+            )
             pos_size = position['dollar_amount']
 
-            # Decision Logic Execution
+            # =============================================
+            # Decision Logic
+            # Priority order matters — earlier conditions win
+            # =============================================
+
             if last < position['stop']:
                 status = "SELL (STOP)"
+
             elif last < s50 and slope < 0:
+                # Price below MA50 AND slope negative → confirmed downtrend
                 status = "SELL (MA50)"
-            elif slope_z > 2.0 and ml_conf > 60 and r2 > 0.7:
+
+            elif last < s50 and slope >= 0:
+                # FIX: Price below MA50 but slope still positive
+                # Could be temporary pullback — hold not sell
+                # Check regime for additional context
+                if "Dead Cat Bounce" in regime:
+                    status = "HOLD (DEAD CAT)"
+                else:
+                    status = "HOLD"
+
+            elif slope_z > 2.0 and ml_conf_slow > 60 and r2 > 0.7:
+                # Momentum breakout — all three confirm
                 status = "BUY (BREAKOUT)"
+
             elif slope_z > 2.0 and r2 > 0.8:
+                # Slope very extended but ML not confirming → trim
                 status = "TRIM (EXTENDED)"
-            elif slope_z > 1.5 and ml_conf < 50:
-                status = "TRIM (FADING MOMENTUM)"
-            elif ml_conf < 45 and last > s50:
+
+            elif slope_z > 1.5 and ml_conf_slow < 45:
+                # Momentum elevated but slow model losing conviction
+                # Dead cat bounce pattern — price running but fundamentals fading
+                if "Dead Cat" in regime or ml_conf_fast > ml_conf_slow:
+                    status = "TRIM (DEAD CAT)"
+                else:
+                    status = "TRIM (FADING MOMENTUM)"
+
+            elif ml_conf_slow < 45 and last > s50:
+                # Slow model has lost conviction — above MA50 but deteriorating
                 status = "TRIM (ML FADE)"
+
             elif slope < -2:
+                # Slope significantly negative
                 status = "TRIM (NEGATIVE SLOPE)"
+
             elif pos_size == 0:
-                status = "TRIM (POSITION SIZE)"
+                # Kelly returned zero — instrument does not meet quality threshold
+                # Check if it is a pullback within an uptrend
+                if (last > s200) and (last > s50) and (slope > 0):
+                    status = "TRIM (POSITION SIZE)"
+                else:
+                    status = "TRIM (POSITION SIZE)"
+
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
+                # Strong uptrend — determine entry quality
                 if slope_z < -1.0:
-                    status = "BUY (SCALE IN)"
-                elif ml_conf > 50:
+                    # Slope below its own mean — momentum pullback within uptrend
+                    # Good entry point (buying the dip)
+                    status = "BUY (PULLBACK)"
+                elif "Structural Bull — Fading Momentum" in regime and slope_z < 0:
+                    # Slow model bullish but fast fading AND slope below average
+                    # Treat as pullback entry
+                    status = "BUY (PULLBACK)"
+                elif "Recovering — Monitor" in regime:
+                    # Fast model recovering, slow still lagging
+                    # Watch but hold
+                    status = "HOLD (RECOVERING)"
+                elif ml_conf_slow > 50:
                     status = "BUY"
                 else:
                     status = "HOLD"
+
             else:
                 status = "HOLD"
 
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
             results.append({
-                "sym": sym, "name": name,
+                "sym": sym,
+                "name": name,
                 "price": round(last, 2),
                 "status": status,
                 "r2": round(r2, 2),
-                "ml_conf": ml_conf,
+                "ml_conf": ml_conf_slow,           # blended — for display
+                "ml_conf_slow": ml_conf_slow,  # slow — for Kelly
+                "ml_conf_fast": ml_conf_fast,  # fast — for pattern
+                "divergence": divergence,
+                "regime": regime,
                 "rsi14": round(rsi14, 1),
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 2),
@@ -832,7 +902,12 @@ def get_trends():
             print(f"Error in trend loop for {sym}: {e}")
             continue
 
-    sorted_results = sorted(results, key=lambda x: x["slope"] * x["r2"] * x["ml_conf"] / 100, reverse=True)
+    # Sort by composite score: slope * r2 * ml_conf_slow (slow model)
+    sorted_results = sorted(
+        results,
+        key=lambda x: x["slope"] * x["r2"] * x.get("ml_conf_slow", x["ml_conf"]) / 100,
+        reverse=True
+    )
 
     regime = get_risk_regime()
     scalar = get_regime_scalar(regime)
@@ -841,8 +916,8 @@ def get_trends():
         sorted_results, shared_data,
         portfolio_value=500000,
         max_single=0.15,
-        max_risk_contribution=0.35,
-        max_portfolio_vol=0.15,
+        max_risk_contribution=0.30,
+        max_portfolio_vol=0.10,
         regime_scalar=scalar,
         conviction_threshold=0.5,
     )
