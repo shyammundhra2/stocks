@@ -766,6 +766,8 @@ def get_trends():
             s50 = float(ma_50.iloc[-1])
             s200 = float(ma_200.iloc[-1])
 
+            rsi14 = float(compute_RSI(c, 14).iloc[-1])
+
             # Z-Score calculation
             c_len = len(c)
             start_idx = max(0, c_len - 60)
@@ -797,7 +799,7 @@ def get_trends():
             # Decision Logic
             # Priority order matters — earlier conditions win
             # =============================================
-
+            # sell
             if last < position['stop']:
                 status = "SELL (STOP)"
 
@@ -805,30 +807,18 @@ def get_trends():
                 # Price below MA50 AND slope negative → confirmed downtrend
                 status = "SELL (MA50)"
 
-            elif last < s50 and slope >= 0:
-                # FIX: Price below MA50 but slope still positive
-                # Could be temporary pullback — hold not sell
-                # Check regime for additional context
-                if "Dead Cat Bounce" in regime:
-                    status = "HOLD (DEAD CAT)"
-                else:
-                    status = "HOLD"
 
-            elif slope_z > 2.0 and ml_conf_slow > 60 and r2 > 0.7:
+            elif slope_z > 2.0 and ml_conf_slow > 55 and r2 > 0.7 and rsi14 < 75 and slope > 0:
                 # Momentum breakout — all three confirm
                 status = "BUY (BREAKOUT)"
 
-            elif slope_z > 2.0 and r2 > 0.8:
+            elif slope_z > 2.0 and r2 > 0.8 and rsi14 > 75:
                 # Slope very extended but ML not confirming → trim
                 status = "TRIM (EXTENDED)"
 
             elif slope_z > 1.5 and ml_conf_slow < 45:
                 # Momentum elevated but slow model losing conviction
-                # Dead cat bounce pattern — price running but fundamentals fading
-                if "Dead Cat" in regime or ml_conf_fast > ml_conf_slow:
-                    status = "TRIM (DEAD CAT)"
-                else:
-                    status = "TRIM (FADING MOMENTUM)"
+                status = "TRIM (FADING MOMENTUM)"
 
             elif ml_conf_slow < 45 and last > s50:
                 # Slow model has lost conviction — above MA50 but deteriorating
@@ -839,36 +829,24 @@ def get_trends():
                 status = "TRIM (NEGATIVE SLOPE)"
 
             elif pos_size == 0:
-                # Kelly returned zero — instrument does not meet quality threshold
-                # Check if it is a pullback within an uptrend
-                if (last > s200) and (last > s50) and (slope > 0):
-                    status = "TRIM (POSITION SIZE)"
-                else:
-                    status = "TRIM (POSITION SIZE)"
-
+                status = "TRIM (POSITION SIZE)"
+            # buy/hold zone
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 # Strong uptrend — determine entry quality
-                if slope_z < -1.0:
+                if ml_conf_slow > 60 and ml_conf_fast < 45:
                     # Slope below its own mean — momentum pullback within uptrend
                     # Good entry point (buying the dip)
                     status = "BUY (PULLBACK)"
-                elif "Structural Bull — Fading Momentum" in regime and slope_z < 0:
-                    # Slow model bullish but fast fading AND slope below average
-                    # Treat as pullback entry
-                    status = "BUY (PULLBACK)"
-                elif "Recovering — Monitor" in regime:
-                    # Fast model recovering, slow still lagging
-                    # Watch but hold
-                    status = "HOLD (RECOVERING)"
                 elif ml_conf_slow > 50:
                     status = "BUY"
+                elif ml_conf_slow < 50 and ml_conf_fast > 60:
+                    status = "HOLD (Recovering)"
                 else:
                     status = "HOLD"
 
             else:
                 status = "HOLD"
 
-            rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
             results.append({
                 "sym": sym,
