@@ -23,8 +23,7 @@ Calculates the 20-day relative momentum of all 11 S&P 500 sectors (XLF, XLK, XLE
 
 ### 4. Cross-Asset Trend Following
 Monitors a diverse basket of assets (Tech, Energy, Gold, Bitcoin, Treasuries) using a multi-factor trend logic:
-* **Buy Logic:** SMA 50 > SMA 200 + Low Volatility (ATR Filter) + RSI < 70.
-* **Exit Logic:** Price drops below SMA 50 or hits a **10x ATR Trailing Stop** from recent highs.
+*
 
 ## 🔧 Technical Stack
 * **Framework:** Flask (Python)
