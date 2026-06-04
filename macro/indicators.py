@@ -167,11 +167,16 @@ def _compute_delta_slope(series, window=20):
 # I. Risk Regime
 # =========================
 @ttl_cache(30)
+@ttl_cache(30)
 def get_risk_regime():
     try:
         raw, risk_tickers = _get_extended_data()
         data = raw['Close'].ffill()
 
+        # -----------------------------------------------
+        # ML Risk Model — 20-day stride history (5 points)
+        # Produces fast confidence (short-horizon signal)
+        # -----------------------------------------------
         history_points = []
         recent_dates = data.index[::-20][:5][::-1]
 
@@ -187,48 +192,138 @@ def get_risk_regime():
             conf_val = round(probs.get('Class 1', 0) * 100, 1)
             history_points.append(conf_val)
 
-        current_conf = history_points[-1]
-        is_risk_on_ml = current_conf > 60
+        ml_fast_conf = history_points[-1]
 
+        # -----------------------------------------------
+        # SPY Slow ML Prediction
+        # Mirrors trend model dual architecture:
+        # slow model = 60-90 day horizon, structural signal
+        # Uses SPY dataframe through get_dual_ml_confidence_for_kelly
+        # to produce a slow confidence reading on the market index.
+        # -----------------------------------------------
+        try:
+            from macro.ml_engine import get_dual_ml_confidence_for_kelly
+
+            # Build SPY dataframe from extended data
+            spy_df = raw[['Open', 'High', 'Low', 'Close', 'Volume']].xs(
+                'SPY', level=1, axis=1
+            ).dropna() if isinstance(raw.columns, pd.MultiIndex) else raw.dropna()
+
+            spy_dual = get_dual_ml_confidence_for_kelly(spy_df)
+            ml_slow_conf = spy_dual['slow']
+            ml_fast_trend = spy_dual['fast']
+            spy_regime = spy_dual['regime']
+            spy_divergence = spy_dual['divergence']
+
+        except Exception as e:
+            print(f"SPY slow ML error: {e}")
+            ml_slow_conf = ml_fast_conf   # fallback to fast if slow unavailable
+            ml_fast_trend = ml_fast_conf
+            spy_regime = "Unknown"
+            spy_divergence = 0.0
+
+        # -----------------------------------------------
+        # Technical Conditions (6 independent checks)
+        # -----------------------------------------------
         last_vals = data.iloc[-1]
         ma50 = data.rolling(50).mean().iloc[-1]
 
         credit_ratio = data['HYG'] / data['IEF']
-        credit_pass = bool(last_vals['HYG'] / last_vals['IEF'] > credit_ratio.rolling(50).mean().iloc[-1])
+        credit_pass = bool(
+            last_vals['HYG'] / last_vals['IEF']
+            > credit_ratio.rolling(50).mean().iloc[-1]
+        )
 
         curve_spread = last_vals['^TNX'] - last_vals['^IRX']
         curve_pass = bool(curve_spread > 0)
 
         jpy_ret = data['JPY=X'].pct_change()
         jpy_vol = jpy_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
-        carry_pass = bool(last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15)
+        carry_pass = bool(
+            last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15
+        )
 
         spy_ma200 = data['SPY'].rolling(200).mean().iloc[-1]
         spy_trend = bool(last_vals['SPY'] > spy_ma200)
-        vix_low = bool(last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110)
+
+        vix_low = bool(
+            last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110
+        )
 
         rsp_spy_ratio = data['RSP'] / data['SPY']
-        breadth_pass = bool(rsp_spy_ratio.iloc[-1] > rsp_spy_ratio.rolling(50).mean().iloc[-1])
+        breadth_pass = bool(
+            rsp_spy_ratio.iloc[-1]
+            > rsp_spy_ratio.rolling(50).mean().iloc[-1]
+        )
 
         details = [
-            {"label": "Trend (SPY > 200MA)", "pass": spy_trend},
-            {"label": "Fear (VIX/MOVE Low)", "pass": vix_low},
-            {"label": "Breadth (RSP/SPY > 50MA)", "pass": breadth_pass},
-            {"label": "Credit (HYG/IEF Ratio)", "pass": credit_pass},
-            {"label": "Curve (10Y-3M Spread)", "pass": curve_pass},
-            {"label": "Carry (JPY Weak/Stable)", "pass": carry_pass},
+            {"label": "Trend (SPY > 200MA)",      "pass": spy_trend},
+            {"label": "Fear (VIX/MOVE Low)",       "pass": vix_low},
+            {"label": "Breadth (RSP/SPY > 50MA)",  "pass": breadth_pass},
+            {"label": "Credit (HYG/IEF Ratio)",    "pass": credit_pass},
+            {"label": "Curve (10Y-3M Spread)",     "pass": curve_pass},
+            {"label": "Carry (JPY Weak/Stable)",   "pass": carry_pass},
         ]
 
+        # -----------------------------------------------
+        # Composite RISK-ON / RISK-OFF Signal
+        #
+        # Three independent signals weighted:
+        #   50% technical  — 6 observable macro conditions
+        #   30% ML slow    — SPY structural trend (60-90 day)
+        #   20% ML fast    — risk model short-horizon signal
+        #
+        # Rationale:
+        #   Technical conditions are the most reliable —
+        #   hard observable facts, no model inference.
+        #   Slow ML matches holding period, stable signal.
+        #   Fast ML (risk model) adds short-term sensitivity
+        #   but is noisy — given lowest weight.
+        #
+        # Threshold 0.55:
+        #   Requires combined signal above neutral.
+        #   Prevents single-session ML collapse from
+        #   flipping regime when technicals are intact.
+        # -----------------------------------------------
+        passes = sum(1 for d in details if d["pass"])
+        technical_score = passes / 6.0          # 0.0 to 1.0
+
+        ml_slow_score = ml_slow_conf / 100.0    # 0.0 to 1.0
+        ml_fast_score = ml_fast_conf / 100.0    # 0.0 to 1.0
+
+        composite_score = (
+            technical_score * 0.50
+            + ml_slow_score * 0.40
+            + ml_fast_score * 0.10
+        )
+
+        is_risk_on = composite_score > 0.55
+
         return {
-            "status": "RISK-ON" if is_risk_on_ml else "RISK-OFF",
-            "confidence": current_conf,
-            "history": history_points,
-            "details": details
+            "status":         "RISK-ON" if is_risk_on else "RISK-OFF",
+            "confidence":     ml_fast_conf,          # legacy field — risk model fast
+            "ml_slow":        round(ml_slow_conf, 1), # SPY slow model
+            "ml_fast":        round(ml_fast_conf, 1), # risk model fast
+            "composite":      round(composite_score * 100, 1),
+            "spy_regime":     spy_regime,
+            "spy_divergence": round(spy_divergence, 1),
+            "history":        history_points,
+            "details":        details,
         }
+
     except Exception as e:
         print(f"Risk Regime Error: {e}")
-        return {"status": "ERROR", "confidence": 0, "history": [], "details": []}
-
+        return {
+            "status":         "ERROR",
+            "confidence":     0,
+            "ml_slow":        0,
+            "ml_fast":        0,
+            "composite":      0,
+            "spy_regime":     "Error",
+            "spy_divergence": 0,
+            "history":        [],
+            "details":        [],
+        }
 
 def get_regime_scalar(regime):
     passes = sum(1 for d in regime["details"] if d["pass"])
@@ -837,6 +932,8 @@ def get_trends():
                     # Slope below its own mean — momentum pullback within uptrend
                     # Good entry point (buying the dip)
                     status = "BUY (PULLBACK)"
+                elif ml_conf_slow > 55 and ml_conf_fast > 60:
+                    status = "BUY (BULL)"
                 elif ml_conf_slow > 50:
                     status = "BUY"
                 elif ml_conf_slow < 50 and ml_conf_fast > 60:
@@ -895,7 +992,7 @@ def get_trends():
         portfolio_value=500000,
         max_single=0.15,
         max_risk_contribution=0.30,
-        max_portfolio_vol=0.10,
+        max_portfolio_vol=0.12,
         regime_scalar=scalar,
         conviction_threshold=0.5,
     )
