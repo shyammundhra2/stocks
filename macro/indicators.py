@@ -167,7 +167,6 @@ def _compute_delta_slope(series, window=20):
 # I. Risk Regime
 # =========================
 @ttl_cache(30)
-@ttl_cache(30)
 def get_risk_regime():
     try:
         raw, risk_tickers = _get_extended_data()
@@ -301,7 +300,7 @@ def get_risk_regime():
 
         return {
             "status":         "RISK-ON" if is_risk_on else "RISK-OFF",
-            "confidence":     ml_fast_conf,          # legacy field — risk model fast
+            "confidence":     round(composite_score * 100, 1),          # legacy field — risk model fast
             "ml_slow":        round(ml_slow_conf, 1), # SPY slow model
             "ml_fast":        round(ml_fast_conf, 1), # risk model fast
             "composite":      round(composite_score * 100, 1),
@@ -441,7 +440,6 @@ def get_vix_signal():
         return {"vix": 0, "z": 0, "signal": "ERROR"}
 
 
-@ttl_cache(30)
 def get_mean_reversion():
     try:
         shared_data = _get_shared_market_data()
@@ -450,23 +448,32 @@ def get_mean_reversion():
             raise ValueError("QQQ data empty")
 
         rsi2 = float(compute_RSI(c, 2).iloc[-1])
-        price = float(c.iloc[-1])
-        s200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
+        if pd.isna(rsi2):
+            raise ValueError("RSI(2) returned NaN — insufficient data")
 
-        if rsi2 >= 70:
-            signal = "EXIT"
-        elif price < s200:
+        price = float(c.iloc[-1])
+        sma200 = float(c.rolling(200, min_periods=200).mean().iloc[-1])
+        dma10 = float(c.rolling(10, min_periods=10).mean().iloc[-1])
+
+        if pd.isna(sma200):
+            raise ValueError("SMA200 returned NaN — insufficient data (need 200 bars)")
+        if pd.isna(dma10):
+            raise ValueError("DMA5 returned NaN — insufficient data (need 5 bars)")
+
+        if price < sma200:
             signal = "RISK OFF"
         elif rsi2 <= 10:
             signal = "BUY"
+        elif price < dma10 or rsi2 >= 70:
+            signal = "EXIT"
         else:
             signal = "HOLD"
 
         return {"price": round(price, 2), "rsi2": round(rsi2, 1), "signal": signal}
+
     except Exception as e:
         print(f"Mean Reversion Error: {e}")
         return {"price": 0, "rsi2": 0, "signal": "ERROR"}
-
 
 # =========================
 # IV. Rotation
@@ -765,9 +772,9 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
         return zero
 
     # Adjust kelly_fraction for momentum direction
-    if delta_slope > 0:
+    if delta_slope > 3:
         kelly_fraction = min(kelly_fraction * 1.25, 0.40)
-    elif delta_slope < 0:
+    elif delta_slope < 3:
         kelly_fraction = kelly_fraction * 0.75
 
     # Apply divergence discount — reduce sizing when fast/slow disagree
