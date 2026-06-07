@@ -36,4 +36,5 @@ Monitors a diverse basket of assets (Tech, Energy, Gold, Bitcoin, Treasuries) us
 ### 1. Installation
 Clone the repository and install the required dependencies:
 ```bash
-pip install flask yfinance pandas numpy
+brew install libomp  # Mac only
+pip install -r requirements.txt
