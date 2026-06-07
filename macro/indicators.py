@@ -271,6 +271,12 @@ def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
     Returns:
         float: Probability [0, 1] that stop is hit before target.
                Returns 0.5 (neutral) on invalid inputs.
+
+    Numerical notes:
+        Exponent arguments are clipped to [-500, 500] to prevent np.exp
+        overflow (>709) or underflow (<-745) which previously produced
+        boundary values of exactly 0.0 or 1.0 for instruments with large
+        drift/vol ratios (high-slope or high-ATR instruments like SOXX, IBIT).
     """
     try:
         if price <= 0 or stop >= price or target <= price:
@@ -278,42 +284,61 @@ def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
         if atr <= 0:
             return 0.5
 
-        # Daily drift from slope
-        # slope = log_slope * window * 100, so daily log return = slope / 1000
-        daily_drift = slope / 1000.0
+        # Annualised drift from slope.
+        # slope from _trend_stats(window=10, scale=10) is already in annual % terms:
+        #   slope = log_slope * 10 * 100 → divide by 100 to get annual log return
+        annual_drift = slope / 100.0
 
-        # Daily vol from ATR — ATR is in price units, convert to returns
-        # Annualise then de-annualise: daily_vol = (atr/price) / sqrt(252)
-        daily_vol = (atr / price) / np.sqrt(252)
+        # Annualised vol from ATR.
+        # ATR/price = daily range as fraction of price → multiply by sqrt(252) to annualise
+        annual_vol = (atr / price) * np.sqrt(252)
 
-        if daily_vol <= 0:
+        if annual_vol <= 0:
             return 0.5
 
-        # Log distances to barriers
-        # a = log distance to stop (negative — below current price)
+        # Log distances to absorbing barriers
+        # a = log distance to stop   (negative — below current price)
         # b = log distance to target (positive — above current price)
         a = np.log(stop / price)    # < 0
         b = np.log(target / price)  # > 0
 
-        # GBM drift adjustment: mu = daily_drift - 0.5 * daily_vol^2
-        mu = daily_drift - 0.5 * daily_vol ** 2
-
-        # First-passage probability for BM with drift between two barriers
-        # P(hit lower barrier a before upper barrier b)
-        # Formula: (exp(2*mu*b/sigma^2) - 1) / (exp(2*mu*b/sigma^2) - exp(2*mu*a/sigma^2))
-        sigma2 = daily_vol ** 2
+        # GBM parameters — both annualised, consistent units
+        # mu = annual_drift - 0.5 * annual_vol²  (Ito correction)
+        mu = annual_drift - 0.5 * annual_vol ** 2
+        sigma2 = annual_vol ** 2
 
         if abs(mu) < 1e-10:
-            # Zero drift: probability proportional to distance
+            # Zero drift: probability proportional to log distances
             p_stop = abs(a) / (abs(a) + abs(b))
         else:
-            exp_b = np.exp(2 * mu * b / sigma2)
-            exp_a = np.exp(2 * mu * a / sigma2)
+            # First-passage probability for BM with drift, two absorbing barriers.
+            # P(hit lower barrier a before upper barrier b | start=0, drift=mu):
+            #
+            #   P(stop first) = (1 - exp(2μa/σ²)) / (exp(2μb/σ²) - exp(2μa/σ²))
+            #
+            # Note: a < 0, b > 0.
+            # With strong positive drift (mu >> 0):
+            #   exp_arg_a → -∞  → exp_a → 0  → numerator → 1
+            #   exp_arg_b → +∞  → exp_b → large → denominator → large
+            #   p_stop → 0  ✓ (drift pushes away from stop)
+            # With strong negative drift (mu << 0):
+            #   exp_arg_a → +∞  → exp_a → large → numerator → large
+            #   exp_arg_b → -∞  → exp_b → 0
+            #   p_stop → large/large → 1  ✓ (drift pushes toward stop)
+            #
+            # Clip exponent arguments to [-500, 500] to prevent np.exp overflow.
+            exp_arg_b = float(np.clip(2.0 * mu * b / sigma2, -500.0, 500.0))
+            exp_arg_a = float(np.clip(2.0 * mu * a / sigma2, -500.0, 500.0))
+
+            exp_b = np.exp(exp_arg_b)
+            exp_a = np.exp(exp_arg_a)
             denom = exp_b - exp_a
+
             if abs(denom) < 1e-10:
+                # Numerically degenerate — fall back to distance ratio
                 p_stop = abs(a) / (abs(a) + abs(b))
             else:
-                p_stop = (exp_b - 1.0) / denom
+                p_stop = (1.0 - exp_a) / denom
 
         return round(float(np.clip(p_stop, 0.0, 1.0)), 3)
 
@@ -1023,7 +1048,7 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
     # Adjust kelly_fraction for momentum direction
     if delta_slope > 3:
         kelly_fraction = min(kelly_fraction * 1.25, 0.40)
-    elif delta_slope < 3:
+    elif delta_slope < -3:
         kelly_fraction = kelly_fraction * 0.75
 
     # Apply divergence discount — reduce sizing when fast/slow disagree
@@ -1142,15 +1167,27 @@ def get_trends():
 
             delta_slope = _compute_delta_slope(c, window=20)
 
-            # Stop hit probability — probability price reaches stop before target
-            # Computed before Kelly so it can discount position sizing
-            # Uses placeholder stop/target from ATR — refined after Kelly call
-            atr_stop_prelim = last - (atr * 2.5)
-            slope_prelim, _ = _trend_stats(c, 10, 10)
-            daily_return_prelim = slope_prelim / 1000
-            target_prelim = last * ((1 + daily_return_prelim) ** 63)
+            # Stop hit probability — pure geometric assessment of the instrument.
+            # Computed independently of Kelly sizing so it reflects the instrument's
+            # setup regardless of whether the system is allocated or not.
+            #
+            # Always uses:
+            #   stop  = ATR-based stop (2.5× ATR below current price)
+            #   target = 63-day slope projection (GBM drift)
+            #
+            # When slope <= 0 the series has no upward drift — target is floored
+            # at 2% above current price to prevent degenerate 0.5 returns.
+            # This correctly produces high p_stop for downtrending instruments.
+            _atr_stop = last - (atr * 2.5)
+            _daily_return = slope / 1000
+            _projected = last * ((1 + _daily_return) ** 63)
+
+            # Floor: target must be at least 1% above price to avoid degenerate case
+            # where target == price triggers the guard and returns 0.5
+            _target_for_pstop = max(_projected, last * 1.01)
+
             p_stop = _stop_hit_probability(
-                last, atr_stop_prelim, target_prelim, slope, atr
+                last, _atr_stop, _target_for_pstop, slope, atr
             )
 
             # Hurst-adjusted divergence discount
@@ -1168,10 +1205,13 @@ def get_trends():
             p_stop_discount = max(0.0, (p_stop - 0.40) / 0.30 * 0.50) if p_stop > 0.40 else 0.0
 
             # Combined divergence discount: original + hurst + p_stop geometry
+            # Clipped to [-0.20, 0.80]:
+            #   floor -0.20 → max 20% Kelly bonus for ideal trending conditions
+            #   ceiling 0.80 → max 80% Kelly reduction for worst case
             combined_discount = float(np.clip(
                 divergence_discount + hurst_discount + p_stop_discount,
                 -0.20,
-                0.80
+                 0.80
             ))
 
             # Kelly sizing uses slow model and combined discount
@@ -1181,11 +1221,6 @@ def get_trends():
                 divergence_discount=combined_discount
             )
             pos_size = position['dollar_amount']
-
-            # Recompute p_stop with final Kelly stop/target for accurate display
-            p_stop = _stop_hit_probability(
-                last, position['stop'], position['target'], slope, atr
-            )
 
             # =============================================
             # Decision Logic
