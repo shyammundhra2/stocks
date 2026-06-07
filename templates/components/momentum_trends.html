@@ -1,37 +1,59 @@
 {% if portfolio_summary %}
 <div class="card mb-4">
     <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-4">Portfolio Summary</h2>
+
     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Deployed</p>
             <p class="text-lg font-black text-white">{{ portfolio_summary.total_allocated }}%</p>
         </div>
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Portfolio Vol</p>
             <p class="text-lg font-black {{ 'text-red-400' if portfolio_summary.portfolio_vol > 15 else 'text-green-400' }}">
                 {{ portfolio_summary.portfolio_vol }}%
             </p>
         </div>
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Positions</p>
             <p class="text-lg font-black text-white">{{ portfolio_summary.n_positions }}</p>
         </div>
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Regime Scalar</p>
             <p class="text-lg font-black {{ 'text-green-400' if portfolio_summary.regime_scalar >= 0.85 else 'text-yellow-400' if portfolio_summary.regime_scalar >= 0.5 else 'text-red-400' }}">
                 {{ (portfolio_summary.regime_scalar * 100) | int }}%
             </p>
         </div>
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Top Risk</p>
             <p class="text-lg font-black text-orange-400">{{ portfolio_summary.max_risk_contributor }}</p>
         </div>
+
         <div class="bg-slate-800 rounded p-3">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Optimizer</p>
             <p class="text-lg font-black {{ 'text-green-400' if portfolio_summary.optimization_success else 'text-red-400' }}">
                 {{ 'OK' if portfolio_summary.optimization_success else 'FALLBACK' }}
             </p>
         </div>
+
+        {# --- Vol Cap --- shows dynamic ceiling computed from fast model #}
+        {% if portfolio_summary.vol_cap is defined %}
+        <div class="bg-slate-800 rounded p-3">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Vol Cap</p>
+            <p class="text-lg font-black
+                {{ 'text-red-400'    if portfolio_summary.vol_cap < 9
+                   else 'text-yellow-400' if portfolio_summary.vol_cap < 12
+                   else 'text-green-400' }}"
+               title="Dynamic vol ceiling: 8% floor (crash) → 15% ceiling (full risk-on). Driven by fast ML model.">
+                {{ portfolio_summary.vol_cap }}%
+            </p>
+        </div>
+        {% endif %}
+
     </div>
 
     {# --- Active Positions Strip --- #}
@@ -48,10 +70,10 @@
                 </div>
                 <div class="text-right ml-2">
                     <p class="text-[10px] font-black
-                        {{ 'text-purple-400' if 'STRONG' in item.status
-                           else 'text-cyan-400' if 'BREAKOUT' in item.status
-                           else 'text-green-400' if 'BUY' in item.status
-                           else 'text-orange-400' if 'TRIM' in item.status or 'SELL' in item.status
+                        {{ 'text-purple-400' if 'STRONG'    in item.status
+                           else 'text-cyan-400'   if 'BREAKOUT' in item.status
+                           else 'text-green-400'  if 'BUY'      in item.status
+                           else 'text-orange-400' if 'TRIM'     in item.status or 'SELL' in item.status
                            else 'text-yellow-400' }}">
                         {{ item.status }}
                     </p>
@@ -62,15 +84,25 @@
         </div>
     </div>
     {% endif %}
+
 </div>
 {% endif %}
 
+
+{# ============================================================ #}
+{#  MOMENTUM TRENDS                                             #}
+{# ============================================================ #}
 <div class="card">
-    <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">Momentum Trends (Regression + ML + Kelly)</h2>
+    <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">
+        Momentum Trends (Regression + ML + Kelly)
+    </h2>
+
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         {% for item in trends %}
         <div class="trend-card card flex justify-between items-center">
             <div class="w-full">
+
+                {# --- Header: symbol / name / allocation / signal / stop --- #}
                 <div class="flex justify-between items-start">
                     <div>
                         <span class="label-small">{{ item.sym }} — ${{ item.price }}</span>
@@ -79,11 +111,11 @@
                     </div>
                     <div class="text-right">
                         <p class="text-xl font-black
-                            {{ 'status-purple' if item.status=='STRONG BUY'
-                               else 'text-cyan-400' if item.status=='BUY (BREAKOUT)'
-                               else 'status-green' if item.status=='BUY'
+                            {{ 'status-purple'  if item.status == 'STRONG BUY'
+                               else 'text-cyan-400'  if item.status == 'BUY (BREAKOUT)'
+                               else 'status-green'   if item.status == 'BUY'
                                else 'text-orange-400' if 'TRIM' in item.status
-                               else 'text-red-500' if 'SELL' in item.status or 'LIQUIDATE' in item.status
+                               else 'text-red-500'   if 'SELL' in item.status or 'LIQUIDATE' in item.status
                                else 'status-yellow' }}">
                             {{ item.status }}
                         </p>
@@ -91,45 +123,132 @@
                     </div>
                 </div>
 
-                <div class="mt-3">
+                {# --- ML Confidence bar + hover tooltip --- #}
+                <div class="mt-3 relative group">
+
                     <div class="flex justify-between items-center mb-1">
                         <span class="label-small text-blue-400">ML Confidence</span>
                         <span class="label-small font-mono">{{ item.ml_conf }}%</span>
                     </div>
-                    <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
-                        <div class="h-full {{ 'bg-red-500' if item.ml_conf < 45 else 'bg-yellow-400' if item.ml_conf < 55 else 'bg-blue-500' }}" style="width: {{ item.ml_conf }}%"></div>
-                    </div>
-                </div>
 
-                <div class="flex gap-4 mt-3">
+                    <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden cursor-help">
+                        <div class="h-full
+                            {{ 'bg-red-500'    if item.ml_conf < 45
+                               else 'bg-yellow-400' if item.ml_conf < 55
+                               else 'bg-blue-500' }}"
+                             style="width: {{ item.ml_conf }}%">
+                        </div>
+                    </div>
+
+                    {# Hover tooltip: slow / fast / divergence / regime / hurst / p_stop #}
+                    {% if item.ml_conf_slow is defined and item.ml_conf_fast is defined %}
+                    <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50
+                                bg-slate-900 border border-slate-600 rounded p-2 shadow-xl
+                                text-[10px] font-mono whitespace-nowrap">
+
+                        <p class="text-blue-400">
+                            Slow: <span class="text-white">{{ item.ml_conf_slow }}%</span>
+                            &nbsp;|&nbsp;
+                            Fast: <span class="text-white">{{ item.ml_conf_fast }}%</span>
+                        </p>
+
+                        {% if item.divergence is defined %}
+                        <p class="mt-1 {{ 'text-orange-400' if item.divergence > 15 else 'text-slate-400' }}">
+                            Divergence: {{ item.divergence }}pts
+                            {% if item.divergence > 15 %}&nbsp;⚠ Kelly discounted{% endif %}
+                        </p>
+                        {% endif %}
+
+                        {% if item.hurst is defined %}
+                        <p class="mt-1
+                            {{ 'text-green-400'  if item.hurst > 0.55
+                               else 'text-red-400'    if item.hurst < 0.45
+                               else 'text-slate-400' }}">
+                            Hurst: {{ item.hurst }}
+                            {% if item.hurst > 0.55 %}&nbsp;↑ trending{% endif %}
+                            {% if item.hurst < 0.45 %}&nbsp;⚠ mean-reverting{% endif %}
+                        </p>
+                        {% endif %}
+
+                        {% if item.p_stop is defined %}
+                        <p class="mt-1
+                            {{ 'text-red-400'    if item.p_stop > 0.50
+                               else 'text-orange-400' if item.p_stop > 0.40
+                               else 'text-slate-400' }}">
+                            P(stop): {{ (item.p_stop * 100) | int }}%
+                            {% if item.p_stop > 0.50 %}&nbsp;⚠ geometry unfavorable{% endif %}
+                            {% if item.p_stop > 0.40 and item.p_stop <= 0.50 %}&nbsp;→ Kelly reduced{% endif %}
+                        </p>
+                        {% endif %}
+
+                        {% if item.regime is defined %}
+                        <p class="text-slate-400 mt-1 italic">{{ item.regime }}</p>
+                        {% endif %}
+
+                    </div>
+                    {% endif %}
+
+                </div>
+                {# end ML confidence #}
+
+                {# --- Technical metrics row --- #}
+                <div class="flex gap-4 mt-3 flex-wrap">
                     <p class="label-small font-mono">R²: {{ item.r2 }}</p>
                     <p class="label-small font-mono italic">Slope: {{ item.slope }}%</p>
                     <p class="label-small font-mono text-slate-500">RSI: {{ item.rsi14 }}</p>
+
                     {% if item.slope_z %}
                     <p class="label-small font-mono text-purple-400">Z: {{ item.slope_z }}</p>
                     {% endif %}
+
                     {% if item.delta_slope %}
                     <p class="label-small font-mono {{ 'text-green-400' if item.delta_slope > 0 else 'text-red-400' }}">
                         Δ: {{ item.delta_slope }}
                     </p>
                     {% endif %}
+
+                    {# Hurst — inline badge, color-coded by regime #}
+                    {% if item.hurst is defined %}
+                    <p class="label-small font-mono
+                        {{ 'text-green-400'  if item.hurst > 0.55
+                           else 'text-red-400'    if item.hurst < 0.45
+                           else 'text-slate-400' }}">
+                        H: {{ item.hurst }}
+                    </p>
+                    {% endif %}
+
+                    {# P(stop) — inline badge, red when geometry is unfavorable #}
+                    {% if item.p_stop is defined %}
+                    <p class="label-small font-mono
+                        {{ 'text-red-400'    if item.p_stop > 0.50
+                           else 'text-orange-400' if item.p_stop > 0.40
+                           else 'text-slate-400' }}">
+                        P↓: {{ (item.p_stop * 100) | int }}%
+                    </p>
+                    {% endif %}
+
                 </div>
 
+                {# --- Weight / risk / correlation row (allocated positions only) --- #}
                 {% if item.weight_pct or item.risk_contribution %}
                 <div class="flex gap-4 mt-2 border-t border-slate-700 pt-2">
+
                     {% if item.weight_pct %}
                     <p class="label-small font-mono text-slate-400">Wt: {{ item.weight_pct }}%</p>
                     {% endif %}
+
                     {% if item.risk_contribution %}
                     <p class="label-small font-mono {{ 'text-red-400' if item.risk_contribution > 15 else 'text-slate-400' }}">
                         Risk: {{ item.risk_contribution }}%
                     </p>
                     {% endif %}
+
                     {% if item.top_correlations %}
                     <p class="label-small font-mono text-slate-500">
                         Corr: {% for k, v in item.top_correlations.items() %}{{ k }}({{ v }}) {% endfor %}
                     </p>
                     {% endif %}
+
                 </div>
                 {% endif %}
 
@@ -137,4 +256,5 @@
         </div>
         {% endfor %}
     </div>
+
 </div>
