@@ -164,6 +164,216 @@ def _compute_delta_slope(series, window=20):
 
 
 # =========================
+# Hurst Exponent
+#
+# Measures whether a price series is trending, random, or mean-reverting.
+#
+#   H > 0.55  → trending     — momentum persists, trend system has edge
+#   H 0.45–0.55 → random walk — no structural edge, reduce Kelly
+#   H < 0.45  → mean-reverting — trend system is fighting the series
+#
+# Method: Rescaled Range (R/S) analysis over log returns.
+# More robust than variance-ratio method for financial time series.
+# Uses lags from 10 to max_lag to fit the scaling relationship.
+#
+# Returns 0.5 (random walk default) on insufficient data.
+# =========================
+def _hurst_exponent(series, max_lag=40):
+    """
+    Compute Hurst exponent via rescaled range (R/S) analysis.
+
+    Args:
+        series:   Price series (pd.Series or np.array). Uses log returns internally.
+        max_lag:  Maximum lag for R/S computation. Min 10 lags required.
+
+    Returns:
+        float: Hurst exponent in [0, 1]. 0.5 = random walk default on error.
+    """
+    try:
+        c = np.array(series.dropna()) if hasattr(series, 'dropna') else np.array(series)
+        if len(c) < max_lag + 10:
+            return 0.5
+
+        log_returns = np.diff(np.log(c))
+        if len(log_returns) < max_lag:
+            return 0.5
+
+        lags = range(10, max_lag)
+        rs_values = []
+
+        for lag in lags:
+            # Slice log returns into non-overlapping windows of length lag
+            n_windows = len(log_returns) // lag
+            if n_windows < 2:
+                continue
+
+            rs_window = []
+            for i in range(n_windows):
+                window = log_returns[i * lag:(i + 1) * lag]
+                mean_adj = window - window.mean()
+                cumdev = np.cumsum(mean_adj)
+                r = cumdev.max() - cumdev.min()   # range of cumulative deviation
+                s = window.std(ddof=1)            # standard deviation
+                if s > 0:
+                    rs_window.append(r / s)
+
+            if rs_window:
+                rs_values.append(np.mean(rs_window))
+
+        if len(rs_values) < 5:
+            return 0.5
+
+        # Fit log(R/S) ~ H * log(lag) via OLS
+        log_lags = np.log(list(lags)[:len(rs_values)])
+        log_rs = np.log(rs_values)
+        coeffs = np.polyfit(log_lags, log_rs, 1)
+        h = float(coeffs[0])
+
+        # Clip to valid range — numerical edge cases can exceed [0,1]
+        return round(float(np.clip(h, 0.0, 1.0)), 3)
+
+    except Exception:
+        return 0.5
+
+
+# =========================
+# Stop Hit Probability
+#
+# Given current price, stop, and target — estimates the probability
+# that price reaches the stop before the target under GBM with drift.
+#
+# Uses first-passage time for Brownian motion with two absorbing barriers.
+# Drift derived from slope (annualised log return). Vol from ATR.
+#
+# Interpretation:
+#   p_stop < 0.25  → strong trend, stop unlikely — hold full size
+#   p_stop 0.25–0.40 → moderate risk — standard sizing
+#   p_stop > 0.40  → nearly a coin flip — reduce Kelly fraction
+#   p_stop > 0.55  → unfavorable — do not enter or exit existing
+#
+# This penalizes positions where the geometry is wrong regardless of
+# ML confidence or slope — catches cases where stop is too tight
+# relative to current volatility and expected drift.
+# =========================
+def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
+    """
+    Probability that price hits stop before target under GBM with drift.
+
+    Args:
+        price:           Current price.
+        stop:            Stop loss price (below current price).
+        target:          Target price (above current price).
+        slope:           Slope from _trend_stats (units: scale*100).
+                         Converted internally: daily_drift = slope / 1000.
+        atr:             Average True Range (14-day). Used as vol proxy.
+        projection_days: Horizon for vol annualisation. Default 63 (quarter).
+
+    Returns:
+        float: Probability [0, 1] that stop is hit before target.
+               Returns 0.5 (neutral) on invalid inputs.
+    """
+    try:
+        if price <= 0 or stop >= price or target <= price:
+            return 0.5
+        if atr <= 0:
+            return 0.5
+
+        # Daily drift from slope
+        # slope = log_slope * window * 100, so daily log return = slope / 1000
+        daily_drift = slope / 1000.0
+
+        # Daily vol from ATR — ATR is in price units, convert to returns
+        # Annualise then de-annualise: daily_vol = (atr/price) / sqrt(252)
+        daily_vol = (atr / price) / np.sqrt(252)
+
+        if daily_vol <= 0:
+            return 0.5
+
+        # Log distances to barriers
+        # a = log distance to stop (negative — below current price)
+        # b = log distance to target (positive — above current price)
+        a = np.log(stop / price)    # < 0
+        b = np.log(target / price)  # > 0
+
+        # GBM drift adjustment: mu = daily_drift - 0.5 * daily_vol^2
+        mu = daily_drift - 0.5 * daily_vol ** 2
+
+        # First-passage probability for BM with drift between two barriers
+        # P(hit lower barrier a before upper barrier b)
+        # Formula: (exp(2*mu*b/sigma^2) - 1) / (exp(2*mu*b/sigma^2) - exp(2*mu*a/sigma^2))
+        sigma2 = daily_vol ** 2
+
+        if abs(mu) < 1e-10:
+            # Zero drift: probability proportional to distance
+            p_stop = abs(a) / (abs(a) + abs(b))
+        else:
+            exp_b = np.exp(2 * mu * b / sigma2)
+            exp_a = np.exp(2 * mu * a / sigma2)
+            denom = exp_b - exp_a
+            if abs(denom) < 1e-10:
+                p_stop = abs(a) / (abs(a) + abs(b))
+            else:
+                p_stop = (exp_b - 1.0) / denom
+
+        return round(float(np.clip(p_stop, 0.0, 1.0)), 3)
+
+    except Exception:
+        return 0.5
+
+
+# =========================
+# Dynamic Vol Cap
+#
+# Inverts the Kelly weighting logic:
+#   Kelly sizing:  slow=40%, fast=10%  (patience, matches holding period)
+#   Vol ceiling:   fast=50%, macro=30%, slow=20%  (speed, detects dislocations)
+#
+# Fast model is the crash detector — degrades quickly when market character
+# changes. When fast drops well below slow (divergence), vol cap tightens
+# immediately, before the covariance matrix catches up to realized vol.
+#
+# Min 8%  — floor prevents over-tightening in temporary fast-model dips
+# Max 15% — ceiling set by portfolio risk mandate
+#            Kelly fraction (0.25) already fractionalizes all weights before
+#            the optimizer sees them — a tighter ceiling double-penalizes.
+# =========================
+def _effective_vol_cap(regime, base_min=0.08, base_max=0.15):
+    """
+    Compute dynamic portfolio vol ceiling driven by fast ML model.
+
+    Args:
+        regime:     Output of get_risk_regime() — contains ml_fast, ml_slow,
+                    composite, and details list.
+        base_min:   Minimum vol cap (floor). Default 8%.
+        base_max:   Maximum vol cap (ceiling). Default 15%.
+                    Kelly fraction (0.25) fractionalizes all weights before
+                    the optimizer sees them — ceiling at 15% avoids
+                    double-penalizing already-conservative Kelly sizing.
+
+    Returns:
+        float: Effective annualised vol ceiling for the optimizer (e.g. 0.11).
+    """
+    ml_fast = regime.get("ml_fast", 50.0) / 100.0        # 0.0 – 1.0
+    ml_slow = regime.get("ml_slow", 50.0) / 100.0        # 0.0 – 1.0
+    regime_scalar = get_regime_scalar(regime)             # 0.0 – 1.0
+
+    # Weighted combination — fast dominates for vol cap (crash detection)
+    # Opposite weighting to Kelly sizing (where slow dominates)
+    combined = (
+        ml_fast       * 0.50   # primary crash signal — most reactive
+        + regime_scalar * 0.30   # macro environment — intermediate
+        + ml_slow       * 0.20   # structural anchor — slowest to move
+    )
+
+    # Scale linearly between floor and ceiling
+    # combined=0.0 → base_min (fully risk-off, tightest)
+    # combined=1.0 → base_max (fully risk-on, loosest)
+    vol_cap = base_min + combined * (base_max - base_min)
+
+    return round(max(base_min, min(vol_cap, base_max)), 4)
+
+
+# =========================
 # I. Risk Regime
 # =========================
 @ttl_cache(30)
@@ -300,9 +510,9 @@ def get_risk_regime():
 
         return {
             "status":         "RISK-ON" if is_risk_on else "RISK-OFF",
-            "confidence":     round(composite_score * 100, 1),          # legacy field — risk model fast
-            "ml_slow":        round(ml_slow_conf, 1), # SPY slow model
-            "ml_fast":        round(ml_fast_conf, 1), # risk model fast
+            "confidence":     round(composite_score * 100, 1),
+            "ml_slow":        round(ml_slow_conf, 1),
+            "ml_fast":        round(ml_fast_conf, 1),
             "composite":      round(composite_score * 100, 1),
             "spy_regime":     spy_regime,
             "spy_divergence": round(spy_divergence, 1),
@@ -323,6 +533,7 @@ def get_risk_regime():
             "history":        [],
             "details":        [],
         }
+
 
 def get_regime_scalar(regime):
     passes = sum(1 for d in regime["details"] if d["pass"])
@@ -475,6 +686,7 @@ def get_mean_reversion():
         print(f"Mean Reversion Error: {e}")
         return {"price": 0, "rsi2": 0, "signal": "ERROR"}
 
+
 # =========================
 # IV. Rotation
 # =========================
@@ -599,15 +811,46 @@ def _kelly_covariance_optimizer(
         portfolio_value=500000,
         max_single=0.15,
         max_risk_contribution=0.30,
-        max_portfolio_vol=0.10,
+        min_portfolio_vol=0.08,
+        max_portfolio_vol=0.15,
         regime_scalar=1.0,
         conviction_threshold=0.5,
+        regime=None,
 ):
+    """
+    Kelly-covariance portfolio optimizer with dynamic vol cap.
+
+    Vol ceiling is driven by the fast ML model (crash detection) rather than
+    a static limit. This inverts the Kelly sizing logic: where Kelly uses slow
+    model (patient, matches holding period), the vol cap uses fast model
+    (reactive, detects dislocations before covariance matrix catches up).
+
+    Args:
+        min_portfolio_vol:  Floor for the dynamic vol cap. Default 8%.
+        max_portfolio_vol:  Ceiling for the dynamic vol cap. Default 15%.
+                            Kelly fraction (0.25) already fractionalizes all
+                            weights — ceiling at 15% avoids double-penalizing
+                            already-conservative Kelly sizing.
+        regime:             Output of get_risk_regime(). If provided, vol cap
+                            is computed dynamically. If None, uses max_portfolio_vol.
+    """
     empty_summary = {
         "total_allocated": 0.0, "portfolio_vol": 0.0, "n_positions": 0,
         "max_risk_contributor": "N/A", "optimization_success": False,
         "regime_scalar": round(regime_scalar, 2),
+        "vol_cap": round(max_portfolio_vol, 4),
     }
+
+    # Compute dynamic vol cap from fast model if regime is available
+    # Falls back to max_portfolio_vol if regime not provided
+    if regime is not None:
+        effective_vol_cap = _effective_vol_cap(
+            regime,
+            base_min=min_portfolio_vol,
+            base_max=max_portfolio_vol,
+        )
+    else:
+        effective_vol_cap = max_portfolio_vol
 
     active_signals = [
         t for t in trends
@@ -615,13 +858,13 @@ def _kelly_covariance_optimizer(
     ]
 
     if not active_signals:
-        return trends, empty_summary
+        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap, 4)}
 
     tickers = [t["sym"] for t in active_signals]
     available = [t for t in tickers if t in shared_data['Close'].columns]
 
     if not available:
-        return trends, empty_summary
+        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap, 4)}
 
     # Single asset bypass path
     if len(available) < 2:
@@ -641,7 +884,9 @@ def _kelly_covariance_optimizer(
         return updated_trends, {
             "total_allocated": round(w * 100, 1), "portfolio_vol": 0.0,
             "n_positions": 1, "max_risk_contributor": sym,
-            "optimization_success": True, "regime_scalar": round(regime_scalar, 2),
+            "optimization_success": True,
+            "regime_scalar": round(regime_scalar, 2),
+            "vol_cap": round(effective_vol_cap, 4),
         }
 
     cov_matrix, corr_matrix = _compute_covariance_matrix(shared_data, available)
@@ -652,16 +897,16 @@ def _kelly_covariance_optimizer(
         for sym in available
     ])
 
-    # FIX: instruments with zero Kelly weight get zero upper bound
-    # Prevents optimizer allocating to instruments below Kelly quality threshold
+    # Instruments with zero Kelly weight get zero upper bound —
+    # prevents optimizer allocating to instruments below Kelly quality threshold
     def upper_bound(sym, kelly_w):
         if kelly_w > 0:
             return min(kelly_w, max_single)
-        return 0.0  # Kelly returned zero — do not allocate
+        return 0.0
 
     bounds = [(0.0, upper_bound(sym, kelly_weights[i])) for i, sym in enumerate(available)]
 
-    # FIX: x0 starts at zero for instruments with zero Kelly weight
+    # x0 starts at zero for instruments with zero Kelly weight
     x0 = np.array([w if w > 0 else 0.0 for w in kelly_weights])
 
     conviction_raw = np.array([
@@ -671,7 +916,7 @@ def _kelly_covariance_optimizer(
 
     conviction_sum = conviction_raw.sum()
     if conviction_sum == 0:
-        return trends, empty_summary
+        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap, 4)}
 
     conviction = conviction_raw / conviction_sum
     n = len(available)
@@ -679,9 +924,12 @@ def _kelly_covariance_optimizer(
     def neg_objective(weights):
         return -float(weights @ conviction)
 
+    # Vol constraint uses effective_vol_cap (dynamic, fast-model driven)
+    # rather than static max_portfolio_vol
     constraints = [
         {"type": "ineq", "fun": lambda w: 1.0 - w.sum()},
-        {"type": "ineq", "fun": lambda w: max_portfolio_vol ** 2 - _compute_portfolio_var(w, cov_matrix)},
+        {"type": "ineq",
+         "fun": lambda w: effective_vol_cap ** 2 - _compute_portfolio_var(w, cov_matrix)},
         *[
             {"type": "ineq",
              "fun": lambda w, i=i: max_risk_contribution - _compute_risk_contribution(w, cov_matrix)[i]}
@@ -736,6 +984,7 @@ def _kelly_covariance_optimizer(
         "max_risk_contributor": available[int(np.argmax(risk_contribs))],
         "optimization_success": result.success,
         "regime_scalar": round(regime_scalar, 2),
+        "vol_cap": round(effective_vol_cap * 100, 1),   # expose for dashboard display
     }
 
 
@@ -756,7 +1005,7 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
     Kelly position sizing using slow model probability.
 
     Args:
-        ml_conf_slow:       Slow model confidence (0-100). Used as Kelly win probability.
+        ml_conf_slow:        Slow model confidence (0-100). Used as Kelly win probability.
         divergence_discount: Fraction to reduce kelly_fraction when fast/slow diverge.
                              Computed in ml_engine.get_dual_ml_confidence_for_kelly().
     """
@@ -870,6 +1119,10 @@ def get_trends():
 
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
 
+            # Hurst exponent — trend persistence probability
+            # Uses full available price history (up to 1y from shared data)
+            hurst = _hurst_exponent(c, max_lag=40)
+
             # Z-Score calculation
             c_len = len(c)
             start_idx = max(0, c_len - 60)
@@ -889,13 +1142,50 @@ def get_trends():
 
             delta_slope = _compute_delta_slope(c, window=20)
 
-            # Kelly sizing uses slow model and divergence discount
+            # Stop hit probability — probability price reaches stop before target
+            # Computed before Kelly so it can discount position sizing
+            # Uses placeholder stop/target from ATR — refined after Kelly call
+            atr_stop_prelim = last - (atr * 2.5)
+            slope_prelim, _ = _trend_stats(c, 10, 10)
+            daily_return_prelim = slope_prelim / 1000
+            target_prelim = last * ((1 + daily_return_prelim) ** 63)
+            p_stop = _stop_hit_probability(
+                last, atr_stop_prelim, target_prelim, slope, atr
+            )
+
+            # Hurst-adjusted divergence discount
+            # Mean-reverting series (H < 0.45) compounds the divergence penalty
+            # Trending series (H > 0.55) reduces it slightly
+            hurst_discount = 0.0
+            if hurst < 0.45:
+                hurst_discount = (0.45 - hurst) * 0.5   # up to +22.5% discount
+            elif hurst > 0.55:
+                hurst_discount = -(hurst - 0.55) * 0.2  # up to -10% discount (bonus)
+
+            # Stop probability discount — reduce Kelly when geometry is unfavorable
+            # p_stop > 0.40 means nearly a coin flip on stop vs target
+            # Scale discount linearly from 0 at p_stop=0.40 to 0.50 at p_stop=0.70
+            p_stop_discount = max(0.0, (p_stop - 0.40) / 0.30 * 0.50) if p_stop > 0.40 else 0.0
+
+            # Combined divergence discount: original + hurst + p_stop geometry
+            combined_discount = float(np.clip(
+                divergence_discount + hurst_discount + p_stop_discount,
+                -0.20,
+                0.80
+            ))
+
+            # Kelly sizing uses slow model and combined discount
             position = _compute_kelly_size(
                 last, slope, atr, ml_conf_slow, r2,
                 delta_slope=delta_slope,
-                divergence_discount=divergence_discount
+                divergence_discount=combined_discount
             )
             pos_size = position['dollar_amount']
+
+            # Recompute p_stop with final Kelly stop/target for accurate display
+            p_stop = _stop_hit_probability(
+                last, position['stop'], position['target'], slope, atr
+            )
 
             # =============================================
             # Decision Logic
@@ -908,7 +1198,6 @@ def get_trends():
             elif last < s50 and slope < 0:
                 # Price below MA50 AND slope negative → confirmed downtrend
                 status = "SELL (MA50)"
-
 
             elif slope_z > 2.0 and ml_conf_slow > 55 and r2 > 0.7 and rsi14 < 75 and slope > 0:
                 # Momentum breakout — all three confirm
@@ -932,6 +1221,7 @@ def get_trends():
 
             elif pos_size == 0:
                 status = "TRIM (POSITION SIZE)"
+
             # buy/hold zone
             elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
                 # Strong uptrend — determine entry quality
@@ -951,7 +1241,6 @@ def get_trends():
             else:
                 status = "HOLD"
 
-
             results.append({
                 "sym": sym,
                 "name": name,
@@ -959,14 +1248,16 @@ def get_trends():
                 "status": status,
                 "r2": round(r2, 2),
                 "ml_conf": ml_conf_slow,           # blended — for display
-                "ml_conf_slow": ml_conf_slow,  # slow — for Kelly
-                "ml_conf_fast": ml_conf_fast,  # fast — for pattern
+                "ml_conf_slow": ml_conf_slow,       # slow — for Kelly
+                "ml_conf_fast": ml_conf_fast,       # fast — for pattern
                 "divergence": divergence,
                 "regime": regime,
                 "rsi14": round(rsi14, 1),
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 2),
                 "delta_slope": round(delta_slope, 4),
+                "hurst": hurst,                     # trend persistence [0,1]
+                "p_stop": p_stop,                   # probability of stop before target
                 "stop": position['stop'],
                 "target": position['target'],
                 "rr_ratio": position['rr_ratio'],
@@ -984,13 +1275,14 @@ def get_trends():
             print(f"Error in trend loop for {sym}: {e}")
             continue
 
-    # Sort by composite score: slope * r2 * ml_conf_slow (slow model)
+    # Sort by composite score: slope * r2 * ml_conf_slow
     sorted_results = sorted(
         results,
         key=lambda x: x["slope"] * x["r2"] * x.get("ml_conf_slow", x["ml_conf"]) / 100,
         reverse=True
     )
 
+    # Get regime once — passed to optimizer for dynamic vol cap
     regime = get_risk_regime()
     scalar = get_regime_scalar(regime)
 
@@ -999,9 +1291,11 @@ def get_trends():
         portfolio_value=500000,
         max_single=0.15,
         max_risk_contribution=0.30,
-        max_portfolio_vol=0.12,
+        min_portfolio_vol=0.08,     # floor: 8%
+        max_portfolio_vol=0.15,     # ceiling: 15% — Kelly fraction already fractionalizes
         regime_scalar=scalar,
         conviction_threshold=0.5,
+        regime=regime,              # pass regime for dynamic vol cap
     )
 
     _portfolio_summary = summary
