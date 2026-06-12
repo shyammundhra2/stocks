@@ -39,6 +39,9 @@ CURRENCIES = {
 
 # --- Trend Assets ---
 TREND_ASSETS = {
+    #Index
+    "SPY" : "SP 500",
+    "QQQ" : "Nasdaq 100",
     # US Equity Sectors
     "XLK": "Tech",
     "XLE": "Energy",
