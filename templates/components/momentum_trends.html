@@ -113,7 +113,7 @@
                         <p class="text-xl font-black
                             {{ 'status-purple'  if item.status == 'STRONG BUY'
                                else 'text-cyan-400'  if item.status == 'BUY (BREAKOUT)'
-                               else 'status-green'   if item.status == 'BUY'
+                               else 'status-green'   if 'BUY' in item.status
                                else 'text-orange-400' if 'TRIM' in item.status
                                else 'text-red-500'   if 'SELL' in item.status or 'LIQUIDATE' in item.status
                                else 'status-yellow' }}">
@@ -127,7 +127,7 @@
                 <div class="mt-3 relative group">
 
                     <div class="flex justify-between items-center mb-1">
-                        <span class="label-small text-blue-400">ML Confidence</span>
+                        <span class="label-small text-blue-400">Strength</span>
                         <span class="label-small font-mono">{{ item.ml_conf }}%</span>
                     </div>
 

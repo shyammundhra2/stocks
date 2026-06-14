@@ -4,7 +4,7 @@ import pandas as pd
 import threading
 import time
 import math
-from functools import wraps, lru_cache
+from functools import wraps
 from scipy.optimize import minimize
 
 from macro.helpers import compute_RSI, compute_ATR
@@ -251,6 +251,10 @@ def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
     """
     Probability that price hits stop before target under GBM with drift.
     Returns float in [0,1]; 0.5 on degenerate inputs.
+
+    Note: projection_days is UNUSED — vol is annualised directly from ATR
+    and the first-passage probability is horizon-free (barriers absorb
+    whenever hit). Parameter retained for signature compatibility only.
     """
     try:
         if price <= 0 or stop >= price or target <= price:
@@ -755,7 +759,7 @@ def _kelly_covariance_optimizer(
         max_single=0.15,
         max_risk_contribution=0.30,
         min_portfolio_vol=0.08,
-        max_portfolio_vol=0.15,
+        max_portfolio_vol=0.135,
         regime_scalar=1.0,
         conviction_threshold=0.5,
         regime=None,
@@ -764,6 +768,11 @@ def _kelly_covariance_optimizer(
     Covariance portfolio optimizer with dynamic vol cap.
     (Name retains 'kelly' for signature stability; raw weights are now
     vol-targeted — continuous Kelly under the equal-Sharpe assumption.)
+
+    Note: conviction_threshold is UNUSED — quality gating happens upstream
+    in _compute_kelly_size (slope/r2/strength gates produce zero
+    dollar_amount, which zeroes the upper bound here). Parameter retained
+    for signature compatibility only.
 
     Risk-contribution constraint notes (2026-06-10 fix):
 
@@ -846,12 +855,14 @@ def _kelly_covariance_optimizer(
         for sym in available
     ])
 
-    def upper_bound(sym, kelly_w):
+    # Instruments with zero raw weight get zero upper bound —
+    # prevents optimizer allocating to instruments below quality threshold
+    def upper_bound(kelly_w):
         if kelly_w > 0:
             return min(kelly_w, max_single)
         return 0.0
 
-    bounds = [(0.0, upper_bound(sym, kelly_weights[i])) for i, sym in enumerate(available)]
+    bounds = [(0.0, upper_bound(kelly_weights[i])) for i in range(len(available))]
     x0 = np.array([w if w > 0 else 0.0 for w in kelly_weights])
 
     conviction_raw = np.array([
@@ -1256,7 +1267,7 @@ def get_trends():
                 # ml_conf fields are TELEMETRY — real model outputs for
                 # dashboard monitoring. OOS-invalidated for decisions
                 # (transfer AUC 0.47); nothing downstream consumes them.
-                "ml_conf": ml_conf_slow,
+                "ml_conf": round(strength*100,1),
                 "ml_conf_slow": ml_conf_slow,
                 "ml_conf_fast": ml_conf_fast,
                 "divergence": ml_divergence,
@@ -1302,7 +1313,7 @@ def get_trends():
         max_single=0.25,
         max_risk_contribution=0.35,
         min_portfolio_vol=0.08,     # floor: 8%   (~1/9 Kelly at Sharpe ~0.7)
-        max_portfolio_vol=0.15,     # ceiling: 15% (~1/5 Kelly) — the Kelly
+        max_portfolio_vol=0.135,     # ceiling: 15% (~1/5 Kelly) — the Kelly
                                     # fraction now lives HERE, in one place
         regime_scalar=scalar,
         conviction_threshold=0.5,

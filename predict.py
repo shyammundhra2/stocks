@@ -1,3 +1,4 @@
+import os
 import yfinance as yf
 import pandas as pd
 import joblib
@@ -17,6 +18,12 @@ warnings.filterwarnings('ignore', category=ResourceWarning)
 _PREDICT_CACHE = {}
 _CACHE_LOCK = None
 
+# On-disk parquet cache directory (2026-06-14). Used as a second cache tier
+# in _get_shared_predict_data so repeated calls with different date ranges
+# for the same ticker set (e.g. get_risk_regime's 5-point as_of_date history
+# loop) hit one shared download instead of five separate yf.download calls.
+_PARQUET_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cache', 'market_data')
+
 
 def _get_cache_lock():
     """Lazy init for thread lock to avoid import issues"""
@@ -27,10 +34,32 @@ def _get_cache_lock():
     return _CACHE_LOCK
 
 
+def _parquet_path(tickers):
+    """Stable on-disk filename for a given ticker set."""
+    import hashlib
+    key = "_".join(sorted(tickers))
+    digest = hashlib.md5(key.encode()).hexdigest()[:12]
+    return os.path.join(_PARQUET_CACHE_DIR, f"{digest}.parquet")
+
+
 def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
     """
     Shared data fetcher for predict_assets calls.
     Uses a simple cache with date-based key to avoid redundant downloads.
+
+    Three-tier cache (2026-06-14):
+      1. In-memory, 30s TTL, keyed on (tickers, start, end)        — original
+      2. On-disk parquet, per ticker-set, wide rolling window,
+         30s TTL — NEW. Repeated calls with DIFFERENT date ranges
+         for the same ticker set (e.g. get_risk_regime's 5-point
+         as_of_date history loop, which previously triggered 5
+         separate yf.download calls) are served from one shared
+         wide download/parquet read instead.
+      3. Direct yf.download — original fallback for ranges outside
+         the cached wide window (e.g. far-past as_of_date in a backtest).
+
+    Returned data for the requested (start_date, end_date) window is
+    identical in shape/contents to the pre-parquet behaviour.
     """
     import time
 
@@ -52,9 +81,36 @@ def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
             for k in expired:
                 del _PREDICT_CACHE[k]
 
-    # Download outside lock - use auto_adjust=False and group_by='column'
-    raw_data = yf.download(tickers, start=start_date, end=end_date, progress=False,
-                           auto_adjust=False, group_by='column')
+    # --- Tier 2: on-disk parquet, wide rolling window, 30s TTL ---
+    today = pd.Timestamp.today().normalize()
+    wide_start = today - pd.Timedelta(days=500)
+    wide_end = today + pd.Timedelta(days=1)
+
+    raw_data = None
+    if start_date >= wide_start and end_date <= wide_end:
+        pq_path = _parquet_path(tickers)
+        try:
+            if os.path.exists(pq_path) and (time.time() - os.path.getmtime(pq_path)) < 30:
+                raw_data = pd.read_parquet(pq_path)
+        except Exception:
+            raw_data = None
+
+        if raw_data is None:
+            wide_data = yf.download(tickers, start=wide_start, end=wide_end, progress=False,
+                                    auto_adjust=False, group_by='column')
+            try:
+                os.makedirs(_PARQUET_CACHE_DIR, exist_ok=True)
+                wide_data.to_parquet(pq_path)
+            except Exception:
+                pass  # caching is best-effort; never block on disk errors
+            raw_data = wide_data
+
+        raw_data = raw_data[(raw_data.index >= start_date) & (raw_data.index < end_date)]
+
+    if raw_data is None:
+        # Tier 3: requested range outside cached window — original path.
+        raw_data = yf.download(tickers, start=start_date, end=end_date, progress=False,
+                               auto_adjust=False, group_by='column')
 
     # Return raw data with MultiIndex intact
     with lock:
@@ -67,7 +123,22 @@ def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
 @lru_cache(maxsize=32)
 def _get_model_bundle(model_path):
     """Cache model loading to avoid repeated disk reads"""
-    return joblib.load(model_path)
+    bundle = joblib.load(model_path)
+
+    # Force single-threaded inference (2026-06-14): models were saved with
+    # n_jobs=-1 from training. For predict_proba on a single row, joblib's
+    # process-pool spawn cost dwarfs the actual per-tree compute (these are
+    # max_depth=3 trees) and is also what triggers the repeated
+    # `sklearn.utils.parallel.delayed` UserWarning on every prediction call.
+    # n_jobs only changes execution strategy, not results — predictions are
+    # identical, just computed sequentially without spawning a pool.
+    if isinstance(bundle, dict):
+        for key in ('model', 'model_fast', 'model_slow', 'sector_model'):
+            est = bundle.get(key)
+            if est is not None and hasattr(est, 'n_jobs'):
+                est.n_jobs = 1
+
+    return bundle
 
 
 # ----------------- Feature Computation -----------------
