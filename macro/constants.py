@@ -70,6 +70,7 @@ TREND_ASSETS = {
     "COAL": "Coal Stocks",
     "CCJ": "Cameco",
     "COPX": "Copper Stocks",
+    "WOOD" : "Lumber Stocks",
 
     # International Equities
     "INDA": "India",

@@ -1299,7 +1299,10 @@ def get_trends():
     # Sort by conviction: slope * r2 * strength
     sorted_results = sorted(
         results,
-        key=lambda x: x["slope"] * x["r2"] * x.get("strength", x["r2"]),
+        key=lambda x: (
+            x["slope"] * x["r2"] * x.get("strength", x["r2"]),
+            -x.get("p_stop", 0.5)  # secondary: lower p_stop ranks higher
+        ),
         reverse=True
     )
 
