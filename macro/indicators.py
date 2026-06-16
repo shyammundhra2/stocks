@@ -1318,9 +1318,11 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
         'risk_dollar': 0.0, 'exp_return': 0.0
     }
 
-    # Gate: positive trend with minimum fit quality.
-    # ml_conf_slow gate removed (2026-06-11) — it was gating on noise.
+
     if slope <= 0 or r2 < 0.15:
+        return zero
+
+    if ml_conf_slow < 45:
         return zero
 
     if price <= 0 or atr <= 0 or stop_price >= price:
@@ -1500,7 +1502,7 @@ def get_trends():
 
             # Vol-targeted sizing (signature unchanged; ml arg neutral 50)
             position = _compute_kelly_size(
-                last, slope, atr, 50.0, r2,
+                last, slope, atr, ml_conf_slow, r2,
                 delta_slope=delta_slope,
                 divergence_discount=combined_discount
             )
