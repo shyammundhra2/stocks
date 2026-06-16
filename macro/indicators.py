@@ -371,23 +371,6 @@ _HMM_REFIT_INTERVAL = 7 * 24 * 3600  # 7 days
 
 
 def _fit_regime_hmm(X, n_states=3, n_iter=100):
-    """
-    Fit Gaussian HMM on [return, vol, vix_z] columns (unstandardized —
-    GaussianHMM with diag covariance fits per-feature variance directly,
-    so explicit standardization is not required).
-
-    Args:
-        X:        np.ndarray, shape (n_obs, 3) — [ret, vol, vix_z]
-        n_states: number of hidden states (default 3)
-        n_iter:   max EM iterations
-
-    Returns:
-        (model, labels) or (None, None) if len(X) < 60.
-        labels: dict mapping state_index -> 'crisis' | 'choppy' |
-                'trending_calm' for n_states=3 (sorted by mean return,
-                column 0, ascending — lowest return = crisis). For
-                n_states != 3, labels = {i: f"state_{i}"}.
-    """
     from hmmlearn import hmm
 
     if len(X) < 60:
@@ -399,65 +382,127 @@ def _fit_regime_hmm(X, n_states=3, n_iter=100):
         n_iter=n_iter,
         random_state=42,
     )
+
     model.fit(X)
 
-    means = model.means_[:, 0]  # mean return per state
-    order = np.argsort(means)
-
     if n_states == 3:
-        labels = {int(order[0]): "crisis",
-                  int(order[1]): "choppy",
-                  int(order[2]): "trending_calm"}
+        means = model.means_
+
+        scores = {}
+
+        for i in range(n_states):
+            ret_3m = means[i, 0]
+            vol_z  = means[i, 1]
+            vix_z  = means[i, 2]
+
+            # higher return good
+            # higher vol/fear bad
+            score = ret_3m - 0.5 * vol_z - 0.5 * vix_z
+
+            scores[i] = score
+
+        order = sorted(scores, key=scores.get)
+
+        labels = {
+            int(order[0]): "crisis",
+            int(order[1]): "choppy",
+            int(order[2]): "trending_calm",
+        }
+
     else:
         labels = {i: f"state_{i}" for i in range(n_states)}
 
     return model, labels
 
-
 @ttl_cache(30)
 def get_regime_hmm_state(n_states=3):
     """
-    Returns current HMM state probabilities. Telemetry + qualifier input
-    only — see module docstring above for scope and limitations.
+    Returns current HMM regime probabilities.
 
-    Returns dict:
+    Features:
+        ret_63  = 63-day log return (trend)
+        vol_z   = realized volatility z-score (turbulence)
+        vix_z   = VIX z-score (fear)
+
+    Returns:
         {
-            "state_probs": {"trending_calm": 0.7, "choppy": 0.2, "crisis": 0.1},
-            "most_likely": "trending_calm",
-            "p_crisis": 0.1,
-            "fitted_at": <unix timestamp of last model fit>,
+            "state_probs": {...},
+            "most_likely": "...",
+            "p_crisis": 0.12,
+            "fitted_at": ...,
+            "fitted_ago": "...",
+            "state_means": {
+                ...
+            }
         }
-    or None on: insufficient data (<60 obs after dropna), hmmlearn not
-    installed, or any other failure.
     """
     try:
         shared_data = _get_shared_market_data()
-        spy = _get_close(shared_data, 'SPY')
-        vix = _get_close(shared_data, '^VIX')
 
-        spy_ret = np.log(spy / spy.shift(1)).dropna()
-        spy_vol = spy_ret.rolling(10).std() * np.sqrt(252)
+        spy = _get_close(shared_data, "SPY")
+        vix = _get_close(shared_data, "^VIX")
+
+        # --------------------------------------------------
+        # Feature 1: 3-month trend
+        # --------------------------------------------------
+
+        daily_ret = np.log(spy / spy.shift(1))
+
+        ret_63 = np.log(spy / spy.shift(63))
+
+        # --------------------------------------------------
+        # Feature 2: Relative volatility
+        # --------------------------------------------------
+
+        vol = daily_ret.rolling(20).std() * np.sqrt(252)
+
+        vol_mean = vol.rolling(126).mean()
+        vol_std = vol.rolling(126).std()
+
+        vol_z = (vol - vol_mean) / vol_std
+
+        # --------------------------------------------------
+        # Feature 3: Relative fear
+        # --------------------------------------------------
+
         vix_mean = vix.rolling(50).mean()
         vix_std = vix.rolling(50).std()
+
         vix_z = (vix - vix_mean) / vix_std
 
-        df = pd.DataFrame({'ret': spy_ret, 'vol': spy_vol, 'vix_z': vix_z}).dropna()
+        # --------------------------------------------------
+        # Build feature matrix
+        # --------------------------------------------------
+
+        df = pd.DataFrame({
+            "ret": ret_63,
+            "vol_z": vol_z,
+            "vix_z": vix_z,
+        }).dropna()
+
         if len(df) < 60:
             return None
 
-        X = df[['ret', 'vol', 'vix_z']].values
+        X = df[["ret", "vol_z", "vix_z"]].values
 
         now = time.time()
+
         needs_refit = (
             _hmm_cache["model"] is None
             or _hmm_cache["fitted_at"] is None
             or (now - _hmm_cache["fitted_at"]) > _HMM_REFIT_INTERVAL
         )
 
+        # --------------------------------------------------
+        # Fit / refresh model
+        # --------------------------------------------------
+
         if needs_refit:
             model, labels = _fit_regime_hmm(X, n_states)
+
             if model is None:
                 return None
+
             _hmm_cache["model"] = model
             _hmm_cache["labels"] = labels
             _hmm_cache["fitted_at"] = now
@@ -465,25 +510,74 @@ def get_regime_hmm_state(n_states=3):
         model = _hmm_cache["model"]
         labels = _hmm_cache["labels"]
 
+        # --------------------------------------------------
+        # Current probabilities
+        # --------------------------------------------------
+
         state_probs_seq = model.predict_proba(X)
         current_probs = state_probs_seq[-1]
 
-        state_probs = {labels[i]: round(float(p), 3) for i, p in enumerate(current_probs)}
+        state_probs = {
+            labels[i]: round(float(p), 3)
+            for i, p in enumerate(current_probs)
+        }
+
         most_likely_idx = int(np.argmax(current_probs))
 
         p_crisis = state_probs.get("crisis", 0.0)
+
+        # --------------------------------------------------
+        # Fit age
+        # --------------------------------------------------
+
+        fitted_at = _hmm_cache["fitted_at"]
+
+        if fitted_at:
+            secs = time.time() - fitted_at
+
+            fitted_ago = (
+                f"{secs/60:.0f}m ago"
+                if secs < 3600 else
+                f"{secs/3600:.0f}h ago"
+                if secs < 86400 else
+                f"{secs/86400:.0f}d ago"
+            )
+        else:
+            fitted_ago = "—"
+
+        # --------------------------------------------------
+        # State diagnostics
+        # --------------------------------------------------
+
+        means = model.means_
+
+        state_means = {}
+
+        for idx, lab in labels.items():
+            ret_3m, volz, vixz = means[idx]
+
+            state_means[lab] = {
+                "ret_3m_pct": round(float(ret_3m) * 100, 1),
+                "vol_z": round(float(volz), 2),
+                "vix_z": round(float(vixz), 2),
+            }
 
         return {
             "state_probs": state_probs,
             "most_likely": labels[most_likely_idx],
             "p_crisis": p_crisis,
-            "fitted_at": _hmm_cache["fitted_at"],
+            "fitted_at": fitted_at,
+            "fitted_ago": fitted_ago,
+            "state_means": state_means,
         }
 
     except ImportError:
-        print("Regime HMM: hmmlearn not installed — "
-              "run `pip install hmmlearn --break-system-packages`")
+        print(
+            "Regime HMM: hmmlearn not installed — "
+            "run `pip install hmmlearn --break-system-packages`"
+        )
         return None
+
     except Exception as e:
         print(f"Regime HMM Error: {e}")
         return None

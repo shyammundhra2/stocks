@@ -1,8 +1,23 @@
+{% set bar_color = {
+    'crisis':'bg-red-500',
+    'choppy':'bg-amber-500',
+    'trending_calm':'bg-green-500'
+} %}
+
+{% set label_txt = {
+    'crisis':'Crisis',
+    'choppy':'Choppy',
+    'trending_calm':'Trending Calm'
+} %}
+
 <div class="flex flex-col md:flex-row justify-between items-center bg-gray-900 p-8 rounded-xl border border-gray-800 mb-8 shadow-2xl text-white font-sans">
+
+    <!-- LEFT -->
     <div class="flex-1">
         <h1 class="text-4xl font-black uppercase tracking-tight">
            GSS Macro<span class="text-blue-500">System</span>
         </h1>
+
         <div class="flex flex-wrap gap-3 mt-4">
             {% for m in regime.details %}
             <div class="flex items-center space-x-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700 shadow-sm">
@@ -12,29 +27,69 @@
             {% endfor %}
         </div>
     </div>
+
+    <!-- CENTER -->
     <div class="flex-1 flex flex-col items-center px-8 my-6 md:my-0">
-        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-1 font-bold">ML Confidence</p>
-        <div class="text-6xl font-black mb-2 leading-none">{{ regime.confidence }}%</div>
+
+        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-1 font-bold">
+            ML Confidence
+        </p>
+
+        <div class="text-6xl font-black mb-2 leading-none">
+            {{ regime.confidence }}%
+        </div>
+
         <div class="w-full max-w-[200px] bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
-            <div class="h-full transition-all duration-500 {{ 'bg-green-500' if regime.status == 'RISK-ON' else 'bg-red-500' }}"
-                 style="width: {{ regime.confidence }}%"></div>
+            <div class="h-full transition-all duration-500
+                {{ 'bg-green-500' if regime.status == 'RISK-ON' else 'bg-red-500' }}"
+                style="width: {{ regime.confidence }}%">
+            </div>
         </div>
-        <div class="flex flex-col items-center opacity-100 w-full">
-            <svg class="w-32 h-8 overflow-visible mb-1" viewBox="0 0 100 40">
-                <polyline fill="none" stroke="#4f46e5" stroke-width="4" stroke-linejoin="round" class="opacity-30"
-                    points="{% for p in regime.history %}{{ loop.index0 * 25 }},{{ 42 - (p/100 * 40) }} {% endfor %}" />
-                <polyline fill="none" stroke="#818cf8" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"
-                    points="{% for p in regime.history %}{{ loop.index0 * 25 }},{{ 40 - (p/100 * 40) }} {% endfor %}" />
-                <circle cx="100" cy="{{ 40 - (regime.confidence/100 * 40) }}" r="4.5" fill="white" stroke="#818cf8" stroke-width="2" />
-            </svg>
-            <p class="text-[9px] uppercase tracking-[0.3em] text-indigo-400 font-black">History (20D Stride)</p>
+
+        <svg class="w-32 h-8 overflow-visible mb-1" viewBox="0 0 100 40">
+            <polyline fill="none" stroke="#4f46e5" stroke-width="4" class="opacity-30"
+                points="{% for p in regime.history %}{{ loop.index0 * 25 }},{{ 42 - (p/100 * 40) }} {% endfor %}" />
+
+            <polyline fill="none" stroke="#818cf8" stroke-width="4"
+                points="{% for p in regime.history %}{{ loop.index0 * 25 }},{{ 40 - (p/100 * 40) }} {% endfor %}" />
+
+            <circle cx="100"
+                    cy="{{ 40 - (regime.confidence/100 * 40) }}"
+                    r="4.5"
+                    fill="white"
+                    stroke="#818cf8"
+                    stroke-width="2" />
+        </svg>
+
+        <p class="text-[9px] uppercase tracking-[0.3em] text-indigo-400 font-black">
+            History (20D Stride)
+        </p>
+
+        {% if regime.hmm %}
+        <div class="mt-3 text-xs font-mono text-gray-400">
+            HMM Crisis Risk:
+            <span class="
+                {{ 'text-red-400' if regime.hmm.p_crisis > 0.33
+                   else 'text-amber-400' if regime.hmm.p_crisis > 0.15
+                   else 'text-green-400' }}">
+                {{ (regime.hmm.p_crisis * 100)|round(0) }}%
+            </span>
         </div>
+        {% endif %}
     </div>
+
+    <!-- RIGHT -->
     <div class="flex-1 text-right">
-        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">Current Regime</p>
-        <div class="text-7xl font-black italic tracking-tighter {{ 'text-green-500' if regime.status == 'RISK-ON' else 'text-red-500' }}">
+
+        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+            Current Regime
+        </p>
+
+        <div class="text-7xl font-black italic tracking-tighter
+            {{ 'text-green-500' if regime.status == 'RISK-ON' else 'text-red-500' }}">
             {{ regime.status }}
         </div>
+
         {% if regime.regime_qualifier %}
         <div class="mt-1 flex justify-end">
             <span class="text-[10px] uppercase font-bold tracking-[0.2em] px-2 py-0.5 rounded
@@ -45,5 +100,78 @@
             </span>
         </div>
         {% endif %}
+
+        <!-- ================= HMM INLINE ================= -->
+        {% if regime.hmm %}
+        <div class="mt-4 bg-gray-800/40 border border-gray-700 rounded-lg p-3 text-left">
+
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+                    Regime HMM
+                </span>
+
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded
+                    {{ 'text-red-400' if regime.hmm.most_likely == 'crisis'
+                       else 'text-amber-400' if regime.hmm.most_likely == 'choppy'
+                       else 'text-green-400' }}">
+                    {{ label_txt.get(regime.hmm.most_likely, regime.hmm.most_likely) }}
+                </span>
+            </div>
+
+            <div class="space-y-1">
+
+                {% for key in ['crisis', 'choppy', 'trending_calm'] %}
+                {% set prob = regime.hmm.state_probs.get(key, 0) %}
+                {% set active = regime.hmm.most_likely == key %}
+
+                <div class="flex items-center space-x-2 group relative">
+
+                    <span class="w-24 text-[9px] uppercase font-bold
+                        {{ 'text-gray-200' if active else 'text-gray-500' }}">
+                        {{ label_txt.get(key, key) }}
+                    </span>
+
+                    <div class="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                        <div class="h-full {{ bar_color.get(key, 'bg-gray-500') }}"
+                             style="width: {{ (prob * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <span class="w-10 text-right text-[10px] font-mono
+                        {{ 'text-gray-200' if active else 'text-gray-500' }}">
+                        {{ (prob * 100) | round(1) }}%
+                    </span>
+
+                    <!-- TOOLTIP -->
+                    {% set m = regime.hmm.state_means.get(key) %}
+                    {% if m %}
+                    <div class="absolute left-0 top-6 hidden group-hover:block z-50
+                                bg-gray-950 border border-gray-700 rounded p-2 text-[10px] font-mono w-48 shadow-xl">
+
+                        <div class="text-gray-400 mb-1 font-bold uppercase tracking-wider">
+                            Diagnostics
+                        </div>
+
+                        <div>3M ret: {{ '%+.1f'|format(m.ret_3m_pct) }}%</div>
+                        <div>vol-z: {{ '%+.2f'|format(m.vol_z) }}</div>
+                        <div>vix-z: {{ '%+.2f'|format(m.vix_z) }}</div>
+
+                    </div>
+                    {% endif %}
+
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="mt-2 text-[9px] text-gray-500 font-mono">
+                P(crisis): {{ (regime.hmm.p_crisis * 100)|round(1) }}%
+                · {{ regime.hmm.fitted_ago }}
+            </div>
+
+        </div>
+        {% endif %}
+
     </div>
 </div>
+
+<!-- LOWER PANELS UNCHANGED BELOW -->
