@@ -328,6 +328,207 @@ def _effective_vol_cap(regime, base_min=0.08, base_max=0.15):
 
 
 # =========================
+# Regime HMM — TELEMETRY ONLY (added 2026-06-15)
+#
+# 3-state Gaussian HMM on [SPY return, SPY realized vol, VIX Z-score].
+# Outputs P(crisis-like state) and a most-likely state label, used ONLY
+# to qualify the existing RISK-ON/RISK-OFF status (via _qualify_regime)
+# for dashboard display.
+#
+# STATUS: telemetry + qualifier only. Does NOT feed _effective_vol_cap,
+# sizing, or status logic. composite_score, is_risk_on, regime_scalar,
+# and every downstream consumer of get_risk_regime() are unaffected by
+# this block — `hmm` and `regime_qualifier` are additive keys only.
+#
+# Promotion criterion: if, over a sample of regime transitions,
+# p_crisis is observed to rise BEFORE regime_scalar/composite move —
+# i.e. it leads rather than confirms — it becomes a candidate for a
+# depth-2 integration (e.g. multiplicative vol-cap dampener). If it only
+# confirms (moves at the same time or later than the existing composite),
+# it is redundant with the already-validated signal and should remain
+# telemetry/qualifier only.
+#
+# Honest limitations:
+#   - Refit weekly (_HMM_REFIT_INTERVAL), not per-call. 252 obs and
+#     ~15-20 free params for 3 diagonal-covariance Gaussian states —
+#     refitting on every 30-second cache tick would add fit-to-fit
+#     noise from `random_state` interacting with marginal data updates,
+#     without any real information gain.
+#   - State labels are NOT fixed across refits. _fit_regime_hmm always
+#     re-sorts by mean return (column 0) ascending after fitting —
+#     lowest mean return = "crisis", highest = "trending_calm".
+#   - Will not catch a single-day shock on day one — same structural
+#     limitation as the 6-condition composite (the pattern needs to
+#     accumulate across the observation window before posterior state
+#     probabilities shift materially).
+#   - Requires hmmlearn: pip install hmmlearn --break-system-packages
+#     If unavailable, get_regime_hmm_state() returns None and
+#     _qualify_regime() / the dashboard template degrade gracefully
+#     (regime["hmm"] = None, regime["regime_qualifier"] = None).
+# =========================
+_hmm_cache = {"model": None, "labels": None, "fitted_at": None}
+_HMM_REFIT_INTERVAL = 7 * 24 * 3600  # 7 days
+
+
+def _fit_regime_hmm(X, n_states=3, n_iter=100):
+    """
+    Fit Gaussian HMM on [return, vol, vix_z] columns (unstandardized —
+    GaussianHMM with diag covariance fits per-feature variance directly,
+    so explicit standardization is not required).
+
+    Args:
+        X:        np.ndarray, shape (n_obs, 3) — [ret, vol, vix_z]
+        n_states: number of hidden states (default 3)
+        n_iter:   max EM iterations
+
+    Returns:
+        (model, labels) or (None, None) if len(X) < 60.
+        labels: dict mapping state_index -> 'crisis' | 'choppy' |
+                'trending_calm' for n_states=3 (sorted by mean return,
+                column 0, ascending — lowest return = crisis). For
+                n_states != 3, labels = {i: f"state_{i}"}.
+    """
+    from hmmlearn import hmm
+
+    if len(X) < 60:
+        return None, None
+
+    model = hmm.GaussianHMM(
+        n_components=n_states,
+        covariance_type="diag",
+        n_iter=n_iter,
+        random_state=42,
+    )
+    model.fit(X)
+
+    means = model.means_[:, 0]  # mean return per state
+    order = np.argsort(means)
+
+    if n_states == 3:
+        labels = {int(order[0]): "crisis",
+                  int(order[1]): "choppy",
+                  int(order[2]): "trending_calm"}
+    else:
+        labels = {i: f"state_{i}" for i in range(n_states)}
+
+    return model, labels
+
+
+@ttl_cache(30)
+def get_regime_hmm_state(n_states=3):
+    """
+    Returns current HMM state probabilities. Telemetry + qualifier input
+    only — see module docstring above for scope and limitations.
+
+    Returns dict:
+        {
+            "state_probs": {"trending_calm": 0.7, "choppy": 0.2, "crisis": 0.1},
+            "most_likely": "trending_calm",
+            "p_crisis": 0.1,
+            "fitted_at": <unix timestamp of last model fit>,
+        }
+    or None on: insufficient data (<60 obs after dropna), hmmlearn not
+    installed, or any other failure.
+    """
+    try:
+        shared_data = _get_shared_market_data()
+        spy = _get_close(shared_data, 'SPY')
+        vix = _get_close(shared_data, '^VIX')
+
+        spy_ret = np.log(spy / spy.shift(1)).dropna()
+        spy_vol = spy_ret.rolling(10).std() * np.sqrt(252)
+        vix_mean = vix.rolling(50).mean()
+        vix_std = vix.rolling(50).std()
+        vix_z = (vix - vix_mean) / vix_std
+
+        df = pd.DataFrame({'ret': spy_ret, 'vol': spy_vol, 'vix_z': vix_z}).dropna()
+        if len(df) < 60:
+            return None
+
+        X = df[['ret', 'vol', 'vix_z']].values
+
+        now = time.time()
+        needs_refit = (
+            _hmm_cache["model"] is None
+            or _hmm_cache["fitted_at"] is None
+            or (now - _hmm_cache["fitted_at"]) > _HMM_REFIT_INTERVAL
+        )
+
+        if needs_refit:
+            model, labels = _fit_regime_hmm(X, n_states)
+            if model is None:
+                return None
+            _hmm_cache["model"] = model
+            _hmm_cache["labels"] = labels
+            _hmm_cache["fitted_at"] = now
+
+        model = _hmm_cache["model"]
+        labels = _hmm_cache["labels"]
+
+        state_probs_seq = model.predict_proba(X)
+        current_probs = state_probs_seq[-1]
+
+        state_probs = {labels[i]: round(float(p), 3) for i, p in enumerate(current_probs)}
+        most_likely_idx = int(np.argmax(current_probs))
+
+        p_crisis = state_probs.get("crisis", 0.0)
+
+        return {
+            "state_probs": state_probs,
+            "most_likely": labels[most_likely_idx],
+            "p_crisis": p_crisis,
+            "fitted_at": _hmm_cache["fitted_at"],
+        }
+
+    except ImportError:
+        print("Regime HMM: hmmlearn not installed — "
+              "run `pip install hmmlearn --break-system-packages`")
+        return None
+    except Exception as e:
+        print(f"Regime HMM Error: {e}")
+        return None
+
+
+def _qualify_regime(is_risk_on, hmm_state):
+    """
+    Qualifies the RISK-ON/RISK-OFF status with the HMM's read on current
+    market character. Purely descriptive — does not affect `status`,
+    `composite_score`, `regime_scalar`, or anything used in sizing.
+
+    Args:
+        is_risk_on: bool, the existing composite-derived RISK-ON flag.
+        hmm_state:  output of get_regime_hmm_state(), or None.
+
+    Returns:
+        One of "confirmed", "fragile", "transitional", or None
+        (None if hmm_state is None — e.g. insufficient data or
+        hmmlearn not installed; template should omit the qualifier
+        entirely in this case).
+
+    Logic:
+        RISK-ON  + HMM "trending_calm"        -> "confirmed"
+        RISK-ON  + HMM "choppy"/"crisis"      -> "fragile"
+            (composite says on, HMM sees instability underneath —
+             the more consequential mismatch, since it means
+             currently-deployed capital may be exposed to a
+             pattern the composite hasn't caught yet)
+        RISK-OFF + HMM "crisis"               -> "confirmed"
+        RISK-OFF + HMM "trending_calm"/"choppy" -> "transitional"
+            (composite is cautious but HMM doesn't see crisis-level
+             pattern — possibly an early-stage flip, possibly nothing)
+    """
+    if hmm_state is None:
+        return None
+
+    most_likely = hmm_state["most_likely"]
+
+    if is_risk_on:
+        return "confirmed" if most_likely == "trending_calm" else "fragile"
+    else:
+        return "confirmed" if most_likely == "crisis" else "transitional"
+
+
+# =========================
 # I. Risk Regime
 # =========================
 @ttl_cache(30)
@@ -446,30 +647,40 @@ def get_risk_regime():
 
         is_risk_on = composite_score > 0.55
 
+        # HMM telemetry + qualifier — see module docstring above.
+        # Additive only: does not affect composite_score, is_risk_on,
+        # or anything computed above this point.
+        hmm_state = get_regime_hmm_state()
+        regime_qualifier = _qualify_regime(is_risk_on, hmm_state)
+
         return {
-            "status":         "RISK-ON" if is_risk_on else "RISK-OFF",
-            "confidence":     round(composite_score * 100, 1),
-            "ml_slow":        round(ml_slow_conf, 1),
-            "ml_fast":        round(ml_fast_conf, 1),   # display only — not in composite
-            "composite":      round(composite_score * 100, 1),
-            "spy_regime":     spy_regime,
-            "spy_divergence": round(spy_divergence, 1),
-            "history":        history_points,
-            "details":        details,
+            "status":           "RISK-ON" if is_risk_on else "RISK-OFF",
+            "regime_qualifier": regime_qualifier,   # "confirmed"/"fragile"/"transitional"/None
+            "confidence":       round(composite_score * 100, 1),
+            "ml_slow":          round(ml_slow_conf, 1),
+            "ml_fast":          round(ml_fast_conf, 1),   # display only — not in composite
+            "composite":        round(composite_score * 100, 1),
+            "spy_regime":       spy_regime,
+            "spy_divergence":   round(spy_divergence, 1),
+            "history":          history_points,
+            "details":          details,
+            "hmm":              hmm_state,   # full state probs, for drill-down — may be None
         }
 
     except Exception as e:
         print(f"Risk Regime Error: {e}")
         return {
-            "status":         "ERROR",
-            "confidence":     0,
-            "ml_slow":        0,
-            "ml_fast":        0,
-            "composite":      0,
-            "spy_regime":     "Error",
-            "spy_divergence": 0,
-            "history":        [],
-            "details":        [],
+            "status":           "ERROR",
+            "regime_qualifier": None,
+            "confidence":       0,
+            "ml_slow":          0,
+            "ml_fast":          0,
+            "composite":        0,
+            "spy_regime":       "Error",
+            "spy_divergence":   0,
+            "history":          [],
+            "details":          [],
+            "hmm":              None,
         }
 
 
@@ -1296,12 +1507,17 @@ def get_trends():
             print(f"Error in trend loop for {sym}: {e}")
             continue
 
-    # Sort by conviction: slope * r2 * strength
+    # Sort by conviction: slope * r2 * strength, with p_stop as tiebreaker
+    # for the slope<=0 cluster (where slope*r2*strength == 0 for all of
+    # them) — lower p_stop ranks higher among ties, surfacing instruments
+    # with the best stop geometry even when the system won't allocate to
+    # them. reverse=True applies to both tuple elements; -p_stop ascending
+    # under reverse=True yields p_stop ascending overall (verified).
     sorted_results = sorted(
         results,
         key=lambda x: (
             x["slope"] * x["r2"] * x.get("strength", x["r2"]),
-            -x.get("p_stop", 0.5)  # secondary: lower p_stop ranks higher
+            -x.get("p_stop", 0.5)
         ),
         reverse=True
     )
@@ -1316,8 +1532,9 @@ def get_trends():
         max_single=0.25,
         max_risk_contribution=0.35,
         min_portfolio_vol=0.08,     # floor: 8%   (~1/9 Kelly at Sharpe ~0.7)
-        max_portfolio_vol=0.135,     # ceiling: 15% (~1/5 Kelly) — the Kelly
-                                    # fraction now lives HERE, in one place
+        max_portfolio_vol=0.135,     # ceiling: 13.5% (~1/5 Kelly) — see
+                                    # note below; the Kelly fraction now
+                                    # lives HERE, in one place
         regime_scalar=scalar,
         conviction_threshold=0.5,
         regime=regime,              # pass regime for dynamic vol cap
@@ -1325,3 +1542,11 @@ def get_trends():
 
     _portfolio_summary = summary
     return optimized_results
+
+# NOTE on max_portfolio_vol=0.135 vs "~1/5 Kelly ≈ 15%" comments elsewhere
+# in this file (_effective_vol_cap docstring, empty_summary default):
+# the live ceiling is 13.5%. Whether 13.5% or 15% is the intended final
+# value is an open decision — not changed here. If 15% is intended,
+# update this call site to 0.15; if 13.5% is intended, the "15%"
+# comments in _effective_vol_cap's docstring and elsewhere should be
+# updated to "13.5%" for consistency. Flagging only, not resolving.
