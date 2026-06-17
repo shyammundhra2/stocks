@@ -42,6 +42,7 @@ TREND_ASSETS = {
     #Index
     "SPY" : "SP 500",
     "QQQ" : "Nasdaq 100",
+    "IWM" : "Russel 2000",
     # US Equity Sectors
     "XLK": "Tech",
     "XLE": "Energy",
