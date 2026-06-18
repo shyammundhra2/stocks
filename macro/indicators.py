@@ -232,17 +232,20 @@ def _persistent_fetch(label, tickers, period, group_by="column",
 # =========================
 # Risk-regime history cache (added 2026-06-18)
 #
-# get_risk_regime's sparkline recomputes 5 strided historical predictions
-# (predict_assets at as_of_date = today, -20, -40, -60, -80 sessions). A
-# prediction for a SETTLED past date is immutable (fixed bars + fixed model),
-# so each date maps to a stable confidence value. We persist {date: conf} in
-# a tiny JSON sidecar (scalars, so JSON is lighter than parquet) and only
-# recompute dates not already cached. Net effect:
-#   - intraday reloads recompute at most the newest point (4/5 cache hits)
-#   - the settled points survive transient yfinance/DNS failures (served
-#     from disk instead of re-predicting against the network)
-# The most-recent bar is treated as volatile and never cached, so an
-# intraday/partial session bar always reflects the latest prediction.
+# get_risk_regime's sparkline shows 5 strided predictions (predict_assets at
+# as_of_date = today, -20, -40, -60, -80 sessions). We persist EVERY computed
+# point as {date: conf} in a tiny JSON sidecar (scalars, so JSON is lighter
+# than parquet) and recompute only dates not already stored. Because the
+# 20-session stride passes back over each date on four later days, persisting
+# the newest point too means each date is computed once (the day it first
+# appears) and read from disk on every later appearance. Net effect:
+#   - intraday reloads recompute nothing (all 5 are cache hits)
+#   - a new trading day adds ~1 point (today's); older strides are reads
+#   - the sparkline survives transient yfinance/DNS failures (served from
+#     disk instead of re-predicting against the network)
+# This is display-only telemetry (history / ml_fast never enter the composite,
+# sizing, or status), so freezing the newest point at its first-computed value
+# for the day is intended; the live RISK-ON/RISK-OFF signal is separate.
 # =========================
 def _risk_history_base(tickers):
     payload = "riskhist|" + ",".join(sorted(map(str, tickers)))
@@ -884,20 +887,27 @@ def get_risk_regime():
         history_points = []
         recent_dates = data.index[::-20][:5][::-1]
 
-        # Persistent cache for the settled sparkline points (see helpers
-        # above). The most-recent bar is volatile (may be a partial intraday
-        # session), so it is never cached - only strictly-past dates are.
+        # Display-only sparkline: persist EVERY computed point keyed by date
+        # and only compute the ones not already stored. Because the 20-session
+        # stride passes back over each date on four later days, persisting the
+        # newest point too means each date is computed once (the day it first
+        # appears) and read from disk thereafter -> steady state is ~1
+        # predict_assets per new trading day, zero on intraday reloads.
+        #
+        # Consequence (intended): the most-recent point freezes at its
+        # first-computed value for the day rather than refreshing each reload.
+        # This is telemetry only (ml_fast / history are display-only and never
+        # enter the composite, sizing, or status), so a frozen sparkline point
+        # is fine. To force the newest point live again, delete its key from
+        # the riskhist_*.json sidecar (or clear the file).
         _rh_base = _risk_history_base(risk_tickers)
         _rh_cache = _risk_history_load(_rh_base)
         _rh_dirty = False
-        _last_bar = pd.Timestamp(data.index[-1]).normalize()
 
         for ts in recent_dates:
-            _ts_norm = pd.Timestamp(ts).normalize()
-            _cacheable = _ts_norm < _last_bar          # settled past session
-            _key = _ts_norm.strftime('%Y-%m-%d')
+            _key = pd.Timestamp(ts).normalize().strftime('%Y-%m-%d')
 
-            if _cacheable and _key in _rh_cache:
+            if _key in _rh_cache:
                 history_points.append(_rh_cache[_key])
                 continue
 
@@ -911,14 +921,12 @@ def get_risk_regime():
             probs = ml_res.get('probabilities', {})
             conf_val = round(probs.get('Class 1', 0) * 100, 1)
             history_points.append(conf_val)
-
-            if _cacheable:
-                _rh_cache[_key] = conf_val
-                _rh_dirty = True
+            _rh_cache[_key] = conf_val
+            _rh_dirty = True
 
         if _rh_dirty:
-            if len(_rh_cache) > 200:        # bound growth; keep most recent
-                for _k in sorted(_rh_cache)[:-200]:
+            if len(_rh_cache) > 400:        # bound growth; keep most recent
+                for _k in sorted(_rh_cache)[:-400]:
                     del _rh_cache[_k]
             _risk_history_save(_rh_base, _rh_cache)
 
