@@ -7,7 +7,17 @@ except Exception:  # numpy < 1.20
 from macro.helpers import compute_RSI, compute_ATR
 import joblib
 import os
+import warnings
 from functools import lru_cache
+
+# Per-prediction inference runs single-row on shallow tree ensembles. The
+# models were trained with n_jobs=-1, which makes sklearn fan each predict
+# out through joblib and emit the `sklearn.utils.parallel.delayed` UserWarning
+# once per call. _load_model_bundle forces n_jobs=1 below (identical outputs,
+# no dispatch); this filter additionally keeps the console clean across
+# sklearn versions, since formatting+writing hundreds of warnings to stderr
+# is itself a measurable chunk of dashboard load time.
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 MODEL_PATH = 'trend_model.joblib'
 
@@ -16,9 +26,25 @@ MODEL_PATH = 'trend_model.joblib'
 def _load_model_bundle():
     if os.path.exists(MODEL_PATH):
         bundle = joblib.load(MODEL_PATH)
+        model_fast = bundle.get('model_fast', None)
+        model_slow = bundle.get('model_slow', None)
+
+        # Force single-threaded inference (2026-06-18): models were saved
+        # with n_jobs=-1 from training. For predict_proba on a single row,
+        # the joblib parallel dispatch dwarfs the actual per-tree compute
+        # (shallow trees) and triggers the repeated
+        # `sklearn.utils.parallel.delayed` UserWarning on every call -
+        # incurred ~33x per dashboard load via get_dual_ml_confidence_for_kelly.
+        # n_jobs changes execution strategy only, not results: predictions
+        # are identical, just computed sequentially without dispatch.
+        # (Mirrors the same fix already in predict._get_model_bundle.)
+        for est in (model_fast, model_slow):
+            if est is not None and hasattr(est, 'n_jobs'):
+                est.n_jobs = 1
+
         return (
-            bundle.get('model_fast', None),
-            bundle.get('model_slow', None),
+            model_fast,
+            model_slow,
             bundle.get('scaler', None),
             bundle.get('features', None)
         )

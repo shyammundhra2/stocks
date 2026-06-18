@@ -1042,7 +1042,7 @@ def format_feature_contribution(feature_name, value, descriptions):
     return f"{desc:<35} (importance: {value:.3f})"
 
 
-def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cache=True, explain=True):
+def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cache=True, explain=False):
     """
     Predict trend confidence for multiple assets using dual model approach.
 
