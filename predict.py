@@ -940,6 +940,50 @@ def compute_trend_features(df):
     return X
 
 
+def _class_importances(model, feature_names, class_idx):
+    """
+    Per-(model, class) feature-importance vector, memoised on the model.
+
+    For GradientBoosting/RandomForest, `tree.feature_importances_` (and
+    `model.feature_importances_`) re-traverse the trees on every access, yet
+    the result depends only on the trained model and class - not on X. The
+    same vector was being recomputed on every explain_tree_prediction call
+    (29x per dashboard render, identical each time, ~0.26s each). Caching it
+    on the model collapses all but the first computation to a dict lookup.
+    Output is unchanged (the cached array equals the recomputed one exactly).
+    """
+    cache = getattr(model, "_gss_imp_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            model._gss_imp_cache = cache
+        except Exception:
+            cache = None  # exotic estimator that rejects attrs; just recompute
+    if cache is not None and class_idx in cache:
+        return cache[class_idx]
+
+    from sklearn.ensemble import GradientBoostingClassifier
+
+    if isinstance(model, GradientBoostingClassifier):
+        n_classes = len(model.classes_)
+        if n_classes == 2:
+            class_estimators = model.estimators_[:, 0]
+        else:
+            class_estimators = model.estimators_[:, class_idx]
+        importances = np.zeros(len(feature_names))
+        for tree in class_estimators:
+            importances += tree.feature_importances_
+        importances /= len(class_estimators)
+    elif hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+    else:
+        importances = None
+
+    if cache is not None:
+        cache[class_idx] = importances
+    return importances
+
+
 def explain_tree_prediction(model, X_scaled, feature_names, class_idx, top_n=5):
     """
     Extract feature contributions for tree-based models using class-specific importance.
@@ -955,30 +999,9 @@ def explain_tree_prediction(model, X_scaled, feature_names, class_idx, top_n=5):
         List of tuples (feature_name, contribution_score)
     """
     try:
-        from sklearn.ensemble import GradientBoostingClassifier
-
-        # For GradientBoosting, extract class-specific tree importances
-        if isinstance(model, GradientBoostingClassifier):
-            # Get estimators for this specific class
-            n_classes = len(model.classes_)
-
-            if n_classes == 2:
-                # Binary classification: use all estimators
-                class_estimators = model.estimators_[:, 0]
-            else:
-                # Multi-class: get estimators for this class
-                class_estimators = model.estimators_[:, class_idx]
-
-            # Compute average importance across this class's trees
-            importances = np.zeros(len(feature_names))
-            for tree in class_estimators:
-                importances += tree.feature_importances_
-            importances /= len(class_estimators)
-
-        elif hasattr(model, 'feature_importances_'):
-            # Fallback: use global feature importances
-            importances = model.feature_importances_
-        else:
+        # Heavy part (class importances) is invariant in X and memoised.
+        importances = _class_importances(model, feature_names, class_idx)
+        if importances is None:
             return []
 
         # Weight by feature values (larger absolute values matter more)
@@ -1224,7 +1247,7 @@ def predict_trends(model_path, tickers, friendly_names, as_of_date=None, use_cac
     }
 
 
-def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, use_cache=True, explain=True):
+def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=None, use_cache=True, explain=False):
     """
     Fetch data, compute features, and run prediction bundle with explanations.
 
@@ -1235,7 +1258,11 @@ def predict_assets(model_path, tickers, friendly_names, model_type, as_of_date=N
         model_type: Type of model ('risk', 'sector', 'commodity', 'country')
         as_of_date: Date to predict for (None = today)
         use_cache: Whether to use shared data cache (default True)
-        explain: Whether to include feature explanations (default True)
+        explain: Whether to include feature explanations (default False;
+                 the CLI passes explain=True unless --no-explain). The
+                 dashboard never reads explanations, so skipping them by
+                 default avoids ~1 explain_tree_prediction call per class
+                 per prediction on the hot path.
     """
     if as_of_date is None:
         as_of_date = pd.Timestamp.today()
@@ -1324,7 +1351,7 @@ def predict_commodities(
         friendly_names,
         as_of_date=None,
         use_cache=True,
-        explain=True,
+        explain=False,
         top_n_sectors=3,
         top_n_per_sector=1
 ):

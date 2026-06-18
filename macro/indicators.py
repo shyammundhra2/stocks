@@ -230,6 +230,46 @@ def _persistent_fetch(label, tickers, period, group_by="column",
 
 
 # =========================
+# Risk-regime history cache (added 2026-06-18)
+#
+# get_risk_regime's sparkline recomputes 5 strided historical predictions
+# (predict_assets at as_of_date = today, -20, -40, -60, -80 sessions). A
+# prediction for a SETTLED past date is immutable (fixed bars + fixed model),
+# so each date maps to a stable confidence value. We persist {date: conf} in
+# a tiny JSON sidecar (scalars, so JSON is lighter than parquet) and only
+# recompute dates not already cached. Net effect:
+#   - intraday reloads recompute at most the newest point (4/5 cache hits)
+#   - the settled points survive transient yfinance/DNS failures (served
+#     from disk instead of re-predicting against the network)
+# The most-recent bar is treated as volatile and never cached, so an
+# intraday/partial session bar always reflects the latest prediction.
+# =========================
+def _risk_history_base(tickers):
+    payload = "riskhist|" + ",".join(sorted(map(str, tickers)))
+    digest = hashlib.md5(payload.encode()).hexdigest()[:16]
+    return os.path.join(_STORE_DIR, f"riskhist_{digest}.json")
+
+
+def _risk_history_load(base):
+    try:
+        with open(base) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _risk_history_save(base, cache):
+    try:
+        os.makedirs(_STORE_DIR, exist_ok=True)
+        tmp = f"{base}.tmp.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(cache, f)
+        os.replace(tmp, base)
+    except Exception:
+        pass
+
+
+# =========================
 # SHARED DATA MANAGER
 # =========================
 @ttl_cache(30)
@@ -844,7 +884,23 @@ def get_risk_regime():
         history_points = []
         recent_dates = data.index[::-20][:5][::-1]
 
+        # Persistent cache for the settled sparkline points (see helpers
+        # above). The most-recent bar is volatile (may be a partial intraday
+        # session), so it is never cached - only strictly-past dates are.
+        _rh_base = _risk_history_base(risk_tickers)
+        _rh_cache = _risk_history_load(_rh_base)
+        _rh_dirty = False
+        _last_bar = pd.Timestamp(data.index[-1]).normalize()
+
         for ts in recent_dates:
+            _ts_norm = pd.Timestamp(ts).normalize()
+            _cacheable = _ts_norm < _last_bar          # settled past session
+            _key = _ts_norm.strftime('%Y-%m-%d')
+
+            if _cacheable and _key in _rh_cache:
+                history_points.append(_rh_cache[_key])
+                continue
+
             ml_res = predict_assets(
                 model_path="risk_model.joblib",
                 tickers=risk_tickers,
@@ -855,6 +911,16 @@ def get_risk_regime():
             probs = ml_res.get('probabilities', {})
             conf_val = round(probs.get('Class 1', 0) * 100, 1)
             history_points.append(conf_val)
+
+            if _cacheable:
+                _rh_cache[_key] = conf_val
+                _rh_dirty = True
+
+        if _rh_dirty:
+            if len(_rh_cache) > 200:        # bound growth; keep most recent
+                for _k in sorted(_rh_cache)[:-200]:
+                    del _rh_cache[_k]
+            _risk_history_save(_rh_base, _rh_cache)
 
         ml_fast_conf = history_points[-1]
 
@@ -1609,20 +1675,38 @@ def get_trends():
     # showed no edge on non-SPY names (transfer AUC 0.47), so ml_conf
     # values are still computed and returned for dashboard monitoring,
     # but no longer enter sizing, status logic, or conviction scoring.
-    from macro.ml_engine import get_dual_ml_confidence_for_kelly
+    # 2026-06-18: that telemetry is now batched into ONE predict_proba per
+    # model for the whole universe instead of one call per asset (~33x).
+    # Outputs are identical (verified vs the per-asset path); this only
+    # removes the per-call sklearn predict overhead that dominated load time.
+    from macro.ml_engine import get_dual_ml_confidence_for_kelly_batch
 
     shared_data = _get_shared_market_data()
     results = []
     symbols = list(TREND_ASSETS.keys())
 
-    for sym, name in TREND_ASSETS.items():
+    # Pre-build each asset's frame once (reused in the loop below) and batch
+    # the display-only dual-ML telemetry across the whole universe.
+    _dfs = {}
+    for _sym in symbols:
         try:
             if len(symbols) > 1:
-                df = shared_data.xs(sym, level=1, axis=1).dropna()
+                _d = shared_data.xs(_sym, level=1, axis=1).dropna()
             else:
-                df = shared_data.dropna()
+                _d = shared_data.dropna()
+            if not _d.empty:
+                _dfs[_sym] = _d
+        except Exception:
+            continue
+    try:
+        _dual_map = get_dual_ml_confidence_for_kelly_batch(list(_dfs.items()))
+    except Exception:
+        _dual_map = {}
 
-            if df.empty:
+    for sym, name in TREND_ASSETS.items():
+        try:
+            df = _dfs.get(sym)
+            if df is None or df.empty:
                 continue
 
             c = df["Close"].squeeze()
@@ -1633,14 +1717,14 @@ def get_trends():
 
             # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
             # for dashboard monitoring; never consumed by sizing or status.
-            # Failure degrades to neutral without affecting the loop.
-            try:
-                dual = get_dual_ml_confidence_for_kelly(df)
+            # Sourced from the batched predict above; missing -> neutral.
+            dual = _dual_map.get(sym)
+            if dual is not None:
                 ml_conf_slow = dual['slow']
                 ml_conf_fast = dual['fast']
                 ml_divergence = dual['divergence']
                 ml_regime = dual['regime']
-            except Exception:
+            else:
                 ml_conf_slow = 50.0
                 ml_conf_fast = 50.0
                 ml_divergence = 0.0

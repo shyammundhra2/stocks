@@ -290,6 +290,106 @@ def get_dual_ml_confidence_for_kelly(df: pd.DataFrame, debug=False) -> dict:
 
 
 # ----------------------
+# Batched dual confidence (2026-06-18)
+#
+# get_trends calls get_dual_ml_confidence_for_kelly once per asset (~33x).
+# Each call's predict_proba is ~all fixed overhead (a single row through a
+# large forest is ~1ms of tree work but ~0.19s of sklearn/array machinery),
+# so 33 assets x 2 models = 66 calls dominated get_trends. This batches the
+# whole universe into ONE predict_proba per model.
+#
+# Output-identical to calling get_dual_ml_confidence_for_kelly(df) per asset:
+#   - StandardScaler.transform is per-row affine (row-independent)
+#   - RandomForest.predict_proba on an (N,F) matrix returns exactly the
+#     per-row probabilities of N single-row calls
+#   - feature build, vol_adj, rounding, and regime logic are unchanged.
+# Case mapping preserved: len<200 / models-missing -> normal {50,50} path
+# (regime via _determine_regime, i.e. "Neutral/Chop"); per-df feature
+# exception -> the same 'Error' dict the single function returns.
+# ----------------------
+def _dual_result_from_conf(s_conf, f_conf):
+    """Reproduce get_dual_ml_confidence_for_kelly's success-path return dict."""
+    divergence = abs(s_conf - f_conf)
+    regime = _determine_regime(f_conf, s_conf)
+    blended = round(s_conf * 0.7 + f_conf * 0.3, 1)
+    if divergence <= 15.0:
+        discount = 0.0
+    else:
+        excess = divergence - 15.0
+        discount = min(excess / 85.0, 0.40)
+    return {
+        'slow': s_conf, 'fast': f_conf, 'blended': blended,
+        'divergence': round(divergence, 1),
+        'divergence_discount': round(discount, 4),
+        'regime': regime, 'kelly_p': s_conf / 100.0,
+    }
+
+
+def _dual_result_error():
+    """Reproduce get_dual_ml_confidence_for_kelly's except return dict."""
+    return {
+        'slow': 50.0, 'fast': 50.0, 'blended': 50.0,
+        'divergence': 0.0, 'divergence_discount': 0.0,
+        'regime': 'Error', 'kelly_p': 0.5,
+    }
+
+
+def get_dual_ml_confidence_for_kelly_batch(items, debug=False):
+    """
+    Batched equivalent of get_dual_ml_confidence_for_kelly over many frames.
+
+    items: iterable of (key, df). Returns {key: dict}, each dict identical to
+    get_dual_ml_confidence_for_kelly(df) for that frame, but computed with a
+    single predict_proba per model across the whole batch.
+    """
+    items = list(items)
+    out = {}
+
+    m_fast, m_slow, scaler, features = get_models()
+    models_ok = all([m_fast, m_slow, scaler, features])
+
+    pending_keys, rows, meta = [], [], {}
+    for key, df in items:
+        if (not models_ok) or len(df) < 200:
+            # matches _run_dual_model's early {50,50} -> normal dual path
+            out[key] = _dual_result_from_conf(50.0, 50.0)
+            continue
+        try:
+            feat_dict, last_close, atr_series = _compute_features_fast(df)
+            row = [feat_dict.get(f, 0.0) for f in features]
+            atr_smoothed = float(atr_series.ewm(span=3, adjust=False).mean().iloc[-1])
+            pending_keys.append(key)
+            rows.append(row)
+            meta[key] = (last_close, atr_smoothed)
+        except Exception as e:
+            if debug:
+                print(f"Error in dual batch feature build: {e}")
+            out[key] = _dual_result_error()
+
+    if pending_keys:
+        try:
+            X = pd.DataFrame(rows, columns=features)
+            X_scaled = scaler.transform(X)
+            fast_idx = list(m_fast.classes_).index(1)
+            slow_idx = list(m_slow.classes_).index(1)
+            proba_fast = m_fast.predict_proba(X_scaled)[:, fast_idx] * 100
+            proba_slow = m_slow.predict_proba(X_scaled)[:, slow_idx] * 100
+            for i, key in enumerate(pending_keys):
+                last_close, atr_smoothed = meta[key]
+                vol_adj = 1 - min(atr_smoothed / last_close, 0.1)
+                f_conf = round(float(proba_fast[i]) * vol_adj, 1)
+                s_conf = round(float(proba_slow[i]) * vol_adj, 1)
+                out[key] = _dual_result_from_conf(s_conf, f_conf)
+        except Exception as e:
+            if debug:
+                print(f"Error in dual batch predict: {e}")
+            for key in pending_keys:
+                out[key] = _dual_result_error()
+
+    return out
+
+
+# ----------------------
 # Persistence Filter
 # ----------------------
 _ML_HISTORY: dict = {}
