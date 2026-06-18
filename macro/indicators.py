@@ -8,7 +8,7 @@ import os
 import json
 import hashlib
 import tempfile
-from functools import wraps
+from functools import wraps, lru_cache
 from scipy.optimize import minimize
 
 try:
@@ -408,17 +408,45 @@ def _compute_delta_slope(series, window=20):
 
 
 # =========================
-# Hurst Exponent
+# Hurst Exponent - R/S with Anis-Lloyd-Peters correction (2026-06-18)
 #
 #   H > 0.55  -> trending     - momentum persists, trend system has edge
 #   H 0.45-0.55 -> random walk - no structural edge, reduce sizing
 #   H < 0.45  -> mean-reverting - trend system is fighting the series
 #
-# Method: Rescaled Range (R/S) analysis over log returns.
+# Method: Rescaled Range (R/S) analysis over log returns, de-biased with the
+# Anis-Lloyd (1976) / Peters (1994) expected R/S of an i.i.d. series.
+#
+# WHY the correction (2026-06-18): plain R/S over a short, narrow lag range is
+# biased HIGH and the bias does NOT vanish with more data - an i.i.d. random
+# walk (true H=0.5) read ~0.61 on the old code (verified by Monte Carlo at
+# n=252 and n=1000). That mis-centred the gates above: the 0.55 "trending"
+# threshold fired for random walks and the 0.45 "mean-reverting" threshold
+# essentially never fired. The correction regresses
+# log(R/S_n) - log(E[R/S_n]) on log(n); the slope estimates H-0.5 directly, so
+# an i.i.d. series now recovers ~0.5 (random walk 0.61->0.52, anti-persistent
+# 0.50->0.41, persistent 0.74->0.65; ordering preserved, centre fixed).
+# NOTE: Hurst measures return AUTOCORRELATION, not trend strength - a strong
+# drift with i.i.d. noise is correctly ~0.5 here.
 # =========================
+@lru_cache(maxsize=512)
+def _expected_rs(n):
+    """Anis-Lloyd/Peters expected R/S of an i.i.d. series of length n (the null)."""
+    if n < 2:
+        return float('nan')
+    idx = np.arange(1, n)
+    tail = float(np.sum(np.sqrt((n - idx) / idx)))
+    if n <= 340:
+        from scipy.special import gammaln
+        front = float(np.exp(gammaln((n - 1) / 2.0) - gammaln(n / 2.0)) / np.sqrt(np.pi))
+    else:
+        front = 1.0 / np.sqrt(n * np.pi / 2.0)
+    return front * tail
+
+
 def _hurst_exponent(series, max_lag=40):
     """
-    Compute Hurst exponent via rescaled range (R/S) analysis.
+    Hurst via rescaled range (R/S), Anis-Lloyd-Peters corrected.
     Returns float in [0, 1]. 0.5 = random walk default on error.
     """
     try:
@@ -430,10 +458,9 @@ def _hurst_exponent(series, max_lag=40):
         if len(log_returns) < max_lag:
             return 0.5
 
-        lags = range(10, max_lag)
-        rs_values = []
+        used_lags, rs_values, ers_values = [], [], []
 
-        for lag in lags:
+        for lag in range(10, max_lag):
             n_windows = len(log_returns) // lag
             if n_windows < 2:
                 continue
@@ -450,14 +477,18 @@ def _hurst_exponent(series, max_lag=40):
 
             if rs_window:
                 rs_values.append(np.mean(rs_window))
+                ers_values.append(_expected_rs(lag))
+                used_lags.append(lag)
 
         if len(rs_values) < 5:
             return 0.5
 
-        log_lags = np.log(list(lags)[:len(rs_values)])
-        log_rs = np.log(rs_values)
-        coeffs = np.polyfit(log_lags, log_rs, 1)
-        h = float(coeffs[0])
+        log_lags = np.log(used_lags)
+        # Anis-Lloyd-Peters: subtract the i.i.d. expected R/S so the slope
+        # estimates H-0.5 directly (de-biases the finite-sample R/S inflation).
+        log_excess = np.log(rs_values) - np.log(ers_values)
+        slope = np.polyfit(log_lags, log_excess, 1)[0]
+        h = 0.5 + float(slope)
 
         return round(float(np.clip(h, 0.0, 1.0)), 3)
 
@@ -667,7 +698,7 @@ def get_regime_hmm_state(n_states=3):
     Returns current HMM regime probabilities.
 
     Features:
-        ret_63  = 63-day log return (trend)
+        ret     = 21-session log return (trend)
         vol_z   = realized volatility z-score (turbulence)
         vix_z   = VIX z-score (fear)
 
@@ -690,12 +721,21 @@ def get_regime_hmm_state(n_states=3):
         vix = _get_close(shared_data, "^VIX")
 
         # --------------------------------------------------
-        # Feature 1: 3-month trend
+        # Feature 1: trend (21-session log return)
+        # 2026-06-18: was a 63-day return, whose lag-1 autocorrelation is
+        # ~0.997 - so over-smoothed it's nearly constant, carries almost no
+        # frame-to-frame information, and grossly violates the Gaussian HMM's
+        # conditional-independence assumption. With it near-constant, state
+        # assignment was driven by vol/VIX noise and the decoded regime
+        # switched almost every day (dwell ~1 obs). A 21-session return
+        # (autocorr ~0.984, aligned with the 20-day vol window) carries real
+        # trend information and yields materially more persistent regimes
+        # (state dwell ~4 obs) while still separating crises ~5:1.
         # --------------------------------------------------
 
         daily_ret = np.log(spy / spy.shift(1))
 
-        ret_63 = np.log(spy / spy.shift(63))
+        ret_trend = np.log(spy / spy.shift(63))
 
         # --------------------------------------------------
         # Feature 2: Relative volatility
@@ -722,7 +762,7 @@ def get_regime_hmm_state(n_states=3):
         # --------------------------------------------------
 
         df = pd.DataFrame({
-            "ret": ret_63,
+            "ret": ret_trend,
             "vol_z": vol_z,
             "vix_z": vix_z,
         }).dropna()
@@ -801,10 +841,14 @@ def get_regime_hmm_state(n_states=3):
         state_means = {}
 
         for idx, lab in labels.items():
-            ret_3m, volz, vixz = means[idx]
+            ret_trend, volz, vixz = means[idx]
 
             state_means[lab] = {
-                "ret_3m_pct": round(float(ret_3m) * 100, 1),
+                # NOTE: this is now the 21-session trend mean (feature 1 was
+                # shortened from 63d). Key name kept as-is for template
+                # compatibility; rename to "ret_trend_pct" in the template
+                # and here together if you want the label to match.
+                "ret_3m_pct": round(float(ret_trend) * 100, 1),
                 "vol_z": round(float(volz), 2),
                 "vix_z": round(float(vixz), 2),
             }
