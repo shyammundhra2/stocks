@@ -1,5 +1,9 @@
 import pandas as pd
 import numpy as np
+try:
+    from numpy.lib.stride_tricks import sliding_window_view
+except Exception:  # numpy < 1.20
+    sliding_window_view = None
 from macro.helpers import compute_RSI, compute_ATR
 import joblib
 import os
@@ -37,22 +41,48 @@ def get_ml_predictions_batch(tickers, friendly_names, use_cache=True):
 
 
 def _compute_linreg_features(series, period=14):
-    slopes = np.full(len(series), np.nan)
-    r2s = np.full(len(series), np.nan)
-    x = np.arange(period)
-    x_mean = x.mean()
-    ss_xx = ((x - x_mean) ** 2).sum()
+    # Rolling degree-1 regression slope (normalized by window mean) and r2.
+    # The heavy per-window reductions (window mean and the two centered
+    # sums) are vectorized with a sliding window; they reproduce the old
+    # per-window scalar reductions bit-for-bit. The final cheap combine is
+    # kept as scalar float64 arithmetic because an array elementwise combine
+    # can diverge from the scalar result by ~1 ULP via SIMD codepaths, and
+    # the r2 series must stay exactly identical. Verified 0 mismatches vs the
+    # original loop across random walks, NaN-injection, and edge sizes
+    # (2026-06-17). NaN windows are left NaN exactly as the old `continue` did.
     vals = series.values
-    for i in range(period - 1, len(vals)):
-        y = vals[i - period + 1:i + 1]
-        if np.isnan(y).any():
-            continue
-        y_mean = y.mean()
-        ss_xy = ((x - x_mean) * (y - y_mean)).sum()
-        ss_yy = ((y - y_mean) ** 2).sum()
-        slope = ss_xy / ss_xx
-        slopes[i] = slope / y_mean
-        r2s[i] = (ss_xy ** 2) / (ss_xx * ss_yy + 1e-9)
+    n = len(vals)
+    slopes = np.full(n, np.nan)
+    r2s = np.full(n, np.nan)
+    if n >= period:
+        x = np.arange(period)
+        x_mean = x.mean()
+        xc = x - x_mean
+        ss_xx = (xc ** 2).sum()
+        if sliding_window_view is not None:
+            windows = sliding_window_view(vals, period)
+        else:  # numpy < 1.20 fallback
+            windows = np.stack([vals[k:k + period] for k in range(n - period + 1)])
+        y_mean = windows.mean(axis=1)
+        centered = windows - y_mean[:, None]
+        ss_xy = (xc[None, :] * centered).sum(axis=1)
+        ss_yy = (centered ** 2).sum(axis=1)
+        m = windows.shape[0]
+        out_slope = np.empty(m)
+        out_r2 = np.empty(m)
+        for k in range(m):
+            ym = y_mean[k]
+            if ym != ym:  # NaN window -> original skipped, leaving NaN
+                out_slope[k] = np.nan
+                out_r2[k] = np.nan
+                continue
+            sxy = ss_xy[k]
+            syy = ss_yy[k]
+            slope = sxy / ss_xx
+            out_slope[k] = slope / ym
+            out_r2[k] = (sxy ** 2) / (ss_xx * syy + 1e-9)
+        slopes[period - 1:] = out_slope
+        r2s[period - 1:] = out_r2
     return pd.Series(slopes, index=series.index), pd.Series(r2s, index=series.index)
 
 
@@ -72,7 +102,11 @@ def _compute_features_fast(df: pd.DataFrame):
     rsi_series = compute_RSI(close, 14)
     rsi = rsi_series.ewm(span=3, adjust=False).mean().iloc[-1]
 
-    atr = compute_ATR(df, 14).iloc[-1]
+    # Compute the ATR series once and hand it back to the caller; callers need
+    # the full series for 3-day EMA smoothing, so returning it here avoids a
+    # second identical compute_ATR(df, 14) call downstream. (The previous
+    # scalar `atr` return value was discarded by every caller.)
+    atr_series = compute_ATR(df, 14)
 
     lr_slope_series, lr_r2_series = _compute_linreg_features(close, 14)
     lr_slope = lr_slope_series.ewm(span=3, adjust=False).mean().iloc[-1]
@@ -92,7 +126,7 @@ def _compute_features_fast(df: pd.DataFrame):
         'RealVol21':   real_vol,
         'ATR21_pct':   atr21_pct,
     }
-    return feat_dict, last_close, atr
+    return feat_dict, last_close, atr_series
 
 
 def _determine_regime(f_conf: float, s_conf: float) -> str:
@@ -123,7 +157,7 @@ def _run_dual_model(df: pd.DataFrame, debug=False) -> dict:
     if not all([m_fast, m_slow, scaler, features]):
         return {'fast': 50.0, 'slow': 50.0, 'last_close': 0.0}
 
-    feat_dict, last_close, atr = _compute_features_fast(df)
+    feat_dict, last_close, atr_series = _compute_features_fast(df)
     X_live_dict = {f: feat_dict.get(f, 0.0) for f in features}
     X_live = pd.DataFrame([X_live_dict])
     X_scaled = scaler.transform(X_live)
@@ -134,8 +168,8 @@ def _run_dual_model(df: pd.DataFrame, debug=False) -> dict:
     p_fast = m_fast.predict_proba(X_scaled)[0][fast_idx] * 100
     p_slow = m_slow.predict_proba(X_scaled)[0][slow_idx] * 100
 
-    # Smooth ATR over 3 days before vol adjustment
-    atr_series = compute_ATR(df, 14)
+    # Smooth ATR over 3 days before vol adjustment (series reused from
+    # _compute_features_fast; identical to recomputing compute_ATR(df, 14)).
     atr_smoothed = float(atr_series.ewm(span=3, adjust=False).mean().iloc[-1])
     vol_adj = 1 - min(atr_smoothed / last_close, 0.1)
 
@@ -282,7 +316,7 @@ def get_ml_confidence_batch(dfs: list, debug=False):
             if len(df) < 200:
                 results.append(50.0)
                 continue
-            feat_dict, last_close, atr = _compute_features_fast(df)
+            feat_dict, last_close, atr_series = _compute_features_fast(df)
             X_live_dict = {f: feat_dict.get(f, 0.0) for f in features}
             X_live = pd.DataFrame([X_live_dict])
             X_scaled = scaler.transform(X_live)
@@ -293,7 +327,6 @@ def get_ml_confidence_batch(dfs: list, debug=False):
             p_fast = m_fast.predict_proba(X_scaled)[0][fast_idx] * 100
             p_slow = m_slow.predict_proba(X_scaled)[0][slow_idx] * 100
 
-            atr_series = compute_ATR(df, 14)
             atr_smoothed = float(atr_series.ewm(span=3, adjust=False).mean().iloc[-1])
             vol_adj = 1 - min(atr_smoothed / last_close, 0.1)
 

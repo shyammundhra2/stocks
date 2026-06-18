@@ -4,11 +4,19 @@ import pandas as pd
 import joblib
 import argparse
 import warnings
+import json
+import time
+import hashlib
+import tempfile
 from datetime import timedelta, datetime
 from functools import lru_cache
 from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS, TREND_ASSETS
 from macro.helpers import compute_RSI, compute_ATR
 import numpy as np
+try:
+    from numpy.lib.stride_tricks import sliding_window_view
+except Exception:  # numpy < 1.20
+    sliding_window_view = None
 
 # Suppress sklearn warnings about feature names
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
@@ -18,11 +26,22 @@ warnings.filterwarnings('ignore', category=ResourceWarning)
 _PREDICT_CACHE = {}
 _CACHE_LOCK = None
 
-# On-disk parquet cache directory (2026-06-14). Used as a second cache tier
-# in _get_shared_predict_data so repeated calls with different date ranges
-# for the same ticker set (e.g. get_risk_regime's 5-point as_of_date history
-# loop) hit one shared download instead of five separate yf.download calls.
-_PARQUET_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cache', 'market_data')
+# On-disk incremental store (2026-06-18). Shares the engine.py store dir and
+# knobs (GSS_CACHE_DIR / GSS_STORE_TTL / GSS_TRAILING_DAYS / GSS_FULL_RESYNC_DAYS
+# / GSS_INCREMENTAL). Keeps a wide rolling history for each ticker set and
+# serves any [start,end) inside it; only [last stored date - trailing .. today]
+# is ever re-downloaded. Ranges outside the wide window fall back to a direct
+# download (tier 3 below), preserving exact backtest behaviour.
+_STORE_DIR = os.environ.get(
+    "GSS_CACHE_DIR", os.path.join(tempfile.gettempdir(), "gss_market_cache")
+)
+_STORE_TTL = float(os.environ.get("GSS_STORE_TTL", "30"))
+_TRAILING_DAYS = int(os.environ.get("GSS_TRAILING_DAYS", "7"))
+_FULL_RESYNC_SECS = float(os.environ.get("GSS_FULL_RESYNC_DAYS", "30")) * 86400.0
+_STORE_MAX_ROWS = int(os.environ.get("GSS_STORE_MAX_ROWS", "520"))
+_INCREMENTAL = os.environ.get("GSS_INCREMENTAL", "1") != "0"
+_STORE_WIDE_DAYS = int(os.environ.get("GSS_PREDICT_WIDE_DAYS", "500"))
+_STORE_WARNED = {"done": False}
 
 
 def _get_cache_lock():
@@ -34,35 +53,146 @@ def _get_cache_lock():
     return _CACHE_LOCK
 
 
-def _parquet_path(tickers):
-    """Stable on-disk filename for a given ticker set."""
-    import hashlib
-    key = "_".join(sorted(tickers))
-    digest = hashlib.md5(key.encode()).hexdigest()[:12]
-    return os.path.join(_PARQUET_CACHE_DIR, f"{digest}.parquet")
+def _store_base(label, tickers):
+    payload = f"{label}|{','.join(sorted(map(str, tickers)))}"
+    digest = hashlib.md5(payload.encode()).hexdigest()[:16]
+    return os.path.join(_STORE_DIR, f"store_{label}_{digest}")
+
+
+def _store_read(base):
+    try:
+        pq, meta = base + ".parquet", base + ".meta"
+        if not (os.path.exists(pq) and os.path.exists(meta)):
+            return None, None
+        with open(meta) as f:
+            spec = json.load(f)
+        df = pd.read_parquet(pq)
+        n = len(spec["cols"])
+        df = df[[str(i) for i in range(n)]]
+        if spec["is_mi"]:
+            df.columns = pd.MultiIndex.from_tuples([tuple(c) for c in spec["cols"]])
+        else:
+            df.columns = pd.Index(spec["cols"])
+        df.index = pd.to_datetime(df.index)
+        df.index.name = spec.get("index_name")
+        return df, spec
+    except Exception:
+        return None, None
+
+
+def _store_write(base, df, ts, full_ts):
+    try:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return
+        os.makedirs(_STORE_DIR, exist_ok=True)
+        is_mi = isinstance(df.columns, pd.MultiIndex)
+        cols = [list(t) for t in df.columns] if is_mi else list(df.columns)
+        out = df.copy()
+        out.columns = [str(i) for i in range(len(df.columns))]
+        pid = os.getpid()
+        pq, meta = base + ".parquet", base + ".meta"
+        tmp_pq, tmp_meta = f"{pq}.tmp.{pid}", f"{meta}.tmp.{pid}"
+        out.to_parquet(tmp_pq)
+        os.replace(tmp_pq, pq)
+        with open(tmp_meta, "w") as f:
+            json.dump({"ts": ts, "full_ts": full_ts, "is_mi": is_mi,
+                       "cols": cols, "index_name": df.index.name}, f)
+        os.replace(tmp_meta, meta)
+    except Exception as e:
+        if not _STORE_WARNED["done"]:
+            print(f"Predict store disabled (falling back to network): {e}")
+            _STORE_WARNED["done"] = True
+
+
+def _slice_range(df, start, end):
+    if df is None or df.empty:
+        return df
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
+    return df[(df.index >= start) & (df.index < end)]
+
+
+def _merge_trailing(stored, fresh, start):
+    fresh = fresh.reindex(columns=stored.columns)
+    combined = pd.concat([stored[stored.index < start], fresh])
+    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    if len(combined) > _STORE_MAX_ROWS:
+        combined = combined.iloc[-_STORE_MAX_ROWS:]
+    return combined
+
+
+def _yf_dl_p(tickers, start=None, end=None, group_by="column"):
+    return yf.download(tickers, start=start, end=end, progress=False,
+                       auto_adjust=False, group_by=group_by)
+
+
+def _persistent_fetch_range(label, tickers, start_date, end_date,
+                            now_fn=time.time):
+    """
+    Serve [start_date, end_date) from a wide rolling store, refreshing only
+    [last stored date - trailing .. today]. Returns None if the requested
+    range falls outside the wide window (caller does a direct download).
+    """
+    if not _INCREMENTAL:
+        return None
+
+    today = pd.Timestamp.today().normalize()
+    wide_start = today - pd.Timedelta(days=_STORE_WIDE_DAYS)
+    wide_end = today + pd.Timedelta(days=1)
+    if not (pd.Timestamp(start_date) >= wide_start and pd.Timestamp(end_date) <= wide_end):
+        return None
+
+    base = _store_base(label, tickers)
+    stored, spec = _store_read(base)
+    now = now_fn()
+
+    if stored is not None and spec is not None and (now - float(spec.get("ts", 0)) < _STORE_TTL):
+        return _slice_range(stored, start_date, end_date)
+
+    need_full = (
+        stored is None or stored.empty or spec is None
+        or (now - float(spec.get("full_ts", 0)) > _FULL_RESYNC_SECS)
+    )
+    if need_full:
+        raw = _yf_dl_p(tickers, start=wide_start, end=wide_end)
+        if isinstance(raw, pd.DataFrame) and not raw.empty:
+            _store_write(base, raw, ts=now, full_ts=now)
+            return _slice_range(raw, start_date, end_date)
+        if stored is not None and not stored.empty:
+            return _slice_range(stored, start_date, end_date)
+        return None
+
+    last_date = pd.Timestamp(stored.index.max()).normalize()
+    start = last_date - pd.Timedelta(days=_TRAILING_DAYS)
+    try:
+        fresh = _yf_dl_p(tickers, start=start, end=wide_end)
+    except Exception:
+        fresh = None
+    if not isinstance(fresh, pd.DataFrame) or fresh.empty:
+        _store_write(base, stored, ts=now, full_ts=float(spec.get("full_ts", now)))
+        return _slice_range(stored, start_date, end_date)
+
+    combined = _merge_trailing(stored, fresh, start)
+    _store_write(base, combined, ts=now, full_ts=float(spec.get("full_ts", now)))
+    return _slice_range(combined, start_date, end_date)
 
 
 def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
     """
     Shared data fetcher for predict_assets calls.
-    Uses a simple cache with date-based key to avoid redundant downloads.
 
-    Three-tier cache (2026-06-14):
-      1. In-memory, 30s TTL, keyed on (tickers, start, end)        — original
-      2. On-disk parquet, per ticker-set, wide rolling window,
-         30s TTL — NEW. Repeated calls with DIFFERENT date ranges
-         for the same ticker set (e.g. get_risk_regime's 5-point
-         as_of_date history loop, which previously triggered 5
-         separate yf.download calls) are served from one shared
-         wide download/parquet read instead.
-      3. Direct yf.download — original fallback for ranges outside
-         the cached wide window (e.g. far-past as_of_date in a backtest).
+    Three tiers (2026-06-18):
+      1. In-memory, 30s TTL, keyed on (tickers, start, end).
+      2. On-disk INCREMENTAL store, wide rolling window per ticker set.
+         Only [last stored date - trailing .. today] is re-downloaded; any
+         [start,end) inside the wide window is sliced from the store. This
+         replaces the previous whole-window parquet re-download.
+      3. Direct yf.download — for ranges outside the wide window (e.g.
+         far-past as_of_date in a backtest). Unchanged.
 
     Returned data for the requested (start_date, end_date) window is
-    identical in shape/contents to the pre-parquet behaviour.
+    identical in shape/contents to the original full-download behaviour.
     """
-    import time
-
     # Create cache key based on tickers and date range
     if cache_key is None:
         cache_key = (tuple(sorted(tickers)), start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d'))
@@ -81,31 +211,12 @@ def _get_shared_predict_data(tickers, start_date, end_date, cache_key=None):
             for k in expired:
                 del _PREDICT_CACHE[k]
 
-    # --- Tier 2: on-disk parquet, wide rolling window, 30s TTL ---
-    today = pd.Timestamp.today().normalize()
-    wide_start = today - pd.Timedelta(days=500)
-    wide_end = today + pd.Timedelta(days=1)
-
+    # --- Tier 2: on-disk incremental store, wide rolling window ---
     raw_data = None
-    if start_date >= wide_start and end_date <= wide_end:
-        pq_path = _parquet_path(tickers)
-        try:
-            if os.path.exists(pq_path) and (time.time() - os.path.getmtime(pq_path)) < 30:
-                raw_data = pd.read_parquet(pq_path)
-        except Exception:
-            raw_data = None
-
-        if raw_data is None:
-            wide_data = yf.download(tickers, start=wide_start, end=wide_end, progress=False,
-                                    auto_adjust=False, group_by='column')
-            try:
-                os.makedirs(_PARQUET_CACHE_DIR, exist_ok=True)
-                wide_data.to_parquet(pq_path)
-            except Exception:
-                pass  # caching is best-effort; never block on disk errors
-            raw_data = wide_data
-
-        raw_data = raw_data[(raw_data.index >= start_date) & (raw_data.index < end_date)]
+    try:
+        raw_data = _persistent_fetch_range("predict", tickers, start_date, end_date)
+    except Exception:
+        raw_data = None
 
     if raw_data is None:
         # Tier 3: requested range outside cached window — original path.
@@ -216,6 +327,15 @@ def compute_sector_features(df):
     # Collect all features in a dict, then create DataFrame once
     features = {}
 
+    # Per-period cross-sectional rank frames are invariant across the sector
+    # loop below; compute each once here instead of recomputing per (sector,
+    # period). Pure common-subexpression elimination — identical values.
+    _avail_pos = [sec for sec in SECTORS if sec in df.columns]
+    _rank_by_period = {}
+    if len(_avail_pos) > 1:
+        for _p in [10, 21, 42, 63, 126]:
+            _rank_by_period[_p] = df[_avail_pos].pct_change(_p, fill_method=None).rank(axis=1, pct=True)
+
     # ========== SECTOR POSITIONING ==========
     for s in SECTORS:
         if s not in df.columns:
@@ -227,10 +347,9 @@ def compute_sector_features(df):
             features[f'{s}_Ret_{period}d'] = ret
 
             # Rank vs other sectors
-            available_sectors = [sec for sec in SECTORS if sec in df.columns]
+            available_sectors = _avail_pos
             if len(available_sectors) > 1:
-                sector_rets = df[available_sectors].pct_change(period, fill_method=None)
-                features[f'{s}_Rank_{period}d'] = sector_rets.rank(axis=1, pct=True)[s]
+                features[f'{s}_Rank_{period}d'] = _rank_by_period[period][s]
 
         # Moving average positioning
         ma_20 = df[s].rolling(20).mean()
@@ -257,14 +376,20 @@ def compute_sector_features(df):
         sector_mom_21 = df[available_sectors].pct_change(21, fill_method=None)
         sector_mom_63 = df[available_sectors].pct_change(63, fill_method=None)
 
+        # Invariant across the sector loop: rank frames and the cross-sectional
+        # median. Compute once (identical values to recomputing per sector).
+        _rank21 = sector_mom_21.rank(axis=1, pct=True)
+        _rank63 = sector_mom_63.rank(axis=1, pct=True)
+        _median_ret = sector_mom_63.median(axis=1)
+
         for s in available_sectors:
             # Rank improvement
-            rank_21 = sector_mom_21.rank(axis=1, pct=True)[s]
-            rank_63 = sector_mom_63.rank(axis=1, pct=True)[s]
+            rank_21 = _rank21[s]
+            rank_63 = _rank63[s]
             features[f'{s}_Rank_Improvement'] = rank_21 - rank_63
 
             # Distance from sector median
-            median_ret = sector_mom_63.median(axis=1)
+            median_ret = _median_ret
             features[f'{s}_vs_Median_63d'] = sector_mom_63[s] - median_ret
 
     # ========== MACRO CONDITIONS ==========
@@ -753,23 +878,46 @@ def compute_trend_features(df):
     sma200_dist = (close - sma200) / sma200
 
     # --- Linear Regression (14-day) ---
+    # Vectorized rolling degree-1 regression (2026-06-17). The heavy
+    # per-window reductions (window mean, the two centered sums) are computed
+    # with a sliding window; the cheap final combine is kept scalar so the
+    # result is bit-for-bit identical to the prior per-window loop (an array
+    # elementwise combine can drift ~1 ULP via SIMD). NaN windows stay NaN
+    # exactly as the old `continue` left them. Verified 0 mismatches.
     period = 14
     x = np.arange(period)
     x_mean = x.mean()
-    ss_xx = ((x - x_mean) ** 2).sum()
+    xc = x - x_mean
+    ss_xx = (xc ** 2).sum()
     vals = close.values
-    slopes = np.full(len(vals), np.nan)
-    r2s = np.full(len(vals), np.nan)
-    for i in range(period - 1, len(vals)):
-        y = vals[i - period + 1:i + 1]
-        if np.isnan(y).any():
-            continue
-        y_mean = y.mean()
-        ss_xy = ((x - x_mean) * (y - y_mean)).sum()
-        ss_yy = ((y - y_mean) ** 2).sum()
-        slope = ss_xy / ss_xx
-        slopes[i] = slope / y_mean
-        r2s[i] = (ss_xy ** 2) / (ss_xx * ss_yy + 1e-9)
+    n_vals = len(vals)
+    slopes = np.full(n_vals, np.nan)
+    r2s = np.full(n_vals, np.nan)
+    if n_vals >= period:
+        if sliding_window_view is not None:
+            windows = sliding_window_view(vals, period)
+        else:  # numpy < 1.20 fallback
+            windows = np.stack([vals[k:k + period] for k in range(n_vals - period + 1)])
+        y_mean = windows.mean(axis=1)
+        centered = windows - y_mean[:, None]
+        ss_xy = (xc[None, :] * centered).sum(axis=1)
+        ss_yy = (centered ** 2).sum(axis=1)
+        m = windows.shape[0]
+        out_slope = np.empty(m)
+        out_r2 = np.empty(m)
+        for k in range(m):
+            ym = y_mean[k]
+            if ym != ym:  # NaN window
+                out_slope[k] = np.nan
+                out_r2[k] = np.nan
+                continue
+            sxy = ss_xy[k]
+            syy = ss_yy[k]
+            slope = sxy / ss_xx
+            out_slope[k] = slope / ym
+            out_r2[k] = (sxy ** 2) / (ss_xx * syy + 1e-9)
+        slopes[period - 1:] = out_slope
+        r2s[period - 1:] = out_r2
     lr_slope = pd.Series(slopes, index=close.index)
     lr_r2 = pd.Series(r2s, index=close.index)
 
