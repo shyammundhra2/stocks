@@ -69,7 +69,7 @@ TREND_ASSETS = {
     "MOO": "Agri",
     "FCG": "FCG Natural Gas Stocks",
     "COAL": "Coal Stocks",
-    "CCJ": "Cameco",
+    "URNM": "Uranium Stocks",
     "COPX": "Copper Stocks",
     "WOOD" : "Lumber Stocks",
 

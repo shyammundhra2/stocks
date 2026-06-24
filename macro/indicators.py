@@ -1644,7 +1644,7 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
     if slope <= 0 or r2 < 0.15:
         return zero
 
-    if ml_conf_slow < 45:
+    if ml_conf_slow < 42:
         return zero
 
     if price <= 0 or atr <= 0 or stop_price >= price:
@@ -1887,13 +1887,22 @@ def get_trends():
                 status = "TRIM (EXTENDED)"
 
             elif slope_z > 1.5 and delta_slope < -3:
-                # Momentum elevated but decelerating hard
+
                 status = "TRIM (FADING MOMENTUM)"
 
-            elif p_stop > 0.55 and last > s50:
-                # Geometry unfavorable - stop more likely than target
-                status = "TRIM (GEOMETRY)"
+                # Mean-reversion swing: oversold dip inside an intact uptrend.
+                # MUST sit above the geometry / negative-slope / position-size
+                # trims below — each would otherwise shadow it. A down-leg sharp
+                # enough to print rsi<30 also tends to push p_stop>0.55 and
+                # slope<-2, and because _compute_kelly_size rejects slope<=0 it
+                # forces pos_size==0. Naturally exclusive with SELL(MA50) via
+                # last>s50 and with the slope_z>0 branches above.
 
+            elif (hurst < 0.45 and last > s50 and rsi14 < 30
+                and slope_z < -1.5 and slope < 0):
+                status = "BUY (MR SWING)"
+            elif p_stop > 0.55 and last > s50:
+                status = "TRIM (GEOMETRY)"
             elif slope < -2:
                 # Slope significantly negative
                 status = "TRIM (NEGATIVE SLOPE)"
