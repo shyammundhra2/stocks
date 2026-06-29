@@ -1765,7 +1765,7 @@ def get_trends():
             ma_50 = c.rolling(50, min_periods=1).mean()
             ma_200 = c.rolling(200, min_periods=1).mean()
 
-            slope, r2 = _trend_stats(c, 10, 10)
+            slope, r2 = _trend_stats(c, 20, 10)
 
             # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
             # for dashboard monitoring; never consumed by sizing or status.
@@ -1792,23 +1792,26 @@ def get_trends():
             # Hurst exponent - trend persistence
             hurst = _hurst_exponent(c, max_lag=40)
 
-            # Z-Score calculation - vectorized rolling 10-day log-slope
-            # (2026-06-17). Replaces the per-window _trend_stats(win,10,10)
-            # loop (~50 polyfits/ticker) with one sliding-window dot product.
-            # For window=10, scale=10: slope = (centered_x . log_prices) /
-            # 82.5 * 1000, rounded to 2dp - identical to what the loop
-            # produced (verified bit-for-bit vs the loop across random walks).
-            # 82.5 = sum((arange(10)-4.5)**2).
+            # Z-Score calculation - vectorized rolling 20-day log-slope
+            # (2026-06-29; window widened 10->20 with the headline trend).
+            # For window=20, scale=10: slope = (centered_x . log_prices) /
+            # 665 * 1000 - same closed-form OLS, now over a 20-bar window
+            # so the z-score is built from 20-day slopes (consistent with
+            # the 20-day headline slope above). 665 = sum((arange(20)-9.5)**2).
+            # scale stays 10 -> slope remains "1000 x daily log return", the
+            # convention kelly-size / p_stop / target projection all assume.
+            # Scan window kept at 60 bars -> 41 historical slopes (was 51 at
+            # window=10); widen the 60 to ~70 if you want the same sample depth.
             c_len = len(c)
             start_idx = max(0, c_len - 60)
             seg = np.log(c.values[start_idx:])
-            if len(seg) >= 10:
+            if len(seg) >= 20:
                 if sliding_window_view is not None:
-                    _windows = sliding_window_view(seg, 10)
+                    _windows = sliding_window_view(seg, 20)
                 else:  # numpy < 1.20 fallback
-                    _windows = np.stack([seg[k:k + 10] for k in range(len(seg) - 9)])
-                _xc = np.arange(10) - 4.5
-                hist_slopes = np.round((_windows @ _xc) / 82.5 * 1000.0, 2)
+                    _windows = np.stack([seg[k:k + 20] for k in range(len(seg) - 19)])
+                _xc = np.arange(20) - 9.5
+                hist_slopes = np.round((_windows @ _xc) / 665.0 * 1000.0, 2)
             else:
                 hist_slopes = np.empty(0)
 
