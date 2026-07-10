@@ -1965,17 +1965,15 @@ def get_trends():
             print(f"Error in trend loop for {sym}: {e}")
             continue
 
-    # Sort by conviction: slope * r2 * strength, with p_stop as tiebreaker
-    # for the slope<=0 cluster (where slope*r2*strength == 0 for all of
-    # them) - lower p_stop ranks higher among ties, surfacing instruments
-    # with the best stop geometry even when the system won't allocate to
-    # them. reverse=True applies to both tuple elements; -p_stop ascending
-    # under reverse=True yields p_stop ascending overall (verified).
+    # Sort by conviction: slope * r2 * strength, with slope * r2 as tiebreaker
+    # for the slope<=0 cluster (where strength == 0 for all of them, but
+    # slope*r2 itself isn't) - surfaces instruments closest to a trend flip
+    # even when the system won't allocate to them.
     sorted_results = sorted(
         results,
         key=lambda x: (
             x["slope"] * x["r2"] * x.get("strength", x["r2"]),
-            -x.get("p_stop", 0.5)
+            x["slope"] * x["r2"]
         ),
         reverse=True
     )
