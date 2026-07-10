@@ -71,6 +71,7 @@ TREND_ASSETS = {
     "COAL": "Coal Stocks",
     "URNM": "Uranium Stocks",
     "COPX": "Copper Stocks",
+    "SLX": "Steel Stocks",
     "WOOD" : "Lumber Stocks",
 
     # International Equities
