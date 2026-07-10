@@ -654,11 +654,24 @@ def _fit_regime_hmm(X, n_states=3, n_iter=100):
     if len(X) < 60:
         return None, None
 
+    # Sticky transition prior (Dirichlet pseudo-counts, diagonal-weighted):
+    # without it, EM on this feature set converges to a degenerate solution
+    # where two of the three states ping-pong daily (self-transition ~0.003
+    # and ~0.024) instead of persisting - the "not converging" warnings seen
+    # in practice are a symptom of this. A mild self-transition prior fixes
+    # persistence AND finds a fit with materially higher data log-likelihood
+    # (-893 vs -1683 on a 2016-2026 SPY/VIX backtest), so this isn't a
+    # smoothness/accuracy tradeoff - the unregularized fit was a worse local
+    # optimum, not a truer one.
+    transmat_prior = np.ones((n_states, n_states))
+    np.fill_diagonal(transmat_prior, 10.0)
+
     model = hmm.GaussianHMM(
         n_components=n_states,
         covariance_type="diag",
         n_iter=n_iter,
         random_state=42,
+        transmat_prior=transmat_prior,
     )
 
     model.fit(X)
