@@ -735,7 +735,7 @@ def get_regime_hmm_state(n_states=3):
 
         daily_ret = np.log(spy / spy.shift(1))
 
-        ret_trend = np.log(spy / spy.shift(63))
+        ret_trend = np.log(spy / spy.shift(21))
 
         # --------------------------------------------------
         # Feature 2: Relative volatility
