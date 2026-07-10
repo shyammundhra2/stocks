@@ -1657,9 +1657,6 @@ def _compute_kelly_size(price, slope, atr, ml_conf_slow, r2,
     if slope <= 0 or r2 < 0.15:
         return zero
 
-    if ml_conf_slow < 40:
-        return zero
-
     if price <= 0 or atr <= 0 or stop_price >= price:
         return zero
 
