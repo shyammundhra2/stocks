@@ -123,6 +123,19 @@
                         <span class="label-small">{{ item.sym }} — ${{ item.price }}</span>
                         <p class="font-bold text-white leading-tight">{{ item.name }}</p>
                         <p class="text-[10px] text-green-400 font-mono mt-1">ALLOCATION: {{ item.pos_size }}</p>
+
+                        {# --- Trend vs. mean-revert posture (~2-3mo) --- #}
+                        {% if item.persistence_label is defined %}
+                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider
+                            {{ 'bg-green-500/15 text-green-400'   if item.persistence_label == 'TREND'
+                               else 'bg-orange-500/15 text-orange-400' if item.persistence_label == 'MEAN-REVERT'
+                               else 'bg-slate-600/30 text-slate-300' }}"
+                            title="~2-3 month posture. Blend of Hurst {{ item.hurst }}, variance ratio(21) {{ item.vr21 }}, weekly autocorr {{ item.wk_autocorr }}. Score {{ item.persistence_score }} in [-1 revert, +1 trend].">
+                            <span class="text-sm leading-none">{{ item.persistence_arrow }}</span>
+                            {{ item.persistence_label }}
+                            <span class="font-mono opacity-70">{{ item.persistence_score }}</span>
+                        </span>
+                        {% endif %}
                     </div>
                     <div class="text-right">
                         <p class="text-xl font-black
@@ -182,6 +195,19 @@
                             Hurst: {{ item.hurst }}
                             {% if item.hurst > 0.55 %}&nbsp;↑ trending{% endif %}
                             {% if item.hurst < 0.45 %}&nbsp;⚠ mean-reverting{% endif %}
+                        </p>
+                        {% endif %}
+
+                        {% if item.persistence_label is defined %}
+                        <p class="mt-1
+                            {{ 'text-green-400'  if item.persistence_label == 'TREND'
+                               else 'text-orange-400' if item.persistence_label == 'MEAN-REVERT'
+                               else 'text-slate-400' }}">
+                            Posture: {{ item.persistence_arrow }} {{ item.persistence_label }}
+                            ({{ item.persistence_score }})
+                        </p>
+                        <p class="text-slate-500">
+                            VR21: {{ item.vr21 }} &nbsp;|&nbsp; wk-ac: {{ item.wk_autocorr }}
                         </p>
                         {% endif %}
 

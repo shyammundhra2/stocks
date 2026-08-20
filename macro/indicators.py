@@ -497,6 +497,97 @@ def _hurst_exponent(series, max_lag=40):
 
 
 # =========================
+# Trend vs. Mean-Reversion persistence (2026-08-20)
+#
+# Three complementary, near-orthogonal views of whether a series persists
+# (trends) or reverts, each normalized so +1 = strongly trending and
+# -1 = strongly mean-reverting, then blended. Read as a ~2-3 month
+# characterization: the persistence *regime* (does this asset trend or
+# chop?) is far more stable across a quarter than its direction, so the
+# label is a forward posture, not a price forecast.
+#
+#   Hurst (R/S, above)        long-range dependence   H>0.5 trend, <0.5 revert
+#   Variance ratio (q=21)     Lo-MacKinlay VR         VR>1 trend, <1 revert
+#   Weekly return autocorr    lag-1 of 5-day blocks   +ve momentum, -ve reversal
+# =========================
+def _variance_ratio(series, q=21):
+    """
+    Lo-MacKinlay overlapping variance ratio at horizon q, with the
+    unbiased (heteroskedasticity-consistent) denominator. Returns 1.0
+    (random-walk null) on error or insufficient data. VR>1 => positive
+    serial correlation (trending); VR<1 => mean reversion.
+    """
+    try:
+        c = np.asarray(series.dropna() if hasattr(series, 'dropna') else series, dtype=float)
+        r = np.diff(np.log(c))
+        n = len(r)
+        if n < q * 3:
+            return 1.0
+        mu = r.mean()
+        var1 = np.sum((r - mu) ** 2) / (n - 1)
+        if var1 <= 0:
+            return 1.0
+        # overlapping q-period returns = rolling sums of q consecutive 1-day returns
+        rq = np.convolve(r, np.ones(q), 'valid')
+        # Lo-MacKinlay unbiased scaling m = q(n-q+1)(1 - q/n); the q factor in m
+        # makes varq the *per-period* variance of q-day returns, so VR = varq/var1.
+        m = q * (n - q + 1) * (1.0 - q / n)
+        if m <= 0:
+            return 1.0
+        varq = np.sum((rq - q * mu) ** 2) / m
+        vr = varq / var1
+        return round(float(vr), 3)
+    except Exception:
+        return 1.0
+
+
+def _return_autocorr(series, block=5, lag=1):
+    """
+    Lag-1 autocorrelation of non-overlapping block (weekly, 5-day) returns.
+    Positive => momentum/continuation, negative => short-term reversal.
+    Returns 0.0 (no signal) on error or too few blocks.
+    """
+    try:
+        c = np.asarray(series.dropna() if hasattr(series, 'dropna') else series, dtype=float)
+        r = np.diff(np.log(c))
+        k = len(r) // block
+        if k < 8:
+            return 0.0
+        rb = r[:k * block].reshape(k, block).sum(axis=1)
+        rb = rb - rb.mean()
+        denom = np.sum(rb ** 2)
+        if denom <= 0:
+            return 0.0
+        num = np.sum(rb[:-lag] * rb[lag:])
+        return round(float(num / denom), 3)
+    except Exception:
+        return 0.0
+
+
+def _persistence_classify(hurst, vr, autocorr):
+    """
+    Blend the three persistence views into one score in [-1, 1] and a
+    label/arrow. +1 = strongly trending, -1 = strongly mean-reverting.
+    Weights: Hurst 0.4, variance ratio 0.4, weekly autocorr 0.2.
+    """
+    s_h = np.clip((hurst - 0.5) / 0.15, -1.0, 1.0)      # H 0.65->+1, 0.35->-1
+    s_vr = np.clip((vr - 1.0) / 0.5, -1.0, 1.0)          # VR 1.5->+1, 0.5->-1
+    s_ac = np.clip(autocorr / 0.2, -1.0, 1.0)            # ac +/-0.2 -> +/-1
+    score = float(np.clip(0.4 * s_h + 0.4 * s_vr + 0.2 * s_ac, -1.0, 1.0))
+    if score > 0.15:
+        label, arrow = "TREND", "↑"
+    elif score < -0.15:
+        label, arrow = "MEAN-REVERT", "↻"
+    else:
+        label, arrow = "NEUTRAL", "↔"
+    return {
+        "persistence_score": round(score, 3),
+        "persistence_label": label,
+        "persistence_arrow": arrow,
+    }
+
+
+# =========================
 # Stop Hit Probability - CORRECTED (2026-06-11)
 #
 # P(hit stop at log-distance a<0 before target at b>0 | BM with drift mu):
@@ -1802,6 +1893,12 @@ def get_trends():
             # Hurst exponent - trend persistence
             hurst = _hurst_exponent(c, max_lag=40)
 
+            # Trend vs. mean-reversion posture (~2-3mo). Hurst + variance
+            # ratio (q=21) + weekly-return autocorr, blended to one score.
+            vr21 = _variance_ratio(c, q=21)
+            wk_autocorr = _return_autocorr(c, block=5, lag=1)
+            persistence = _persistence_classify(hurst, vr21, wk_autocorr)
+
             # Z-Score calculation - vectorized rolling 20-day log-slope
             # (2026-06-29; window widened 10->20 with the headline trend).
             # For window=20, scale=10: slope = (centered_x . log_prices) /
@@ -1957,6 +2054,11 @@ def get_trends():
                 "slope_z": round(slope_z, 2),
                 "delta_slope": round(delta_slope, 4),
                 "hurst": hurst,                     # trend persistence [0,1]
+                "vr21": vr21,                       # Lo-MacKinlay VR (q=21): >1 trend, <1 revert
+                "wk_autocorr": wk_autocorr,         # weekly-return lag-1 autocorr
+                "persistence_score": persistence["persistence_score"],   # [-1,1]: +trend, -revert
+                "persistence_label": persistence["persistence_label"],   # TREND/NEUTRAL/MEAN-REVERT
+                "persistence_arrow": persistence["persistence_arrow"],   # ↑ / ↔ / ↻
                 "p_stop": p_stop,                   # corrected stop-before-target prob
                 "stop": position['stop'],
                 "target": position['target'],
