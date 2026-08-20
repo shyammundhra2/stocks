@@ -59,9 +59,11 @@ TEST_START = END - pd.DateOffset(years=2)
 DATA_START = TEST_START - pd.DateOffset(years=2)  # burn-in for 200MA, hurst, etc.
 
 PORTFOLIO_VALUE = 500_000
+REBAL_EVERY = 10          # rebalance every N trading days (hold ~2 weeks)
+CASH_TICKER = "SGOV"      # 0-3mo T-bill ETF: undeployed weight earns its yield
 REGIME_TICKERS = ["HYG", "IEF", "^TNX", "^IRX", "JPY=X", "RSP", "^VIX", "^MOVE"]
 TREND_SYMS = list(TREND_ASSETS.keys())
-ALL_TICKERS = sorted(set(TREND_SYMS) | set(REGIME_TICKERS))
+ALL_TICKERS = sorted(set(TREND_SYMS) | set(REGIME_TICKERS) | {CASH_TICKER})
 
 
 def download_all():
@@ -217,40 +219,48 @@ def walk_forward(raw):
     summaries = []
     t0 = time.time()
 
+    # Rebalance only every REBAL_EVERY days; hold the book (constant target
+    # weights) between rebalances. The optimizer runs on rebalance days only,
+    # which is both the "hold 2 weeks" semantics and a ~REBAL_EVERY-x speedup.
+    held = []   # last rebalance's optimized book, carried forward
     for i, dt in enumerate(test_dates):
-        shared_t = raw.loc[:dt]
-        close_t = close_all.loc[:dt]
+        if i % REBAL_EVERY == 0:
+            shared_t = raw.loc[:dt]
+            close_t = close_all.loc[:dt]
 
-        regime = compute_regime(close_t[REGIME_TICKERS + ["SPY"]].dropna(how="all"))
-        regime_scalar = get_regime_scalar(regime)
+            regime = compute_regime(close_t[REGIME_TICKERS + ["SPY"]].dropna(how="all"))
+            regime_scalar = get_regime_scalar(regime)
 
-        trends = []
-        for sym in TREND_SYMS:
-            try:
-                df_sym = shared_t.xs(sym, level=1, axis=1).dropna()
-            except KeyError:
-                continue
-            if df_sym.empty:
-                continue
-            row = compute_asset_row(sym, df_sym)
-            if row is not None:
-                trends.append(row)
+            trends = []
+            for sym in TREND_SYMS:
+                try:
+                    df_sym = shared_t.xs(sym, level=1, axis=1).dropna()
+                except KeyError:
+                    continue
+                if df_sym.empty:
+                    continue
+                row = compute_asset_row(sym, df_sym)
+                if row is not None:
+                    trends.append(row)
 
-        if not trends:
-            continue
+            if trends:
+                optimized, summary = _kelly_covariance_optimizer(
+                    trends, shared_t,
+                    portfolio_value=PORTFOLIO_VALUE,
+                    max_single=0.25,
+                    max_risk_contribution=0.35,
+                    min_portfolio_vol=0.08,
+                    max_portfolio_vol=0.135,
+                    regime_scalar=regime_scalar,
+                    regime=regime,
+                )
+                held = optimized
+                summaries.append({"date": dt, **summary})
+            print(f"  rebalance {i//REBAL_EVERY + 1} @ {dt.date()} "
+                  f"({len(held)} names, {time.time()-t0:.0f}s)")
 
-        optimized, summary = _kelly_covariance_optimizer(
-            trends, shared_t,
-            portfolio_value=PORTFOLIO_VALUE,
-            max_single=0.25,
-            max_risk_contribution=0.35,
-            min_portfolio_vol=0.08,
-            max_portfolio_vol=0.135,
-            regime_scalar=regime_scalar,
-            regime=regime,
-        )
-
-        for item in optimized:
+        # record the currently-held book under today's date (rebalance or not)
+        for item in held:
             daily_rows.append({
                 "date": dt, "sym": item["sym"], "name": item["name"],
                 "price": round(item["price"], 2), "status": item["status"],
@@ -258,22 +268,27 @@ def walk_forward(raw):
                 "weight_pct": item.get("weight_pct", 0.0),
             })
 
-        summaries.append({"date": dt, **summary})
-
-        if (i + 1) % 50 == 0:
-            print(f"  {i+1}/{len(test_dates)} days ({time.time()-t0:.0f}s elapsed)")
-
     return pd.DataFrame(daily_rows), pd.DataFrame(summaries).set_index("date")
 
 
 def build_equity_curve(daily_df, close_all):
-    """Day t's weight_pct applied to the t -> t+1 return (costless daily rebalance)."""
+    """Day t's weight_pct earns the t -> t+1 return; the undeployed remainder
+    (1 - sum of position weights) earns SGOV's t -> t+1 return (cash yield)."""
     weights = daily_df.pivot_table(index="date", columns="sym", values="weight_pct", fill_value=0.0) / 100.0
     rets = np.log(close_all / close_all.shift(1))
-    rets = rets.reindex(weights.index)[weights.columns]
+    fwd_rets = rets.reindex(weights.index)[weights.columns].shift(-1)
 
-    fwd_rets = rets.shift(-1)  # day t's weight earns day t->t+1 return
-    port_log_ret = (weights * fwd_rets).sum(axis=1).iloc[:-1]  # drop last (no fwd return)
+    port_log_ret = (weights * fwd_rets).sum(axis=1)
+
+    # Cash leg: idle weight parked in SGOV (0-3mo T-bills).
+    cash_w = (1.0 - weights.sum(axis=1)).clip(lower=0.0)
+    if CASH_TICKER in close_all.columns:
+        sgov_fwd = np.log(close_all[CASH_TICKER] / close_all[CASH_TICKER].shift(1)).reindex(weights.index).shift(-1)
+        port_log_ret = port_log_ret + cash_w * sgov_fwd.fillna(0.0)
+    else:
+        print(f"⚠️  {CASH_TICKER} missing - cash earns 0%")
+
+    port_log_ret = port_log_ret.iloc[:-1]  # drop last (no fwd return)
     equity = np.exp(port_log_ret.cumsum())
     return equity, port_log_ret
 
@@ -296,6 +311,12 @@ def main():
     raw = download_all()
     close_all = raw["Close"].ffill()
 
+    # SGOV's yield is paid as dividends: its raw Close is ~flat, so use the
+    # dividend-adjusted total-return series for the cash leg (else cash ~0%).
+    if "Adj Close" in raw.columns.get_level_values(0) and CASH_TICKER in raw["Adj Close"].columns:
+        close_all[CASH_TICKER] = raw["Adj Close"][CASH_TICKER].ffill()
+        print(f"Using {CASH_TICKER} total-return (Adj Close) for the cash leg.")
+
     print("Running walk-forward daily loop ...")
     daily_df, summaries = walk_forward(raw)
 
@@ -307,12 +328,17 @@ def main():
     equity, port_log_rets = build_equity_curve(daily_df, close_all)
     equity.to_csv(f"{out_dir}/trend_backtest_equity.csv")
 
-    print("\n--- Strategy performance ---")
-    perf_stats(port_log_rets, "Trend-following (daily rebalance)")
+    print(f"\n--- Strategy performance (hold {REBAL_EVERY}d, cash in {CASH_TICKER}) ---")
+    perf_stats(port_log_rets, f"Trend-following ({REBAL_EVERY}d rebalance)")
 
     spy_rets = np.log(close_all["SPY"] / close_all["SPY"].shift(1)).reindex(port_log_rets.index)
     print("\n--- Benchmark: SPY buy & hold (same window) ---")
     perf_stats(spy_rets.dropna(), "SPY buy & hold")
+
+    if CASH_TICKER in close_all.columns:
+        sgov_rets = np.log(close_all[CASH_TICKER] / close_all[CASH_TICKER].shift(1)).reindex(port_log_rets.index)
+        print(f"\n--- Cash floor: {CASH_TICKER} buy & hold ---")
+        perf_stats(sgov_rets.dropna(), f"{CASH_TICKER} (cash yield)")
 
     print("\n--- Average daily book stats ---")
     print(summaries[["total_allocated", "portfolio_vol", "n_positions", "vol_cap", "fallback_used"]].mean(numeric_only=True))

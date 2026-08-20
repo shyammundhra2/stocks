@@ -58,8 +58,9 @@ def sub_scores(h, vr, ac):
     return sh, svr, sac
 
 
-def main():
+def main(fwd=FWD, step=STEP):
     t0 = time.time()
+    print(f"Forward horizon: {fwd} trading days | rebalance step: {step}\n")
     tickers = list(TREND_ASSETS.keys())
     data_start = (TEST_START - pd.DateOffset(days=420)).date()  # ~252 trading-day burn-in
     print(f"Downloading {len(tickers)} tickers {data_start} -> {END.date()} ...")
@@ -77,10 +78,10 @@ def main():
     print(f"Universe: {len(present)} tickers with data\n")
 
     idx = close.index
-    # rebalance positions: need LOOKBACK bars behind and FWD bars ahead
-    positions = [i for i in range(LOOKBACK, len(idx) - FWD)
+    # rebalance positions: need LOOKBACK bars behind and fwd bars ahead
+    positions = [i for i in range(LOOKBACK, len(idx) - fwd)
                  if idx[i] >= TEST_START]
-    positions = positions[::STEP]
+    positions = positions[::step]
 
     variants = ["vr_only", "hurst_only", "blend", "blend_no_ac"]
     per_date_ic = {v: [] for v in variants}
@@ -94,10 +95,10 @@ def main():
             s = close[sym].iloc[i - LOOKBACK:i + 1].dropna()   # trailing, incl. t
             if len(s) < 120:
                 continue
-            fwd = close[sym].iloc[i:i + FWD + 1].dropna()       # from t forward
-            if len(fwd) < FWD - 5:
+            fwin = close[sym].iloc[i:i + fwd + 1].dropna()      # from t forward
+            if len(fwin) < fwd - max(2, fwd // 12):
                 continue
-            er = eff_ratio(fwd.values)
+            er = eff_ratio(fwin.values)
             if not np.isfinite(er):
                 continue
 
@@ -146,4 +147,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser(description="Persistence-classifier IC backtest")
+    ap.add_argument("--fwd", type=int, default=FWD, help="forward horizon in trading days")
+    ap.add_argument("--step", type=int, default=STEP, help="rebalance cadence in trading days")
+    a = ap.parse_args()
+    main(fwd=a.fwd, step=a.step)
