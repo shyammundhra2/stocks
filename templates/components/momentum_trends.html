@@ -108,10 +108,19 @@
 {#  MOMENTUM TRENDS                                             #}
 {# ============================================================ #}
 <div class="card">
-    <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-6">
-        Momentum Trends (Regression + ML + Kelly)
-    </h2>
+    <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xs font-black text-yellow-400 uppercase tracking-widest">
+            Momentum Trends (Regression + ML + Kelly)
+        </h2>
+        <div class="flex gap-1 text-[10px] font-black uppercase tracking-wider">
+            <button id="trendTabCards" onclick="showTrendView('cards')"
+                    class="px-3 py-1 rounded bg-yellow-400 text-slate-900">Cards</button>
+            <button id="trendTabMap" onclick="showTrendView('map')"
+                    class="px-3 py-1 rounded bg-slate-800 text-slate-400">Map</button>
+        </div>
+    </div>
 
+    <div id="trendCardsView">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         {% for item in trends %}
         <div class="trend-card card flex justify-between items-center">
@@ -297,5 +306,100 @@
         </div>
         {% endfor %}
     </div>
+    </div>{# /trendCardsView #}
+
+    <div id="trendMapView" style="display:none;">
+        <div id="trendMap" class="plot-container"></div>
+        <p class="text-[10px] text-slate-500 mt-2">
+            Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal slope·R² conviction.
+        </p>
+    </div>
+
+    <script>
+    (function () {
+        var drawn = false;
+
+        window.showTrendView = function (view) {
+            var cards = document.getElementById('trendCardsView'),
+                map   = document.getElementById('trendMapView'),
+                tc    = document.getElementById('trendTabCards'),
+                tm    = document.getElementById('trendTabMap'),
+                on = 'px-3 py-1 rounded bg-yellow-400 text-slate-900',
+                off = 'px-3 py-1 rounded bg-slate-800 text-slate-400';
+            if (view === 'map') {
+                cards.style.display = 'none'; map.style.display = 'block';
+                tm.className = on; tc.className = off;
+                if (!drawn) { drawTrendMap(); drawn = true; }
+                else if (window.Plotly) Plotly.Plots.resize('trendMap');
+            } else {
+                map.style.display = 'none'; cards.style.display = 'block';
+                tc.className = on; tm.className = off;
+            }
+        };
+
+        var trendData = [
+            {% for item in trends %}
+            { sym: "{{ item.sym }}", x: {{ item.slope }}, y: {{ item.r2 }},
+              status: "{{ item.status }}", alloc: {{ item.dollar_amount|default(0) }} },
+            {% endfor %}
+        ];
+
+        function colorFor(s) {
+            if (s.indexOf('SELL') >= 0 || s.indexOf('LIQUIDATE') >= 0) return '#ef4444';
+            if (s.indexOf('BREAKOUT') >= 0) return '#22d3ee';
+            if (s.indexOf('BUY') >= 0) return '#22c55e';
+            if (s.indexOf('TRIM') >= 0) return '#fb923c';
+            return '#eab308';
+        }
+
+        function drawTrendMap() {
+            if (!window.Plotly || !document.getElementById('trendMap')) return;
+            var maxAlloc = Math.max.apply(null, trendData.map(function (d) { return d.alloc || 0; }).concat([1]));
+            var sizes = trendData.map(function (d) {
+                return maxAlloc > 0 ? 9 + 21 * Math.sqrt((d.alloc || 0) / maxAlloc) : 12;
+            });
+            var markers = {
+                x: trendData.map(function (d) { return d.x; }),
+                y: trendData.map(function (d) { return d.y; }),
+                text: trendData.map(function (d) { return d.sym; }),
+                customdata: trendData.map(function (d) { return [d.status, d.alloc]; }),
+                mode: 'markers+text', textposition: 'top center',
+                textfont: { size: 9, color: '#cbd5e1' },
+                hovertemplate: '%{text}<br>slope %{x}, R² %{y}<br>%{customdata[0]}<br>$%{customdata[1]:,.0f}<extra></extra>',
+                marker: {
+                    size: sizes,
+                    color: trendData.map(function (d) { return colorFor(d.status); }),
+                    line: { color: '#0f172a', width: 1 }, opacity: 0.9
+                },
+                type: 'scatter'
+            };
+
+            // iso-conviction contours: slope·R² = k  ->  y = k/x  (positive-slope side)
+            var xmax = Math.max.apply(null, trendData.map(function (d) { return d.x; }).concat([6]));
+            var contours = [1, 2, 4].map(function (k) {
+                var xa = [], ya = [];
+                for (var xv = k; xv <= xmax; xv += (xmax - k) / 40 || 1) {
+                    var yv = k / xv; if (yv <= 1) { xa.push(xv); ya.push(yv); }
+                }
+                return { x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
+                         line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false };
+            });
+
+            var ann = [
+                { x: xmax * 0.6, y: 0.93, text: 'CLEAN UPTREND', showarrow: false, font: { color: '#22c55e', size: 9 } },
+                { x: -Math.abs(xmax) * 0.6, y: 0.93, text: 'CLEAN DOWNTREND', showarrow: false, font: { color: '#ef4444', size: 9 } },
+                { x: 0, y: 0.05, text: 'CHOP / LOW FIT', showarrow: false, font: { color: '#64748b', size: 9 } }
+            ];
+
+            Plotly.newPlot('trendMap', contours.concat([markers]), {
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
+                xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+                yaxis: { title: 'R²', range: [0, 1], gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+                annotations: ann, showlegend: false
+            }, { responsive: true, displayModeBar: false });
+        }
+    })();
+    </script>
 
 </div>
