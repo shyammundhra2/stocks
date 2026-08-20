@@ -1,3 +1,7 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from macro.paths import model_path
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -234,7 +238,7 @@ joblib.dump(
         "fast_auc": fast_auc,
         "slow_auc": slow_auc,
     },
-    "trend_model.joblib"
+    model_path("trend_model.joblib")
 )
 
 print("\n✅ trend_model.joblib saved.")

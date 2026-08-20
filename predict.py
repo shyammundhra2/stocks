@@ -12,6 +12,7 @@ from datetime import timedelta, datetime
 from functools import lru_cache
 from macro.constants import SECTOR_NAMES, COMMODITIES, COUNTRIES, CURRENCIES, ML_MACRO_TICKERS, TREND_ASSETS
 from macro.helpers import compute_RSI, compute_ATR
+from macro.paths import model_path
 import numpy as np
 try:
     from numpy.lib.stride_tricks import sliding_window_view
@@ -1625,12 +1626,12 @@ if __name__ == "__main__":
     show_explain = not args.no_explain
 
     model_configs = [
-        ("Risk Regime", "risk_model.joblib", list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))),
+        ("Risk Regime", model_path("risk_model.joblib"), list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys()))),
          {}, 'risk'),
-        ("Sector Rotation", "sector_model.joblib", list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS + ['QQQ', 'GLD', 'USO'],
+        ("Sector Rotation", model_path("sector_model.joblib"), list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS + ['QQQ', 'GLD', 'USO'],
          SECTOR_NAMES, 'sector'),
         # Commodities handled separately below with hierarchical prediction
-        ("Countries", "country_model.joblib", list(COUNTRIES.keys()) + ML_MACRO_TICKERS + list(CURRENCIES.keys()),
+        ("Countries", model_path("country_model.joblib"), list(COUNTRIES.keys()) + ML_MACRO_TICKERS + list(CURRENCIES.keys()),
          COUNTRIES, 'country')
     ]
 
@@ -1648,8 +1649,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     try:
         res = predict_commodities(
-            sector_model_path="commodity_sector_model.joblib",
-            commodity_model_path="commodity_model.joblib",  # fallback
+            sector_model_path=model_path("commodity_sector_model.joblib"),
+            commodity_model_path=model_path("commodity_model.joblib"),  # fallback
             friendly_names=COMMODITIES,
             as_of_date=args.date,
             use_cache=use_cache,
@@ -1670,7 +1671,7 @@ if __name__ == "__main__":
     print("=" * 80)
     try:
         trend_res = predict_trends(
-            "trend_model.joblib",
+            model_path("trend_model.joblib"),
             list(TREND_ASSETS.keys()),
             TREND_ASSETS,
             args.date,

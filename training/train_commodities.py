@@ -1,3 +1,7 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from macro.paths import model_path
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -417,7 +421,7 @@ def train_sector_commodity_model(
     print("-" * 70)
 
     # Save model
-    model_name = 'commodity_sector_model.joblib' if predict_sectors else 'commodity_model.joblib'
+    model_name = model_path('commodity_sector_model.joblib' if predict_sectors else 'commodity_model.joblib')
 
     joblib.dump({
         'model': model,

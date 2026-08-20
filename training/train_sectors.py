@@ -1,3 +1,7 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from macro.paths import model_path
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -10,7 +14,7 @@ import os
 
 # ---------------- CONFIG ----------------
 SECTORS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
-MODEL_FILE = "sector_model.joblib"
+MODEL_FILE = model_path("sector_model.joblib")
 START_DATE = "2000-01-01"
 CACHE_DIR = ".cache"
 PREDICTION_HORIZON = 63

@@ -1,3 +1,7 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from macro.paths import model_path
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -119,7 +123,7 @@ def train_risk_regime_model():
         'target_horizon': horizon,
         'threshold': threshold
     }
-    joblib.dump(bundle, 'risk_model.joblib')
+    joblib.dump(bundle, model_path('risk_model.joblib'))
     print("\n✅ Training complete. 'risk_model.joblib' includes Sector Intelligence.")
 
 if __name__ == "__main__":

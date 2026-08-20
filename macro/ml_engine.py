@@ -5,6 +5,7 @@ try:
 except Exception:  # numpy < 1.20
     sliding_window_view = None
 from macro.helpers import compute_RSI, compute_ATR
+from macro.paths import model_path
 import joblib
 import os
 import warnings
@@ -19,7 +20,7 @@ from functools import lru_cache
 # is itself a measurable chunk of dashboard load time.
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
-MODEL_PATH = 'trend_model.joblib'
+MODEL_PATH = model_path('trend_model.joblib')
 
 
 @lru_cache(maxsize=1)

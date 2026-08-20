@@ -22,6 +22,7 @@ from macro.constants import (
     CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS
 )
 from predict import predict_assets, predict_commodities
+from macro.paths import model_path
 
 
 # =========================
@@ -1060,7 +1061,7 @@ def get_risk_regime():
                 continue
 
             ml_res = predict_assets(
-                model_path="risk_model.joblib",
+                model_path=model_path("risk_model.joblib"),
                 tickers=risk_tickers,
                 friendly_names={},
                 model_type="risk",
@@ -1217,7 +1218,7 @@ def get_regime_scalar(regime):
 def get_ml_sector_prediction():
     try:
         tickers = list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS
-        res = predict_assets("sector_model.joblib", tickers, SECTOR_NAMES, "sector")
+        res = predict_assets(model_path("sector_model.joblib"), tickers, SECTOR_NAMES, "sector")
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": SECTOR_NAMES.get(k, k), "confidence": round(v * 100, 1)}
@@ -1235,7 +1236,7 @@ def get_ml_sector_prediction():
 def get_ml_country_prediction():
     try:
         tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS + ['SPY']
-        res = predict_assets("country_model.joblib", tickers, COUNTRIES, "country")
+        res = predict_assets(model_path("country_model.joblib"), tickers, COUNTRIES, "country")
         probs = res["probabilities"]
         ranked = [
             {"ticker": k, "name": COUNTRIES.get(k, k), "confidence": round(v * 100, 1)}
@@ -1253,8 +1254,8 @@ def get_ml_country_prediction():
 def get_ml_commodity_prediction():
     try:
         res = predict_commodities(
-            sector_model_path="commodity_sector_model.joblib",
-            commodity_model_path="commodity_model.joblib",
+            sector_model_path=model_path("commodity_sector_model.joblib"),
+            commodity_model_path=model_path("commodity_model.joblib"),
             friendly_names=COMMODITIES,
             use_cache=True,
             top_n_sectors=5,

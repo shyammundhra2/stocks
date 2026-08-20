@@ -1,3 +1,7 @@
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from macro.paths import model_path
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -250,7 +254,7 @@ def train_gb_only_model():
             'scaler': scaler,
             'features': X_all.columns.tolist()
         },
-        'country_model.joblib'
+        model_path('country_model.joblib')
     )
 
     print("✅ Model saved to 'country_model.joblib'")
