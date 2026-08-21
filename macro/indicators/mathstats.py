@@ -295,6 +295,25 @@ def _persistence_classify(hurst, vr, autocorr):
     }
 
 
+def _u_fit(slope_path, r2_path):
+    """Continuous [0,1] 'U-reversal fit' of the trailing (slope, R2) path
+    (oldest -> today): started as a downtrend (negative slope), R2 collapsed
+    through the middle (trend broke near the origin), and is turning up now.
+    Backtest (2007-26): as an optimizer sizing factor it tilts toward freshly
+    born trends. Returns 0 for anything that did not reverse (incl. steady
+    established uptrends), so it concentrates the book."""
+    sp = np.asarray(slope_path, dtype=float)
+    rp = np.asarray(r2_path, dtype=float)
+    L = len(sp)
+    if L < 15 or not (np.isfinite(sp).all() and np.isfinite(rp).all()):
+        return 0.0
+    a, b = L // 5, (4 * L) // 5
+    down = np.clip(-sp[0] / 3.0, 0.0, 1.0)                  # how negative the start leg
+    brk = np.clip((0.30 - rp[a:b].min()) / 0.30, 0.0, 1.0)  # how deep the mid-R2 collapse
+    up = 1.0 if sp[-1] > 0 else 0.0                          # must be turning up now
+    return float(round(down * brk * up, 3))
+
+
 # =========================
 # Stop Hit Probability - CORRECTED (2026-06-11)
 #
@@ -422,6 +441,7 @@ __all__ = [
     "_variance_ratio",
     "_return_autocorr",
     "_persistence_classify",
+    "_u_fit",
     "_stop_hit_probability",
     "_effective_vol_cap",
     "get_regime_scalar",

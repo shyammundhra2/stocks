@@ -252,6 +252,17 @@
                     </p>
                     {% endif %}
 
+                    {# U-fit — inline badge; now drives conviction/sizing #}
+                    {% if item.u_fit is defined %}
+                    <p class="label-small font-mono
+                        {{ 'text-cyan-400' if item.u_fit >= 0.6
+                           else 'text-slate-400' if item.u_fit > 0
+                           else 'text-slate-600' }}"
+                       title="U-reversal fit [0-1]; drives conviction/sizing">
+                        U: {{ item.u_fit }}
+                    </p>
+                    {% endif %}
+
                     {# P(stop) — inline badge, red when geometry is unfavorable #}
                     {% if item.p_stop is defined %}
                     <p class="label-small font-mono

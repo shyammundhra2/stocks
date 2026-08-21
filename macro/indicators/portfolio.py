@@ -66,10 +66,17 @@ def _compute_risk_contribution(weights, cov_matrix):
 
 
 def _conviction_score(item):
-    # 2026-06-11: ml_conf replaced by strength (validated trend-quality
-    # multiplier). ml_conf per-asset was OOS noise (transfer AUC 0.47).
-    # Fallback to r2 keeps the function safe on items without strength.
-    return max(item["slope"] * item["r2"] * item.get("strength", item["r2"]), 0.0)
+    # 2026-08 experiment: conviction = slope * r2 * u_fit_factor. u_fit (the
+    # U-reversal fit) is 0 for non-reversals; rather than zero those out (which
+    # collapses the book), we PENALIZE the would-be-zeros with a floor so every
+    # trend keeps some weight while fresh reversals get the tilt:
+    #   factor = FLOOR + (1 - FLOOR) * u_fit   (FLOOR=0.3 -> non-reversal = 0.3x)
+    uf = item.get("u_fit")
+    if uf is None:
+        factor = item.get("strength", item["r2"])
+    else:
+        factor = 0.3 + 0.7 * uf
+    return max(item["slope"] * item["r2"] * factor, 0.0)
 
 
 def _kelly_covariance_optimizer(
@@ -482,6 +489,10 @@ def get_trends():
             ] or [[slope, r2]]
             slope_prev, r2_prev = slope_r2_path[0]   # ~1 month ago (path start)
 
+            # U-reversal fit over the same ~1-month path (down -> ~0,0 -> up).
+            # Now drives conviction/sizing in place of the linear strength.
+            u_fit = _u_fit([p[0] for p in slope_r2_path], [p[1] for p in slope_r2_path])
+
             # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
             # for dashboard monitoring; never consumed by sizing or status.
             # Sourced from the batched predict above; missing -> neutral.
@@ -657,6 +668,7 @@ def get_trends():
                 "slope_prev": round(slope_prev, 2),   # slope ~1 month ago (path start)
                 "r2_prev": round(r2_prev, 2),         # R² ~1 month ago (path start)
                 "slope_r2_path": slope_r2_path,       # daily [slope,r2] over last ~1mo (map hover path)
+                "u_fit": u_fit,                       # U-reversal fit [0,1]; drives conviction
                 # ml_conf fields are TELEMETRY - real model outputs for
                 # dashboard monitoring. OOS-invalidated for decisions
                 # (transfer AUC 0.47); nothing downstream consumes them.
