@@ -294,13 +294,7 @@
     </div>{# /trendCardsView #}
 
     <div id="trendMapView" style="display:none;">
-        <div class="flex items-center gap-2 mb-2">
-            <button onclick="replayTrendMap()"
-                    class="px-3 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-black uppercase tracking-wider hover:bg-slate-700">
-                ▶ Replay 2-week move
-            </button>
-            <span class="text-[10px] text-slate-500">markers slide from where they were 2 weeks ago → now</span>
-        </div>
+        <p class="text-[10px] text-slate-500 mb-2">Hover a marker to see where it was 2 weeks ago (faded dot).</p>
         <div id="trendMap" class="plot-container"></div>
         <p class="text-[10px] text-slate-500 mt-2">
             Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal slope·R² conviction.
@@ -321,12 +315,8 @@
             if (view === 'map') {
                 cards.style.display = 'none'; map.style.display = 'block';
                 tm.className = on; tc.className = off;
-                if (!drawn) {
-                    drawTrendMap(); drawn = true;
-                    setTimeout(function () { if (window.replayTrendMap) window.replayTrendMap(); }, 250);
-                } else if (window.Plotly) {
-                    Plotly.Plots.resize('trendMap');
-                }
+                if (!drawn) { drawTrendMap(); drawn = true; }
+                else if (window.Plotly) Plotly.Plots.resize('trendMap');
             } else {
                 map.style.display = 'none'; cards.style.display = 'block';
                 tc.className = on; tm.className = off;
@@ -391,8 +381,18 @@
             ];
             // (no static trajectory arrows - the replay animation shows the 2-week move)
 
-            var markerIdx = contours.length;   // markers trace is last
-            Plotly.newPlot('trendMap', contours.concat([markers]), {
+            // Faded "ghost" trace (empty until hover) that shows a single ETF's
+            // position 2 weeks ago + a dotted connector to its current spot.
+            var ghost = {
+                x: [], y: [], mode: 'lines+markers', type: 'scatter', hoverinfo: 'skip',
+                showlegend: false,
+                line: { color: 'rgba(148,163,184,0.4)', width: 1, dash: 'dot' },
+                marker: { size: 13, color: 'rgba(148,163,184,0.30)', line: { color: 'rgba(148,163,184,0.4)', width: 1 } }
+            };
+            var ghostIdx = contours.length;         // ghost drawn under the markers
+            var markerIdx = contours.length + 1;    // live markers on top
+
+            Plotly.newPlot('trendMap', contours.concat([ghost, markers]), {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
                 xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
@@ -400,23 +400,22 @@
                 annotations: ann, showlegend: false
             }, { responsive: true, displayModeBar: false });
 
-            // Replay: snap markers to their 2-weeks-ago spot, then slide to now.
+            // On hover of a live marker, reveal only THAT ETF's 2-weeks-ago
+            // position as the faded ghost; clear it on unhover.
             var xNow = trendData.map(function (d) { return d.x; }),
                 yNow = trendData.map(function (d) { return d.y; }),
                 xPrev = trendData.map(function (d) { return d.x0; }),
                 yPrev = trendData.map(function (d) { return d.y0; });
-            window.replayTrendMap = function () {
-                if (!window.Plotly) return;
-                Plotly.animate('trendMap',
-                    [{ data: [{ x: xPrev, y: yPrev }], traces: [markerIdx] }],
-                    { mode: 'immediate', frame: { duration: 0, redraw: false }, transition: { duration: 0 } }
-                ).then(function () {
-                    return Plotly.animate('trendMap',
-                        [{ data: [{ x: xNow, y: yNow }], traces: [markerIdx] }],
-                        { mode: 'immediate', frame: { duration: 1200, redraw: false },
-                          transition: { duration: 1200, easing: 'cubic-in-out' } });
-                });
-            };
+            var gd = document.getElementById('trendMap');
+            gd.on('plotly_hover', function (ev) {
+                var p = ev.points[0];
+                if (!p || p.curveNumber !== markerIdx) return;
+                var i = p.pointNumber;
+                Plotly.restyle('trendMap', { x: [[xPrev[i], xNow[i]]], y: [[yPrev[i], yNow[i]]] }, [ghostIdx]);
+            });
+            gd.on('plotly_unhover', function () {
+                Plotly.restyle('trendMap', { x: [[]], y: [[]] }, [ghostIdx]);
+            });
         }
     })();
     </script>
