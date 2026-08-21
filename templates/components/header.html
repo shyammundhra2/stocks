@@ -18,6 +18,13 @@
            GSS Macro<span class="text-blue-500">System</span>
         </h1>
 
+        {% if data_asof is defined %}
+        <p class="text-[10px] font-mono text-gray-500 mt-1">
+            Data as of <span class="text-gray-300">{{ data_asof }}</span>
+            · rendered <span class="text-gray-300">{{ rendered_at }}</span>
+        </p>
+        {% endif %}
+
         <div class="flex flex-wrap gap-3 mt-4">
             {% for m in regime.details %}
             <div class="flex items-center space-x-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700 shadow-sm">

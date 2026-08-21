@@ -471,12 +471,16 @@ def get_trends():
 
             slope, r2 = _trend_stats(c, 20, 10)
 
-            # Slope/R2 as of ~2 weeks (10 trading days) ago, for the map's
-            # rotation "tail" showing where the asset moved from.
-            if len(c) > 30:
-                slope_prev, r2_prev = _trend_stats(c.iloc[:-10], 20, 10)
-            else:
-                slope_prev, r2_prev = slope, r2
+            # Daily slope/R2 path over the last ~2 weeks (10 trading days),
+            # oldest -> today, for the map's per-day rotation trajectory shown
+            # on hover. Each point is that day's 20-bar trend stats.
+            _nlen = len(c)
+            slope_r2_path = [
+                list(_trend_stats(c.iloc[:_nlen - k], 20, 10))
+                for k in range(10, -1, -1)
+                if _nlen - k >= 25
+            ] or [[slope, r2]]
+            slope_prev, r2_prev = slope_r2_path[0]   # ~2 weeks ago (path start)
 
             # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
             # for dashboard monitoring; never consumed by sizing or status.
@@ -652,6 +656,7 @@ def get_trends():
                 "r2": round(r2, 2),
                 "slope_prev": round(slope_prev, 2),   # slope ~2 weeks ago (map tail)
                 "r2_prev": round(r2_prev, 2),         # R² ~2 weeks ago (map tail)
+                "slope_r2_path": slope_r2_path,       # daily [slope,r2] over last ~2wk (map hover path)
                 # ml_conf fields are TELEMETRY - real model outputs for
                 # dashboard monitoring. OOS-invalidated for decisions
                 # (transfer AUC 0.47); nothing downstream consumes them.

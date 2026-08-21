@@ -98,14 +98,14 @@
             Momentum Trends (Regression + ML + Kelly)
         </h2>
         <div class="flex gap-1 text-[10px] font-black uppercase tracking-wider">
-            <button id="trendTabCards" onclick="showTrendView('cards')"
-                    class="px-3 py-1 rounded bg-yellow-400 text-slate-900">Cards</button>
             <button id="trendTabMap" onclick="showTrendView('map')"
-                    class="px-3 py-1 rounded bg-slate-800 text-slate-400">Map</button>
+                    class="px-3 py-1 rounded bg-yellow-400 text-slate-900">Map</button>
+            <button id="trendTabCards" onclick="showTrendView('cards')"
+                    class="px-3 py-1 rounded bg-slate-800 text-slate-400">Cards</button>
         </div>
     </div>
 
-    <div id="trendCardsView">
+    <div id="trendCardsView" style="display:none;">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         {% for item in trends %}
         <div class="trend-card card flex justify-between items-center">
@@ -326,7 +326,7 @@
         var trendData = [
             {% for item in trends %}
             { sym: "{{ item.sym }}", x: {{ item.slope }}, y: {{ item.r2 }},
-              x0: {{ item.slope_prev|default(item.slope) }}, y0: {{ item.r2_prev|default(item.r2) }},
+              path: {{ item.slope_r2_path|default([[item.slope, item.r2]])|tojson }},
               status: "{{ item.status }}", alloc: {{ item.dollar_amount|default(0) }},
               posture: "{{ item.persistence_arrow|default('') }} {{ item.persistence_label|default('') }}",
               pscore: {{ item.persistence_score|default(0) }} },
@@ -386,8 +386,8 @@
             var ghost = {
                 x: [], y: [], mode: 'lines+markers', type: 'scatter', hoverinfo: 'skip',
                 showlegend: false,
-                line: { color: 'rgba(148,163,184,0.4)', width: 1, dash: 'dot' },
-                marker: { size: 13, color: 'rgba(148,163,184,0.30)', line: { color: 'rgba(148,163,184,0.4)', width: 1 } }
+                line: { color: 'rgba(148,163,184,0.45)', width: 1.5 },
+                marker: { size: 5, color: 'rgba(148,163,184,0.45)' }
             };
             var ghostIdx = contours.length;         // ghost drawn under the markers
             var markerIdx = contours.length + 1;    // live markers on top
@@ -402,21 +402,36 @@
 
             // On hover of a live marker, reveal only THAT ETF's 2-weeks-ago
             // position as the faded ghost; clear it on unhover.
-            var xNow = trendData.map(function (d) { return d.x; }),
-                yNow = trendData.map(function (d) { return d.y; }),
-                xPrev = trendData.map(function (d) { return d.x0; }),
-                yPrev = trendData.map(function (d) { return d.y0; });
             var gd = document.getElementById('trendMap');
             gd.on('plotly_hover', function (ev) {
                 var p = ev.points[0];
                 if (!p || p.curveNumber !== markerIdx) return;
-                var i = p.pointNumber;
-                Plotly.restyle('trendMap', { x: [[xPrev[i], xNow[i]]], y: [[yPrev[i], yNow[i]]] }, [ghostIdx]);
+                var pth = trendData[p.pointNumber].path || [];
+                Plotly.restyle('trendMap', {
+                    x: [pth.map(function (q) { return q[0]; })],
+                    y: [pth.map(function (q) { return q[1]; })]
+                }, [ghostIdx]);
             });
             gd.on('plotly_unhover', function () {
                 Plotly.restyle('trendMap', { x: [[]], y: [[]] }, [ghostIdx]);
             });
         }
+
+        // Map is the default view -> draw it on load. Retry until Plotly (CDN)
+        // and the sized container are ready, and force a resize after drawing so
+        // it renders correctly on first paint (not blank until a tab switch).
+        function initTrendMap() {
+            if (drawn) return;
+            var el = document.getElementById('trendMap');
+            if (!window.Plotly || !el || el.clientWidth === 0) {
+                return setTimeout(initTrendMap, 120);
+            }
+            drawTrendMap();
+            drawn = true;
+            setTimeout(function () { if (window.Plotly) Plotly.Plots.resize('trendMap'); }, 60);
+        }
+        window.addEventListener('load', initTrendMap);
+        if (document.readyState === 'complete') initTrendMap();
     })();
     </script>
 

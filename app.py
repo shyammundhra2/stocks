@@ -1,5 +1,6 @@
 # app.py
-from flask import Flask, render_template
+from flask import Flask, render_template, make_response
+from datetime import datetime
 import json
 
 app = Flask(__name__)
@@ -21,10 +22,19 @@ def index():
         get_ml_country_prediction,
         get_ml_commodity_prediction
     )
+    from macro.indicators import _get_shared_market_data
 
     # get_trends() must be called before get_portfolio_summary()
     # so the optimizer runs and populates the module-level cache
     trends = get_trends()
+
+    # Freshness stamp so a stale (cached) tab is obvious at a glance.
+    try:
+        _idx = _get_shared_market_data().index
+        data_asof = str(_idx[-1].date()) if len(_idx) else "?"
+    except Exception:
+        data_asof = "?"
+    rendered_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     all_data = {
         "regime": get_risk_regime(),
@@ -54,7 +64,7 @@ def index():
 
     serializable_data = convert_to_serializable(all_data)
 
-    return render_template(
+    resp = make_response(render_template(
         "dashboard.html",
         regime=all_data["regime"],
         vix_mr=all_data["vix_mr"],
@@ -68,8 +78,15 @@ def index():
         ml_sector=all_data["ml_sector"],
         ml_country=all_data["ml_country"],
         ml_commodity=all_data["ml_commodity"],
-        all_data_json=json.dumps(serializable_data)
-    )
+        all_data_json=json.dumps(serializable_data),
+        data_asof=data_asof,
+        rendered_at=rendered_at,
+    ))
+    # Never let the browser serve a stale cached dashboard.
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 if __name__ == "__main__":
