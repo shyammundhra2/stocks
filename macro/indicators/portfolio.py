@@ -83,6 +83,8 @@ def _kelly_covariance_optimizer(
         regime_scalar=1.0,
         conviction_threshold=0.5,
         regime=None,
+        current_weights=None,
+        incumbency_bonus=0.0,
 ):
     """
     Covariance portfolio optimizer with dynamic vol cap.
@@ -189,6 +191,18 @@ def _kelly_covariance_optimizer(
         _conviction_score(next(t for t in active_signals if t["sym"] == sym))
         for sym in available
     ])
+
+    # Incumbency preference (2026-08; default off -> identical behavior).
+    # When the vol cap binds, boost the conviction of names already held so a
+    # new candidate must beat the incumbent by > incumbency_bonus to displace
+    # it - a no-trade band in conviction space that cuts churn on marginal
+    # swaps. Only healthy names reach here (SELL/TRIM are filtered above and
+    # deteriorated names get a zero upper bound), so this never protects a
+    # losing position - it only breaks near-ties in the incumbent's favor.
+    if current_weights and incumbency_bonus:
+        for i, sym in enumerate(available):
+            if current_weights.get(sym, 0.0) > 0:
+                conviction_raw[i] *= (1.0 + incumbency_bonus)
 
     conviction_sum = conviction_raw.sum()
     if conviction_sum == 0:
@@ -457,6 +471,13 @@ def get_trends():
 
             slope, r2 = _trend_stats(c, 20, 10)
 
+            # Slope/R2 as of ~2 weeks (10 trading days) ago, for the map's
+            # rotation "tail" showing where the asset moved from.
+            if len(c) > 30:
+                slope_prev, r2_prev = _trend_stats(c.iloc[:-10], 20, 10)
+            else:
+                slope_prev, r2_prev = slope, r2
+
             # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
             # for dashboard monitoring; never consumed by sizing or status.
             # Sourced from the batched predict above; missing -> neutral.
@@ -629,6 +650,8 @@ def get_trends():
                 "price": round(last, 2),
                 "status": status,
                 "r2": round(r2, 2),
+                "slope_prev": round(slope_prev, 2),   # slope ~2 weeks ago (map tail)
+                "r2_prev": round(r2_prev, 2),         # R² ~2 weeks ago (map tail)
                 # ml_conf fields are TELEMETRY - real model outputs for
                 # dashboard monitoring. OOS-invalidated for decisions
                 # (transfer AUC 0.47); nothing downstream consumes them.
