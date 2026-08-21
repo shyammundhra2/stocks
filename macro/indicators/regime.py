@@ -353,6 +353,51 @@ def _qualify_regime(is_risk_on, hmm_state):
 # =========================
 # I. Risk Regime
 # =========================
+def _regime_details(data):
+    """The 6 technical regime conditions evaluated at the last row of `data`.
+    Extracted so the composite can also be computed at historical stride dates
+    (pass data.loc[:ts]). Returns the list of {label, pass} dicts."""
+    last_vals = data.iloc[-1]
+    ma50 = data.rolling(50).mean().iloc[-1]
+
+    credit_ratio = data['HYG'] / data['IEF']
+    credit_pass = bool(
+        last_vals['HYG'] / last_vals['IEF']
+        > credit_ratio.rolling(50).mean().iloc[-1]
+    )
+
+    curve_spread = last_vals['^TNX'] - last_vals['^IRX']
+    curve_pass = bool(curve_spread > 0)
+
+    jpy_ret = data['JPY=X'].pct_change()
+    jpy_vol = jpy_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
+    carry_pass = bool(
+        last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15
+    )
+
+    spy_ma200 = data['SPY'].rolling(200).mean().iloc[-1]
+    spy_trend = bool(last_vals['SPY'] > spy_ma200)
+
+    vix_low = bool(
+        last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110
+    )
+
+    rsp_spy_ratio = data['RSP'] / data['SPY']
+    breadth_pass = bool(
+        rsp_spy_ratio.iloc[-1]
+        > rsp_spy_ratio.rolling(50).mean().iloc[-1]
+    )
+
+    return [
+        {"label": "Trend (SPY > 200MA)",      "pass": spy_trend},
+        {"label": "Fear (VIX/MOVE Low)",       "pass": vix_low},
+        {"label": "Breadth (RSP/SPY > 50MA)",  "pass": breadth_pass},
+        {"label": "Credit (HYG/IEF Ratio)",    "pass": credit_pass},
+        {"label": "Curve (10Y-3M Spread)",     "pass": curve_pass},
+        {"label": "Carry (JPY Weak/Stable)",   "pass": carry_pass},
+    ]
+
+
 @ttl_cache(30)
 def get_risk_regime():
     try:
@@ -438,45 +483,7 @@ def get_risk_regime():
         # -----------------------------------------------
         # Technical Conditions (6 independent checks)
         # -----------------------------------------------
-        last_vals = data.iloc[-1]
-        ma50 = data.rolling(50).mean().iloc[-1]
-
-        credit_ratio = data['HYG'] / data['IEF']
-        credit_pass = bool(
-            last_vals['HYG'] / last_vals['IEF']
-            > credit_ratio.rolling(50).mean().iloc[-1]
-        )
-
-        curve_spread = last_vals['^TNX'] - last_vals['^IRX']
-        curve_pass = bool(curve_spread > 0)
-
-        jpy_ret = data['JPY=X'].pct_change()
-        jpy_vol = jpy_ret.rolling(20).std().iloc[-1] * np.sqrt(252)
-        carry_pass = bool(
-            last_vals['JPY=X'] > ma50['JPY=X'] and jpy_vol < 0.15
-        )
-
-        spy_ma200 = data['SPY'].rolling(200).mean().iloc[-1]
-        spy_trend = bool(last_vals['SPY'] > spy_ma200)
-
-        vix_low = bool(
-            last_vals['^VIX'] < 20 and last_vals['^MOVE'] < 110
-        )
-
-        rsp_spy_ratio = data['RSP'] / data['SPY']
-        breadth_pass = bool(
-            rsp_spy_ratio.iloc[-1]
-            > rsp_spy_ratio.rolling(50).mean().iloc[-1]
-        )
-
-        details = [
-            {"label": "Trend (SPY > 200MA)",      "pass": spy_trend},
-            {"label": "Fear (VIX/MOVE Low)",       "pass": vix_low},
-            {"label": "Breadth (RSP/SPY > 50MA)",  "pass": breadth_pass},
-            {"label": "Credit (HYG/IEF Ratio)",    "pass": credit_pass},
-            {"label": "Curve (10Y-3M Spread)",     "pass": curve_pass},
-            {"label": "Carry (JPY Weak/Stable)",   "pass": carry_pass},
-        ]
+        details = _regime_details(data)
 
         # -----------------------------------------------
         # Composite RISK-ON / RISK-OFF Signal - REWEIGHTED (2026-06-11)
@@ -500,6 +507,28 @@ def get_risk_regime():
 
         is_risk_on = composite_score > 0.55
 
+        # -----------------------------------------------
+        # Composite history for the sparkline: the SAME composite
+        # (0.55*technical + 0.45*ml_slow) evaluated at each 20-day stride date,
+        # so the line's endpoint equals the current composite = the dot.
+        # (The fast-ML series history_points is retired from the composite and
+        # kept only as the "ml_fast" scalar.) Falls back to fast-ML on error.
+        # -----------------------------------------------
+        try:
+            from macro.ml_engine import get_dual_ml_confidence_for_kelly as _dual
+            composite_history = []
+            for _ts in recent_dates[:-1]:
+                _dt = data.loc[:_ts]
+                _passes = sum(1 for d in _regime_details(_dt) if d["pass"])
+                _slow = _dual(spy_df.loc[:_ts])['slow']
+                composite_history.append(
+                    round((_passes / 6.0 * 0.55 + _slow / 100.0 * 0.45) * 100, 1)
+                )
+            composite_history.append(float(round(composite_score * 100, 1)))   # endpoint = dot
+        except Exception as e:
+            print(f"Composite history error: {e}")
+            composite_history = history_points
+
         # HMM telemetry + qualifier - see module docstring above.
         # Additive only: does not affect composite_score, is_risk_on,
         # or anything computed above this point.
@@ -515,7 +544,7 @@ def get_risk_regime():
             "composite":        round(composite_score * 100, 1),
             "spy_regime":       spy_regime,
             "spy_divergence":   round(spy_divergence, 1),
-            "history":          history_points,
+            "history":          composite_history,   # composite per stride date; endpoint = dot
             "details":          details,
             "hmm":              hmm_state,   # full state probs, for drill-down - may be None
         }
