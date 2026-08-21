@@ -45,7 +45,8 @@ def get_ml_sector_prediction():
                 "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Sector Error: {e}")
-        return {"top": {"name": "N/A", "ticker": "N/A", "confidence": 0}, "all": []}
+        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
 
 @ttl_cache(30)
@@ -63,7 +64,8 @@ def get_ml_country_prediction():
                 "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Country Error: {e}")
-        return {"top": {"name": "N/A", "confidence": 0}, "all": []}
+        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
 
 @ttl_cache(30)
@@ -87,7 +89,8 @@ def get_ml_commodity_prediction():
                 "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
     except Exception as e:
         print(f"ML Commodity Error: {e}")
-        return {"top": {"name": "N/A", "confidence": 0}, "all": []}
+        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
 __all__ = [
     "get_ml_sector_prediction",
