@@ -293,8 +293,8 @@
     </div>
     </div>{# /trendCardsView #}
 
-    <div id="trendMapView" style="display:none;">
-        <p class="text-[10px] text-slate-500 mb-2">Hover a marker to see where it was 2 weeks ago (faded dot).</p>
+    <div id="trendMapView">
+        <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily slope/R² path over the last month (faded trail).</p>
         <div id="trendMap" class="plot-container"></div>
         <p class="text-[10px] text-slate-500 mt-2">
             Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal slope·R² conviction.
@@ -379,10 +379,10 @@
                 { x: -Math.abs(xmax) * 0.6, y: 0.93, text: 'CLEAN DOWNTREND', showarrow: false, font: { color: '#ef4444', size: 9 } },
                 { x: 0, y: 0.05, text: 'CHOP / LOW FIT', showarrow: false, font: { color: '#64748b', size: 9 } }
             ];
-            // (no static trajectory arrows - the replay animation shows the 2-week move)
+            // (no static arrows - the per-hover ghost path shows the movement)
 
-            // Faded "ghost" trace (empty until hover) that shows a single ETF's
-            // position 2 weeks ago + a dotted connector to its current spot.
+            // Faded "ghost" trace (empty until hover) that traces a single ETF's
+            // daily slope/R² path over the last ~1 month.
             var ghost = {
                 x: [], y: [], mode: 'lines+markers', type: 'scatter', hoverinfo: 'skip',
                 showlegend: false,
@@ -395,43 +395,75 @@
             Plotly.newPlot('trendMap', contours.concat([ghost, markers]), {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
+                hovermode: 'closest',
                 xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
                 yaxis: { title: 'R²', range: [0, 1], gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
                 annotations: ann, showlegend: false
             }, { responsive: true, displayModeBar: false });
 
-            // On hover of a live marker, reveal only THAT ETF's 2-weeks-ago
-            // position as the faded ghost; clear it on unhover.
+            // On hover of a live marker, reveal only THAT ETF's daily path as the
+            // faded ghost. Two safeguards against the hover "sticking" after many
+            // hovers: (1) only act when the hovered marker actually CHANGES, and
+            // (2) do the restyle in a requestAnimationFrame OUTSIDE the hover
+            // handler - restyling synchronously inside plotly_hover leaves
+            // orphaned hover-label nodes accumulating and jams the event loop.
             var gd = document.getElementById('trendMap');
-            gd.on('plotly_hover', function (ev) {
-                var p = ev.points[0];
-                if (!p || p.curveNumber !== markerIdx) return;
-                var pth = trendData[p.pointNumber].path || [];
+            var shown = -1, rafPending = false, clearTimer = null;
+            function paintGhost() {
+                rafPending = false;
+                var pth = (shown >= 0 && trendData[shown] && trendData[shown].path) ? trendData[shown].path : [];
                 Plotly.restyle('trendMap', {
                     x: [pth.map(function (q) { return q[0]; })],
                     y: [pth.map(function (q) { return q[1]; })]
                 }, [ghostIdx]);
+            }
+            function showGhost(i) {
+                if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
+                if (i === shown) return;
+                shown = i;
+                if (!rafPending) { rafPending = true; requestAnimationFrame(paintGhost); }
+            }
+            gd.on('plotly_hover', function (ev) {
+                var p = ev.points[0];
+                if (p && p.curveNumber === markerIdx) showGhost(p.pointNumber);
             });
+            // Debounced clear: drawing the ghost can make Plotly fire a spurious
+            // unhover immediately followed by a re-hover (the SOXX-style flicker).
+            // Only clear if no hover arrives within the delay - a real re-hover
+            // cancels the timer, so the same path just stays put (no redraw loop).
             gd.on('plotly_unhover', function () {
-                Plotly.restyle('trendMap', { x: [[]], y: [[]] }, [ghostIdx]);
+                if (clearTimer) clearTimeout(clearTimer);
+                clearTimer = setTimeout(function () { clearTimer = null; showGhost(-1); }, 130);
+            });
+            gd.addEventListener('mouseleave', function () {
+                if (clearTimer) clearTimeout(clearTimer);
+                clearTimer = null;
+                shown = -2; showGhost(-1);   // force a clear on real exit
             });
         }
 
-        // Map is the default view -> draw it on load. Retry until Plotly (CDN)
-        // and the sized container are ready, and force a resize after drawing so
-        // it renders correctly on first paint (not blank until a tab switch).
-        function initTrendMap() {
+        // Map is the default view. Draw it NOW (self-invoking) rather than
+        // waiting on a load/DOMContentLoaded event - those weren't firing
+        // reliably here, leaving the map blank until a manual tab switch drew
+        // it. Retry until Plotly (CDN) + the element exist, then draw and
+        // resize a few times as the surrounding layout settles.
+        (function initTrendMap() {
             if (drawn) return;
             var el = document.getElementById('trendMap');
-            if (!window.Plotly || !el || el.clientWidth === 0) {
-                return setTimeout(initTrendMap, 120);
-            }
-            drawTrendMap();
+            if (!window.Plotly || !el) { setTimeout(initTrendMap, 100); return; }
             drawn = true;
-            setTimeout(function () { if (window.Plotly) Plotly.Plots.resize('trendMap'); }, 60);
-        }
-        window.addEventListener('load', initTrendMap);
-        if (document.readyState === 'complete') initTrendMap();
+            drawTrendMap();
+            [60, 250, 600, 1200].forEach(function (ms) {
+                setTimeout(function () { if (window.Plotly) Plotly.Plots.resize('trendMap'); }, ms);
+            });
+            if (window.ResizeObserver) {
+                var lastW = 0;
+                new ResizeObserver(function () {
+                    var w = el.clientWidth;                 // only resize on a real width change
+                    if (w && Math.abs(w - lastW) > 1) { lastW = w; if (window.Plotly) Plotly.Plots.resize('trendMap'); }
+                }).observe(el);
+            }
+        })();
     })();
     </script>
 
