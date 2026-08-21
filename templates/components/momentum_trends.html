@@ -148,17 +148,22 @@
                 {# --- ML Confidence bar + hover tooltip --- #}
                 <div class="mt-3 relative group">
 
+                    {# Headline bar = the effective U-fit sizing factor actually
+                       applied to conviction: 0.30 + 0.70*u_fit (never 0). Raw
+                       u_fit shown in the tooltip; strength telemetry too. #}
+                    {% set uf = item.u_fit|default(0) %}
+                    {% set uf_factor = 0.30 + 0.70 * uf %}
                     <div class="flex justify-between items-center mb-1">
-                        <span class="label-small text-blue-400">Strength</span>
-                        <span class="label-small font-mono">{{ item.ml_conf }}%</span>
+                        <span class="label-small text-blue-400">U-fit</span>
+                        <span class="label-small font-mono">{{ '%.2f'|format(uf_factor) }}</span>
                     </div>
 
                     <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden cursor-help">
                         <div class="h-full
-                            {{ 'bg-red-500'    if item.ml_conf < 45
-                               else 'bg-yellow-400' if item.ml_conf < 55
-                               else 'bg-blue-500' }}"
-                             style="width: {{ item.ml_conf }}%">
+                            {{ 'bg-cyan-400'   if uf >= 0.6
+                               else 'bg-yellow-400' if uf > 0
+                               else 'bg-slate-500' }}"
+                             style="width: {{ (uf_factor * 100)|round(0)|int }}%">
                         </div>
                     </div>
 
@@ -168,7 +173,15 @@
                                 bg-slate-900 border border-slate-600 rounded p-2 shadow-xl
                                 text-[10px] font-mono whitespace-nowrap">
 
-                        <p class="text-blue-400">
+                        <p class="text-slate-400">
+                            U-fit raw: <span class="text-white">{{ item.u_fit|default(0) }}</span>
+                            &nbsp;→&nbsp; factor <span class="text-white">{{ '%.2f'|format(0.30 + 0.70 * (item.u_fit|default(0))) }}</span>
+                        </p>
+                        <p class="text-slate-400">
+                            Strength (linear): <span class="text-white">{{ item.ml_conf }}%</span>
+                        </p>
+
+                        <p class="text-blue-400 mt-1">
                             Slow: <span class="text-white">{{ item.ml_conf_slow }}%</span>
                             &nbsp;|&nbsp;
                             Fast: <span class="text-white">{{ item.ml_conf_fast }}%</span>
@@ -242,26 +255,10 @@
                     </p>
                     {% endif %}
 
-                    {# Hurst — inline badge, color-coded by regime #}
-                    {% if item.hurst is defined %}
-                    <p class="label-small font-mono
-                        {{ 'text-green-400'  if item.hurst > 0.55
-                           else 'text-red-400'    if item.hurst < 0.45
-                           else 'text-slate-400' }}">
-                        H: {{ item.hurst }}
-                    </p>
-                    {% endif %}
+                    {# Hurst inline badge removed - it's a component of the posture
+                       badge (persistence_score); raw value stays in the tooltips. #}
 
-                    {# U-fit — inline badge; now drives conviction/sizing #}
-                    {% if item.u_fit is defined %}
-                    <p class="label-small font-mono
-                        {{ 'text-cyan-400' if item.u_fit >= 0.6
-                           else 'text-slate-400' if item.u_fit > 0
-                           else 'text-slate-600' }}"
-                       title="U-reversal fit [0-1]; drives conviction/sizing">
-                        U: {{ item.u_fit }}
-                    </p>
-                    {% endif %}
+                    {# inline U: badge removed - u_fit is now the headline bar above #}
 
                     {# P(stop) — inline badge, red when geometry is unfavorable #}
                     {% if item.p_stop is defined %}
