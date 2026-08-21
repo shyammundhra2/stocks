@@ -11,206 +11,130 @@
             Copy Report
         </span>
     </div>
-
-    <div class="flex flex-col items-center">
-        <img
-            src="{{ url_for('static', filename='images/export.png') }}"
-            alt="Export Dashboard"
-            class="h-10 w-10 cursor-pointer hover:opacity-80 transition-transform active:scale-95"
-            onclick="exportDashboard()"
-        >
-        <span class="text-[9px] text-slate-500 font-bold mt-1 uppercase tracking-tighter">
-            Export Report
-        </span>
-    </div>
 </div>
 
 <script>
 // Embed the data directly from Flask
 const REPORT_DATA = {{ all_data_json|safe }};
 
+// Tabular / ASCII report designed to paste straight into an LLM (Claude).
 function formatJsonAsReadableText(data) {
     if (!data) return "Error: Could not generate report";
 
-    // Helper to safely get nested values
-    const get = (obj, path, defaultVal = 'N/A') => {
-        try {
-            return path.split('.').reduce((o, p) => o?.[p], obj) ?? defaultVal;
-        } catch {
-            return defaultVal;
-        }
+    const get = (obj, path, d = '') => {
+        try { return path.split('.').reduce((o, p) => o?.[p], obj) ?? d; } catch { return d; }
     };
+    const num = (x, d = 2) => (x === null || x === undefined || x === '' || isNaN(x)) ? '' : Number(x).toFixed(d);
 
-    // Helper to safely iterate arrays
-    const forEach = (arr, callback) => {
-        if (Array.isArray(arr)) arr.forEach(callback);
+    // Fixed-width table. aligns[i] = 'r' right-aligns (numbers), else left.
+    const table = (headers, rows, aligns = []) => {
+        const w = headers.map((h, i) =>
+            Math.max(String(h).length, 1, ...rows.map(r => String(r[i] ?? '').length)));
+        const cell = (c, i) => {
+            const s = String(c ?? '');
+            return aligns[i] === 'r' ? s.padStart(w[i]) : s.padEnd(w[i]);
+        };
+        let out = headers.map(cell).join('  ') + "\n";
+        out += w.map(x => '-'.repeat(x)).join('  ') + "\n";
+        rows.forEach(r => { out += r.map(cell).join('  ') + "\n"; });
+        return out;
     };
+    const rule = (n = 66) => '='.repeat(n) + "\n";
 
-    let text = "";
-    const timestamp = new Date().toLocaleString();
+    let t = "";
+    t += rule();
+    t += "MACRO SYSTEM REPORT   " + new Date().toLocaleString() + "\n";
+    t += rule();
 
-    text += "==========================================\n";
-    text += "       MACRO SYSTEM STRATEGY REPORT       \n";
-    text += "       Generated: " + timestamp + "\n";
-    text += "==========================================\n\n";
+    // --- REGIME ---
+    const reg = data.regime || {};
+    t += `Regime: ${get(reg, 'status')} (${get(reg, 'regime_qualifier', '-')})   `
+       + `Confidence ${get(reg, 'confidence')}%   Composite ${get(reg, 'composite')}%   `
+       + `ml_slow ${get(reg, 'ml_slow')}%\n`;
+    t += `VIX ${get(data, 'vix_mr.vix')} (z ${get(data, 'vix_mr.z')}) ${get(data, 'vix_mr.signal')}   |   `
+       + `QQQ RSI2 ${get(data, 'mr.rsi2')} -> ${get(data, 'mr.signal')} (@${get(data, 'mr.price')})\n`;
+    const conds = (reg.details || []).map(m => `${String(get(m, 'label')).split(' ')[0]}[${m.pass ? 'Y' : 'N'}]`).join(' ');
+    if (conds) t += `Conditions: ${conds}\n`;
+    if (reg.hmm) t += `HMM: ${get(reg, 'hmm.most_likely')}   P(crisis) ${num((get(reg, 'hmm.p_crisis', 0)) * 100, 1)}%\n`;
 
-    // AI SECTOR ALLOCATION
-    if (data.ml_sector) {
-        text += "--- [I] AI SECTOR ALLOCATION ---\n";
-        text += `REGIME: ${get(data, 'regime.status')}\n`;
-        text += `TOP OVERWEIGHT:  ${get(data, 'ml_sector.top.name')} (${get(data, 'ml_sector.top.ticker')})\n`;
-        text += `TOP UNDERWEIGHT: ${get(data, 'ml_sector.bottom.name')} (${get(data, 'ml_sector.bottom.ticker')})\n`;
-        text += `TOP CONFIDENCE:  ${get(data, 'ml_sector.top.confidence')}%\n`;
-        text += `SPREAD:          ${get(data, 'ml_sector.spread')}%\n\n`;
-        text += "Sector Probability Distribution:\n";
-        forEach(data.ml_sector.all, s => {
-            text += `  - ${get(s, 'name')} (${get(s, 'ticker')}): ${get(s, 'confidence')}%\n`;
-        });
-        text += "\n";
+    // --- PORTFOLIO ---
+    const ps = data.portfolio_summary || {};
+    t += "\n" + `PORTFOLIO: Deployed ${get(ps, 'total_allocated')}%   Vol ${get(ps, 'portfolio_vol')}% (cap ${get(ps, 'vol_cap')}%)   `
+       + `Positions ${get(ps, 'n_positions')}   Regime scalar ${num((get(ps, 'regime_scalar', 0)) * 100, 0)}%   `
+       + `Top risk ${get(ps, 'max_risk_contributor')}\n\n`;
+
+    // --- ACTIVE POSITIONS ---
+    const trends = data.trends || [];
+    const active = trends.filter(x => Number(x.dollar_amount) > 0);
+    if (active.length) {
+        t += "ACTIVE POSITIONS\n";
+        t += table(
+            ["SYM", "NAME", "STATUS", "$ALLOC", "WT%", "RISK%", "U"],
+            active.map(x => [x.sym, x.name, x.status, num(x.dollar_amount, 0), num(x.weight_pct, 1), num(x.risk_contribution, 1), num(x.u_fit, 2)]),
+            ["l", "l", "l", "r", "r", "r", "r"]
+        ) + "\n";
     }
 
-    // AI COUNTRY ALLOCATION
-    if (data.ml_country) {
-        text += "--- [II] AI COUNTRY ALLOCATION ---\n";
-        text += `TOP OVERWEIGHT:  ${get(data, 'ml_country.top.name')} (${get(data, 'ml_country.top.ticker')})\n`;
-        text += `TOP UNDERWEIGHT: ${get(data, 'ml_country.bottom.name')} (${get(data, 'ml_country.bottom.ticker')})\n`;
-        text += `TOP CONFIDENCE:  ${get(data, 'ml_country.top.confidence')}%\n`;
-        text += `SPREAD:          ${get(data, 'ml_country.spread')}%\n\n`;
-        text += "Country Probability Distribution:\n";
-        forEach(data.ml_country.all, c => {
-            text += `  - ${get(c, 'name')} (${get(c, 'ticker')}): ${get(c, 'confidence')}%\n`;
-        });
-        text += "\n";
+    // --- MOMENTUM TRENDS (all) ---
+    if (trends.length) {
+        t += "MOMENTUM TRENDS (all, sorted by conviction)\n";
+        t += table(
+            ["SYM", "PRICE", "STATUS", "SLOPE", "R2", "Z", "RSI", "dSLOPE", "H", "U", "POST", "P(stp)%", "ALLOC$"],
+            trends.map(x => [
+                x.sym, num(x.price, 2), x.status, num(x.slope, 2), num(x.r2, 2), num(x.slope_z, 2),
+                num(x.rsi14, 1), num(x.delta_slope, 2), num(x.hurst, 2), num(x.u_fit, 2),
+                num(x.persistence_score, 2), num((x.p_stop || 0) * 100, 0), num(x.dollar_amount, 0)
+            ]),
+            ["l", "r", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r"]
+        ) + "\n";
     }
 
-    // AI COMMODITY ALLOCATION
-    if (data.ml_commodity) {
-        text += "--- [III] AI COMMODITY ALLOCATION ---\n";
-        text += `TOP OVERWEIGHT:  ${get(data, 'ml_commodity.top.name')} (${get(data, 'ml_commodity.top.ticker')})\n`;
-        text += `TOP UNDERWEIGHT: ${get(data, 'ml_commodity.bottom.name')} (${get(data, 'ml_commodity.bottom.ticker')})\n`;
-        text += `TOP CONFIDENCE:  ${get(data, 'ml_commodity.top.confidence')}%\n`;
-        text += `SPREAD:          ${get(data, 'ml_commodity.spread')}%\n\n`;
-        text += "Commodity Probability Distribution:\n";
-        forEach(data.ml_commodity.all, c => {
-            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): ${get(c, 'confidence')}%\n`;
-        });
-        text += "\n";
-    }
+    // --- AI ML ALLOCATIONS ---
+    const mlBlock = (title, m) => {
+        if (!m) return "";
+        let s = `${title}: OW ${get(m, 'top.name')} ${get(m, 'top.confidence')}%   `
+              + `UW ${get(m, 'bottom.name')} ${get(m, 'bottom.confidence')}%   spread ${get(m, 'spread')}%\n`;
+        const all = (m.all || []).slice(0, 8).map(x => `${get(x, 'name') || get(x, 'ticker')} ${get(x, 'confidence')}%`).join(', ');
+        if (all) s += `  ${all}\n`;
+        return s;
+    };
+    const mls = mlBlock("AI SECTOR", data.ml_sector) + mlBlock("AI COUNTRY", data.ml_country) + mlBlock("AI COMMODITY", data.ml_commodity);
+    if (mls) t += mls + "\n";
 
-    // VOLATILITY & RISK REGIME
-    if (data.regime) {
-        text += "--- [IV] VOLATILITY & RISK REGIME ---\n";
-        forEach(data.regime.details, m => {
-            text += `  - ${get(m, 'label')}: ${get(m, 'pass') === true ? 'PASS' : 'FAIL'}\n`;
-        });
-        text += `VIX Level: ${get(data, 'vix_mr.vix')} (Z: ${get(data, 'vix_mr.z')})\n`;
-        text += `VIX Signal: ${get(data, 'vix_mr.signal', '').replace(/_/g, ' ')}\n\n`;
-    }
+    // --- ROTATION ---
+    const rot = (title, arr) => {
+        if (!Array.isArray(arr) || !arr.length) return "";
+        return title + "\n" + table(
+            ["NAME", "SLOPE", "R2", "dSLOPE", "GRAD"],
+            arr.map(x => [get(x, 'name'), num(x.slope, 2), num(x.r2, 2), num(x.slope_change, 2), num(x.gradient, 0)]),
+            ["l", "r", "r", "r", "r"]
+        ) + "\n";
+    };
+    t += rot("SECTOR ROTATION", data.sr?.all_ranked);
+    t += rot("COUNTRY ROTATION", data.countries);
+    t += rot("COMMODITY ROTATION", data.commodities);
+    t += rot("CURRENCY ROTATION (X->USD)", data.currencies);
 
-    // TACTICAL MEAN REVERSION
-    if (data.mr) {
-        text += "--- [V] TACTICAL MEAN REVERSION (QQQ) ---\n";
-        text += `Price: ${get(data, 'mr.price')}\n`;
-        text += `RSI(2): ${get(data, 'mr.rsi2')}\n`;
-        text += `Signal: ${get(data, 'mr.signal')}\n\n`;
-    }
-
-    // SECTOR ROTATION
-    if (data.sr?.all_ranked) {
-        text += "--- [VI] SECTOR ROTATION (3M RELATIVE) ---\n";
-        forEach(data.sr.all_ranked, s => {
-            text += `  - ${get(s, 'name')}: Slope ${get(s, 'slope')}% | ΔSlope ${get(s, 'slope_change', '0')}% | R2 ${get(s, 'r2')}\n`;
-        });
-        text += "\n";
-    }
-
-    // GLOBAL ROTATION
-    text += "--- [VII] GLOBAL ROTATION (60D) ---\n";
-    if (data.countries) {
-        text += "Countries:\n";
-        forEach(data.countries, c => {
-            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
-        });
-    }
-    if (data.commodities) {
-        text += "\nCommodities:\n";
-        forEach(data.commodities, c => {
-            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
-        });
-    }
-    if (data.currencies) {
-        text += "\nCurrencies vs USD:\n";
-        forEach(data.currencies, c => {
-            text += `  - ${get(c, 'name')} (${get(c, 'sym')}): Slope ${get(c, 'slope')}% | ΔSlope ${get(c, 'slope_change', '0')}% | R2 ${get(c, 'r2')}\n`;
-        });
-    }
-    text += "\n";
-
-    // MOMENTUM TREND AUDIT
-    if (data.trends) {
-        text += "--- [VIII] MOMENTUM TREND AUDIT ---\n";
-        forEach(data.trends, t => {
-            text += `${(get(t, 'status', '') + '').padEnd(12)} | ${(get(t, 'name', '') + '').padEnd(14)} (${get(t, 'sym')}): `;
-            text += `${get(t, 'price')} | ML ${get(t, 'ml_conf')}% | Stop ${get(t, 'stop')}\n`;
-        });
-        text += "\n";
-    }
-
-    text += "==========================================\n";
-    text += "        END OF STRATEGY EXPORT            \n";
-    text += "==========================================\n";
-
-    return text;
-}
-
-function exportDashboard() {
-    console.log('Exporting data...', REPORT_DATA);
-
-    if (!REPORT_DATA) {
-        alert('No data available to export. Please refresh the page.');
-        return;
-    }
-
-    // Export as pretty-printed JSON
-    const jsonText = JSON.stringify({
-        generated_at: new Date().toISOString(),
-        report_type: "macro_system_strategy",
-        data: REPORT_DATA
-    }, null, 2);
-
-    const now = new Date();
-    const blob = new Blob([jsonText], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'Macro_Strategy_Report_' + now.toISOString().split('T')[0] + '.json';
-    a.click();
+    t += rule();
+    t += "Columns: SLOPE=1000x daily log-return | R2=trend fit | Z=slope z-score | "
+       + "H=Hurst | U=U-reversal fit[0-1] (drives sizing) | POST=persistence score[-1..1] | "
+       + "P(stp)=stop-before-target prob\n";
+    t += rule();
+    return t;
 }
 
 function copyDashboard() {
-    console.log('REPORT_DATA:', REPORT_DATA);
-
-    if (!REPORT_DATA) {
-        alert('No data available to copy. Please refresh the page.');
-        return;
-    }
-
+    if (!REPORT_DATA) { alert('No data available to copy. Please refresh the page.'); return; }
     const text = formatJsonAsReadableText(REPORT_DATA);
-    console.log('Generated text length:', text.length);
-    console.log('Text preview:', text.substring(0, 200));
-
     const label = document.getElementById('copy-label');
-
     navigator.clipboard.writeText(text).then(() => {
         const originalText = label.innerText;
         label.innerText = "COPIED";
-        label.classList.remove('text-slate-500');
-        label.classList.add('text-green-600');
-
+        label.classList.remove('text-slate-500'); label.classList.add('text-green-600');
         setTimeout(() => {
             label.innerText = originalText;
-            label.classList.remove('text-green-600');
-            label.classList.add('text-slate-500');
-        }, 20000);
+            label.classList.remove('text-green-600'); label.classList.add('text-slate-500');
+        }, 8000);
     }).catch(err => {
         console.error('Failed to copy: ', err);
         alert('Failed to copy to clipboard: ' + err.message);
