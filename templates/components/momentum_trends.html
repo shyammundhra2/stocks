@@ -130,6 +130,18 @@
                             <span class="font-mono opacity-70">{{ item.persistence_score }}</span>
                         </span>
                         {% endif %}
+
+                        {# --- Adaptive router: ER-detected state -> MOM / REV / FLAT --- #}
+                        {% if item.adaptive_signal is defined %}
+                        <span class="inline-flex items-center gap-1 mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider
+                            {{ 'bg-green-500/15 text-green-400'  if item.adaptive_signal == 'MOM'
+                               else 'bg-cyan-500/15 text-cyan-400'   if item.adaptive_signal == 'REV'
+                               else 'bg-slate-700/40 text-slate-500' }}"
+                            title="Efficiency ratio {{ item.eff_ratio }} -> {{ item.adaptive_state }}. Router: MOM=trend momentum long, REV=RSI2 oversold buy, FLAT=stand aside.">
+                            {{ item.adaptive_signal }}
+                            <span class="font-mono opacity-70">ER {{ item.eff_ratio }}</span>
+                        </span>
+                        {% endif %}
                     </div>
                     <div class="text-right">
                         <p class="text-xl font-black

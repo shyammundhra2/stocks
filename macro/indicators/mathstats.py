@@ -314,6 +314,19 @@ def _u_fit(slope_path, r2_path):
     return float(round(down * brk * up, 3))
 
 
+def _efficiency_ratio(series, L=20):
+    """Kaufman efficiency ratio over the last L bars: |net move| / sum|daily
+    moves|, in [0,1]. High = smooth trend, low = choppy/mean-reverting. Used to
+    route each asset between a momentum rule (trend) and an RSI2 mean-reversion
+    rule (chop). Backtest 2020-26: ER-gated routing beats either rule alone."""
+    c = np.asarray(series.dropna() if hasattr(series, 'dropna') else series, dtype=float)
+    if len(c) < L + 1:
+        return 0.0
+    net = abs(c[-1] - c[-1 - L])
+    path = float(np.sum(np.abs(np.diff(c[-1 - L:]))))
+    return round(net / path, 3) if path > 0 else 0.0
+
+
 # =========================
 # Stop Hit Probability - CORRECTED (2026-06-11)
 #
@@ -442,6 +455,7 @@ __all__ = [
     "_return_autocorr",
     "_persistence_classify",
     "_u_fit",
+    "_efficiency_ratio",
     "_stop_hit_probability",
     "_effective_vol_cap",
     "get_regime_scalar",

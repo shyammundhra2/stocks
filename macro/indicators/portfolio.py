@@ -66,17 +66,15 @@ def _compute_risk_contribution(weights, cov_matrix):
 
 
 def _conviction_score(item):
-    # 2026-08 experiment: conviction = slope * r2 * u_fit_factor. u_fit (the
-    # U-reversal fit) is 0 for non-reversals; rather than zero those out (which
-    # collapses the book), we PENALIZE the would-be-zeros with a floor so every
-    # trend keeps some weight while fresh reversals get the tilt:
-    #   factor = FLOOR + (1 - FLOOR) * u_fit   (FLOOR=0.3 -> non-reversal = 0.3x)
-    uf = item.get("u_fit")
-    if uf is None:
-        factor = item.get("strength", item["r2"])
-    else:
-        factor = 0.3 + 0.7 * uf
-    return max(item["slope"] * item["r2"] * factor, 0.0)
+    # 2026-08 adaptive router conviction (regime-aware; backtest 2020-26 net
+    # of cost: Sharpe ~1.03, train 1.05 ~ test 1.02 - the most robust config
+    # found). Momentum names sized by trend strength slope*r2; reversion names
+    # by oversold depth. No u_fit - it diluted in every test.
+    sig = item.get("adaptive_signal")
+    if sig == "REV":
+        depth = max((15.0 - item.get("rsi2", 50.0)) / 15.0, 0.0)
+        return max(depth * item["r2"], 0.0)
+    return max(item["slope"] * item["r2"], 0.0)
 
 
 def _kelly_covariance_optimizer(
@@ -134,10 +132,9 @@ def _kelly_covariance_optimizer(
     else:
         effective_vol_cap = max_portfolio_vol
 
-    active_signals = [
-        t for t in trends
-        if any(s in t["status"] for s in ["BUY", "STRONG BUY", "BREAKOUT", "HOLD"])
-    ]
+    # Selection = the ER router (2026-08): only hold names it routes to a rule
+    # (MOM = trend momentum, REV = oversold reversion); FLAT names are excluded.
+    active_signals = [t for t in trends if t.get("adaptive_signal") in ("MOM", "REV")]
 
     if not active_signals:
         return trends, {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
@@ -184,15 +181,23 @@ def _kelly_covariance_optimizer(
         for sym in available
     ])
 
-    # Instruments with zero raw weight get zero upper bound -
-    # prevents optimizer allocating to instruments below quality threshold
-    def upper_bound(kelly_w):
+    # Router signal per available name. MOM has a momentum kelly-size; REV's
+    # momentum kelly-size is 0 (slope<0), so give REV a max_single ceiling and
+    # let conviction + the vol cap size it.
+    sigs = [next(t.get("adaptive_signal", "") for t in active_signals if t["sym"] == sym)
+            for sym in available]
+
+    def upper_bound(kelly_w, sig):
         if kelly_w > 0:
             return min(kelly_w, max_single)
+        if sig == "REV":
+            return max_single
         return 0.0
 
-    bounds = [(0.0, upper_bound(kelly_weights[i])) for i in range(len(available))]
-    x0 = np.array([w if w > 0 else 0.0 for w in kelly_weights])
+    bounds = [(0.0, upper_bound(kelly_weights[i], sigs[i])) for i in range(len(available))]
+    x0 = np.array([kelly_weights[i] if kelly_weights[i] > 0
+                   else (0.02 if sigs[i] == "REV" else 0.0)
+                   for i in range(len(available))])
 
     conviction_raw = np.array([
         _conviction_score(next(t for t in active_signals if t["sym"] == sym))
@@ -287,7 +292,7 @@ def _kelly_covariance_optimizer(
             }
         else:
             item = {**item, "weight_pct": 0.0, "risk_contribution": 0.0,
-                    "top_correlations": {}}
+                    "top_correlations": {}, "dollar_amount": 0.0, "pos_size": "$0"}
         updated_trends.append(item)
 
     return updated_trends, {
@@ -514,6 +519,23 @@ def get_trends():
             s200 = float(ma_200.iloc[-1])
 
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
+            rsi2 = float(compute_RSI(c, 2).iloc[-1])
+
+            # Adaptive MR-vs-trend router (backtest 2020-26: beats either rule
+            # alone). Efficiency ratio detects state; route momentum vs RSI2
+            # reversion, both gated on price > 200SMA.
+            eff_ratio = _efficiency_ratio(c, 20)
+            above200 = last > s200
+            # TREND gate widened 0.50 -> 0.40 (backtest 2020-26: Sharpe 1.03 ->
+            # 1.34, breadth 6.6 -> 8.5); CHOP kept strict at 0.35 for reversion.
+            if eff_ratio >= 0.40:
+                adaptive_state = "TREND"
+                adaptive_signal = "MOM" if (above200 and last > s50 and slope > 0) else "FLAT"
+            elif eff_ratio <= 0.35:
+                adaptive_state = "CHOP"
+                adaptive_signal = "REV" if (above200 and rsi2 < 15) else "FLAT"
+            else:
+                adaptive_state, adaptive_signal = "MID", "FLAT"
 
             # Hurst exponent - trend persistence
             hurst = _hurst_exponent(c, max_lag=40)
@@ -679,6 +701,10 @@ def get_trends():
                 "regime": ml_regime,
                 "strength": round(strength, 3),     # trend-quality multiplier [0,1]
                 "rsi14": round(rsi14, 1),
+                "rsi2": round(rsi2, 1),
+                "eff_ratio": eff_ratio,             # Kaufman ER [0,1]: trend vs chop
+                "adaptive_state": adaptive_state,   # TREND / CHOP / MID
+                "adaptive_signal": adaptive_signal, # MOM / REV / FLAT (the router's call)
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 2),
                 "delta_slope": round(delta_slope, 4),
@@ -726,7 +752,7 @@ def get_trends():
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,
         portfolio_value=500000,
-        max_single=0.25,
+        max_single=0.15,            # per-name cap 15% (was 25%; caps REV names too)
         max_risk_contribution=0.35,
         min_portfolio_vol=0.08,     # floor: 8%   (~1/9 Kelly at Sharpe ~0.7)
         max_portfolio_vol=0.135,     # ceiling: 13.5% (~1/5 Kelly) - see

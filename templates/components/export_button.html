@@ -79,13 +79,14 @@ function formatJsonAsReadableText(data) {
     if (trends.length) {
         t += "MOMENTUM TRENDS (all, sorted by conviction)\n";
         t += table(
-            ["SYM", "PRICE", "STATUS", "SLOPE", "R2", "Z", "RSI", "dSLOPE", "H", "U", "POST", "P(stp)%", "ALLOC$"],
+            ["SYM", "PRICE", "STATUS", "SLOPE", "R2", "Z", "RSI", "ER", "STATE", "SIG", "H", "U", "POST", "P(stp)%", "ALLOC$"],
             trends.map(x => [
                 x.sym, num(x.price, 2), x.status, num(x.slope, 2), num(x.r2, 2), num(x.slope_z, 2),
-                num(x.rsi14, 1), num(x.delta_slope, 2), num(x.hurst, 2), num(x.u_fit, 2),
+                num(x.rsi14, 1), num(x.eff_ratio, 2), get(x, 'adaptive_state'), get(x, 'adaptive_signal'),
+                num(x.hurst, 2), num(x.u_fit, 2),
                 num(x.persistence_score, 2), num((x.p_stop || 0) * 100, 0), num(x.dollar_amount, 0)
             ]),
-            ["l", "r", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r"]
+            ["l", "r", "l", "r", "r", "r", "r", "r", "l", "l", "r", "r", "r", "r", "r"]
         ) + "\n";
     }
 
@@ -117,6 +118,7 @@ function formatJsonAsReadableText(data) {
 
     t += rule();
     t += "Columns: SLOPE=1000x daily log-return | R2=trend fit | Z=slope z-score | "
+       + "ER=efficiency ratio[0-1] | STATE/SIG=adaptive router (TREND->MOM, CHOP->REV, else FLAT) | "
        + "H=Hurst | U=U-reversal fit[0-1] (drives sizing) | POST=persistence score[-1..1] | "
        + "P(stp)=stop-before-target prob\n";
     t += rule();
