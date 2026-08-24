@@ -89,6 +89,12 @@ TREND_ASSETS = {
     "RKT": "Rocket",
 }
 
+# Names NOT zeroed by the risk-off equity gate (backtest_gss_eqgate 2007-26:
+# gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's
+# best positions while equities collapsed). They still need their own >200DMA
+# trend to be bought; the gate only spares them from the SPY-based shutoff.
+DEFENSIVE_ASSETS = {"GLD", "SLV", "DBC", "TLT"}
+
 # --- ML Macro Tickers ---
 ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
 

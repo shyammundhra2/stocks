@@ -19,7 +19,7 @@ except ImportError:  # numpy < 1.20
 from macro.helpers import compute_RSI, compute_ATR
 from macro.constants import (
     SECTOR_NAMES, SECTORS, COUNTRIES, COMMODITIES,
-    CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS
+    CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS, DEFENSIVE_ASSETS
 )
 from predict import predict_assets, predict_commodities
 from macro.paths import model_path
@@ -66,15 +66,47 @@ def _compute_risk_contribution(weights, cov_matrix):
 
 
 def _conviction_score(item):
-    # 2026-08 adaptive router conviction (regime-aware; backtest 2020-26 net
-    # of cost: Sharpe ~1.03, train 1.05 ~ test 1.02 - the most robust config
-    # found). Momentum names sized by trend strength slope*r2; reversion names
-    # by oversold depth. No u_fit - it diluted in every test.
+    # 2026-08-24 inverse-vol conviction (backtest_gss_eqgate, 2007-26: with the
+    # equity-only gate, 1/vol sizing lifted full-cycle Sharpe 0.63 -> 0.66 and
+    # was the only config that dented the 2015-16 chop bleed, -13% -> -8%).
+    # Selection stays with the ER router; this only changes the optimizer's
+    # PREFERENCE among selected names - away from the highest-slope names,
+    # which are exactly the ones that whipsaw hardest in chop.
+    v = item.get("vol63")
+    if v is not None and np.isfinite(v) and v > 0:
+        return 1.0 / v
+    # Fallback (vol missing): prior regime-aware conviction. Momentum by
+    # slope*r2, reversion by oversold depth. No u_fit - diluted in every test.
     sig = item.get("adaptive_signal")
     if sig == "REV":
         depth = max((15.0 - item.get("rsi2", 50.0)) / 15.0, 0.0)
         return max(depth * item["r2"], 0.0)
     return max(item["slope"] * item["r2"], 0.0)
+
+
+def _spy_risk_gate(spy_close, buf=0.03):
+    """Buffered SPY-200DMA regime gate with hysteresis (backtest_gss_whipsaw /
+    backtest_gss_eqgate). Risk-off when SPY closes below 200DMA*(1-buf);
+    risk-on again only above 200DMA*(1+buf). The +/-3% band is the actual
+    anti-whipsaw mechanism - an exact-threshold gate flip-flops in chop and
+    made 2015/2018 WORSE. State is walked deterministically over the full
+    series, so the live call needs no persisted state.
+    Returns True when risk-off.
+    """
+    if spy_close is None or len(spy_close) < 210:
+        return False
+    px = np.asarray(spy_close, dtype=float)
+    sma = pd.Series(px).rolling(200).mean().values
+    off = False
+    for p, m in zip(px[199:], sma[199:]):
+        if not (np.isfinite(p) and np.isfinite(m)):
+            continue
+        if off:
+            if p > m * (1.0 + buf):
+                off = False
+        elif p < m * (1.0 - buf):
+            off = True
+    return off
 
 
 def _kelly_covariance_optimizer(
@@ -471,6 +503,15 @@ def get_trends():
     except Exception:
         _dual_map = {}
 
+    # Risk-off equity gate (2026-08-24): buffered SPY-200DMA +/-3% hysteresis.
+    # When risk-off, equity names are forced FLAT (router-excluded); DEFENSIVE
+    # (GLD/SLV/DBC/TLT) stay eligible so the book keeps its 2008-style crisis
+    # trades. Computed once per refresh from SPY's full history.
+    _spy_df = _dfs.get("SPY")
+    gate_riskoff = _spy_risk_gate(
+        _spy_df["Close"].squeeze().values if _spy_df is not None else None
+    )
+
     for sym, name in TREND_ASSETS.items():
         try:
             df = _dfs.get(sym)
@@ -536,6 +577,16 @@ def get_trends():
                 adaptive_signal = "REV" if (above200 and rsi2 < 15) else "FLAT"
             else:
                 adaptive_state, adaptive_signal = "MID", "FLAT"
+
+            # Risk-off equity gate: zero equity names, spare defensives.
+            gated = False
+            if gate_riskoff and sym not in DEFENSIVE_ASSETS and adaptive_signal != "FLAT":
+                adaptive_signal = "FLAT"
+                gated = True
+
+            # 63d daily vol for inverse-vol conviction in the optimizer.
+            _v63 = c.pct_change().rolling(63).std().iloc[-1]
+            vol63 = float(_v63) if np.isfinite(_v63) else None
 
             # Hurst exponent - trend persistence
             hurst = _hurst_exponent(c, max_lag=40)
@@ -705,6 +756,8 @@ def get_trends():
                 "eff_ratio": eff_ratio,             # Kaufman ER [0,1]: trend vs chop
                 "adaptive_state": adaptive_state,   # TREND / CHOP / MID
                 "adaptive_signal": adaptive_signal, # MOM / REV / FLAT (the router's call)
+                "gated": gated,                     # True: forced FLAT by risk-off equity gate
+                "vol63": vol63,                     # 63d daily vol (inverse-vol conviction)
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 2),
                 "delta_slope": round(delta_slope, 4),
@@ -763,6 +816,7 @@ def get_trends():
         regime=regime,              # pass regime for dynamic vol cap
     )
 
+    summary["risk_gate"] = "RISK-OFF" if gate_riskoff else "RISK-ON"
     _portfolio_summary = summary
     return optimized_results
 
@@ -780,6 +834,7 @@ __all__ = [
     "_compute_portfolio_var",
     "_compute_risk_contribution",
     "_conviction_score",
+    "_spy_risk_gate",
     "_kelly_covariance_optimizer",
     "_compute_kelly_size",
     "get_trends",
