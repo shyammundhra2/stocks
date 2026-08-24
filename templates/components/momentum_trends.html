@@ -153,19 +153,6 @@
                         <p class="font-bold text-white leading-tight">{{ item.name }}</p>
                         <p class="text-[10px] text-green-400 font-mono mt-1">ALLOCATION: {{ item.pos_size }}</p>
 
-                        {# --- Trend vs. mean-revert posture (~2-3mo) --- #}
-                        {% if item.persistence_label is defined %}
-                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider
-                            {{ 'bg-green-500/15 text-green-400'   if item.persistence_label == 'TREND'
-                               else 'bg-orange-500/15 text-orange-400' if item.persistence_label == 'MEAN-REVERT'
-                               else 'bg-slate-600/30 text-slate-300' }}"
-                            title="~2-3 month posture. Blend of Hurst {{ item.hurst }}, variance ratio(21) {{ item.vr21 }}, weekly autocorr {{ item.wk_autocorr }}. Score {{ item.persistence_score }} in [-1 revert, +1 trend].">
-                            <span class="text-sm leading-none">{{ item.persistence_arrow }}</span>
-                            {{ item.persistence_label }}
-                            <span class="font-mono opacity-70">{{ item.persistence_score }}</span>
-                        </span>
-                        {% endif %}
-
                         {# --- Adaptive router: ER-detected state -> MOM / REV / FLAT --- #}
                         {% if item.adaptive_signal is defined %}
                         <span class="inline-flex items-center gap-1 mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider
@@ -200,54 +187,33 @@
                     </div>
                 </div>
 
-                {# --- ML Confidence bar + hover tooltip --- #}
+                {# --- Conviction bar + hover tooltip --- #}
                 <div class="mt-3 relative group">
 
-                    {# Headline bar = the effective U-fit sizing factor actually
-                       applied to conviction: 0.30 + 0.70*u_fit (never 0). Raw
-                       u_fit shown in the tooltip; strength telemetry too. #}
-                    {% set uf = item.u_fit|default(0) %}
-                    {% set uf_factor = 0.30 + 0.70 * uf %}
+                    {# Headline bar = strength, the trend-quality multiplier that
+                       actually drives position sizing: tanh(slope*r2/8), reduced
+                       by the hurst/geometry discount. #}
+                    {% set st = item.strength|default(0) %}
                     <div class="flex justify-between items-center mb-1">
-                        <span class="label-small text-blue-400">U-fit</span>
-                        <span class="label-small font-mono">{{ '%.2f'|format(uf_factor) }}</span>
+                        <span class="label-small text-blue-400">Strength</span>
+                        <span class="label-small font-mono">{{ '%.2f'|format(st) }}</span>
                     </div>
 
                     <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden cursor-help">
                         <div class="h-full
-                            {{ 'bg-cyan-400'   if uf >= 0.6
-                               else 'bg-yellow-400' if uf > 0
+                            {{ 'bg-cyan-400'   if st >= 0.6
+                               else 'bg-yellow-400' if st > 0
                                else 'bg-slate-500' }}"
-                             style="width: {{ (uf_factor * 100)|round(0)|int }}%">
+                             style="width: {{ (st * 100)|round(0)|int }}%">
                         </div>
                     </div>
 
-                    {# Hover tooltip: slow / fast / divergence / regime / hurst / p_stop #}
-                    {% if item.ml_conf_slow is defined and item.ml_conf_fast is defined %}
+                    {# Hover tooltip: hurst / p_stop - the two things that actually
+                       discount sizing (combined_discount = hurst + p_stop geometry). #}
+                    {% if item.hurst is defined or item.p_stop is defined %}
                     <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50
                                 bg-slate-900 border border-slate-600 rounded p-2 shadow-xl
                                 text-[10px] font-mono whitespace-nowrap">
-
-                        <p class="text-slate-400">
-                            U-fit raw: <span class="text-white">{{ item.u_fit|default(0) }}</span>
-                            &nbsp;→&nbsp; factor <span class="text-white">{{ '%.2f'|format(0.30 + 0.70 * (item.u_fit|default(0))) }}</span>
-                        </p>
-                        <p class="text-slate-400">
-                            Strength (linear): <span class="text-white">{{ item.ml_conf }}%</span>
-                        </p>
-
-                        <p class="text-blue-400 mt-1">
-                            Slow: <span class="text-white">{{ item.ml_conf_slow }}%</span>
-                            &nbsp;|&nbsp;
-                            Fast: <span class="text-white">{{ item.ml_conf_fast }}%</span>
-                        </p>
-
-                        {% if item.divergence is defined %}
-                        <p class="mt-1 {{ 'text-orange-400' if item.divergence > 15 else 'text-slate-400' }}">
-                            Divergence: {{ item.divergence }}pts
-                            {% if item.divergence > 15 %}&nbsp;⚠ Kelly discounted{% endif %}
-                        </p>
-                        {% endif %}
 
                         {% if item.hurst is defined %}
                         <p class="mt-1
@@ -256,20 +222,7 @@
                                else 'text-slate-400' }}">
                             Hurst: {{ item.hurst }}
                             {% if item.hurst > 0.55 %}&nbsp;↑ trending{% endif %}
-                            {% if item.hurst < 0.45 %}&nbsp;⚠ mean-reverting{% endif %}
-                        </p>
-                        {% endif %}
-
-                        {% if item.persistence_label is defined %}
-                        <p class="mt-1
-                            {{ 'text-green-400'  if item.persistence_label == 'TREND'
-                               else 'text-orange-400' if item.persistence_label == 'MEAN-REVERT'
-                               else 'text-slate-400' }}">
-                            Posture: {{ item.persistence_arrow }} {{ item.persistence_label }}
-                            ({{ item.persistence_score }})
-                        </p>
-                        <p class="text-slate-500">
-                            VR21: {{ item.vr21 }} &nbsp;|&nbsp; wk-ac: {{ item.wk_autocorr }}
+                            {% if item.hurst < 0.45 %}&nbsp;⚠ mean-reverting (sizing discounted){% endif %}
                         </p>
                         {% endif %}
 
@@ -280,19 +233,15 @@
                                else 'text-slate-400' }}">
                             P(stop): {{ (item.p_stop * 100) | int }}%
                             {% if item.p_stop > 0.50 %}&nbsp;⚠ geometry unfavorable{% endif %}
-                            {% if item.p_stop > 0.40 and item.p_stop <= 0.50 %}&nbsp;→ Kelly reduced{% endif %}
+                            {% if item.p_stop > 0.40 and item.p_stop <= 0.50 %}&nbsp;→ sizing reduced{% endif %}
                         </p>
-                        {% endif %}
-
-                        {% if item.regime is defined %}
-                        <p class="text-slate-400 mt-1 italic">{{ item.regime }}</p>
                         {% endif %}
 
                     </div>
                     {% endif %}
 
                 </div>
-                {# end ML confidence #}
+                {# end conviction bar #}
 
                 {# --- Technical metrics row --- #}
                 <div class="flex gap-4 mt-3 flex-wrap">
@@ -309,11 +258,6 @@
                         Δ: {{ item.delta_slope }}
                     </p>
                     {% endif %}
-
-                    {# Hurst inline badge removed - it's a component of the posture
-                       badge (persistence_score); raw value stays in the tooltips. #}
-
-                    {# inline U: badge removed - u_fit is now the headline bar above #}
 
                     {# P(stop) — inline badge, red when geometry is unfavorable #}
                     {% if item.p_stop is defined %}
@@ -390,9 +334,7 @@
             {% for item in trends %}
             { sym: "{{ item.sym }}", x: {{ item.slope }}, y: {{ item.r2 }},
               path: {{ item.slope_r2_path|default([[item.slope, item.r2]])|tojson }},
-              status: "{{ item.status }}", alloc: {{ item.dollar_amount|default(0) }},
-              posture: "{{ item.persistence_arrow|default('') }} {{ item.persistence_label|default('') }}",
-              pscore: {{ item.persistence_score|default(0) }} },
+              status: "{{ item.status }}", alloc: {{ item.dollar_amount|default(0) }} },
             {% endfor %}
         ];
 
@@ -414,10 +356,10 @@
                 x: trendData.map(function (d) { return d.x; }),
                 y: trendData.map(function (d) { return d.y; }),
                 text: trendData.map(function (d) { return d.sym; }),
-                customdata: trendData.map(function (d) { return [d.status, d.alloc, d.posture, d.pscore]; }),
+                customdata: trendData.map(function (d) { return [d.status, d.alloc]; }),
                 mode: 'markers+text', textposition: 'top center',
                 textfont: { size: 9, color: '#cbd5e1' },
-                hovertemplate: '%{text}<br>slope %{x}, R² %{y}<br>%{customdata[0]}<br>posture: %{customdata[2]} (%{customdata[3]})<br>$%{customdata[1]:,.0f}<extra></extra>',
+                hovertemplate: '%{text}<br>slope %{x}, R² %{y}<br>%{customdata[0]}<br>$%{customdata[1]:,.0f}<extra></extra>',
                 marker: {
                     size: sizes,
                     color: trendData.map(function (d) { return colorFor(d.status); }),
