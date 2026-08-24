@@ -4,8 +4,9 @@
 
     <p id="rebalance-day-notice" class="text-xs font-black text-cyan-400 uppercase tracking-widest mb-3" style="display:none;"></p>
     <script>
-        // Rebalance on the LAST TRADING DAY of the month (turn-of-month).
-        // Backtested best/most-robust rebalance anchor; see backtest_gss_tom_stress.py.
+        // Rebalance in the LAST 3 TRADING DAYS of the month (turn-of-month).
+        // Backtested robust window; see backtest_gss_lastweek.py (last-0/1/2
+        // cluster at Sharpe 0.73-0.79; day-3+ back gives up real edge).
         // Approximates trading day as any weekday (holiday-agnostic, display only).
         (function () {
             var today = new Date();
@@ -13,9 +14,18 @@
             while (last.getDay() === 0 || last.getDay() === 6) {                // back up to a weekday
                 last.setDate(last.getDate() - 1);
             }
-            if (last.toDateString() === today.toDateString()) {
+            var windowStart = new Date(last);
+            var stepped = 0;
+            while (stepped < 2) {                                              // walk back 2 more weekdays
+                windowStart.setDate(windowStart.getDate() - 1);
+                if (windowStart.getDay() !== 0 && windowStart.getDay() !== 6) {
+                    stepped++;
+                }
+            }
+            if (today >= windowStart && today <= last
+                    && today.getDay() !== 0 && today.getDay() !== 6) {
                 var el = document.getElementById('rebalance-day-notice');
-                el.textContent = 'Last trading day of the month — Rebalance Day';
+                el.textContent = 'Last 3 trading days of the month — Rebalance Window';
                 el.style.display = 'block';
             }
         })();
