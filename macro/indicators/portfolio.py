@@ -114,6 +114,7 @@ def _kelly_covariance_optimizer(
         shared_data,
         portfolio_value=500000,
         max_single=0.15,
+        rev_single=0.05,
         max_risk_contribution=0.30,
         min_portfolio_vol=0.08,
         max_portfolio_vol=0.135,
@@ -214,22 +215,27 @@ def _kelly_covariance_optimizer(
     ])
 
     # Router signal per available name. MOM has a momentum kelly-size; REV's
-    # momentum kelly-size is 0 (slope<0), so give REV a max_single ceiling and
-    # let conviction + the vol cap size it.
+    # momentum kelly-size is 0 (slope<0), so give REV its own (tighter) ceiling
+    # and let conviction + the vol cap size it. REV cap 5% (2026-08-24,
+    # backtest_gss_revcap 2007-26): the junior sleeve was averaging 52% of the
+    # book under a 15% cap; 5% costs ~0.02 full-cycle Sharpe but cuts maxDD
+    # -20.8% -> -17.3% and triples 2008 Sharpe - REV buys weakness, so capping
+    # it binds hardest exactly in bears. Sizing follows edge-confidence.
     sigs = [next(t.get("adaptive_signal", "") for t in active_signals if t["sym"] == sym)
             for sym in available]
 
     def upper_bound(kelly_w, sig):
+        if sig == "REV":
+            return rev_single
         if kelly_w > 0:
             return min(kelly_w, max_single)
-        if sig == "REV":
-            return max_single
         return 0.0
 
     bounds = [(0.0, upper_bound(kelly_weights[i], sigs[i])) for i in range(len(available))]
     x0 = np.array([kelly_weights[i] if kelly_weights[i] > 0
                    else (0.02 if sigs[i] == "REV" else 0.0)
                    for i in range(len(available))])
+    x0 = np.minimum(x0, [b[1] for b in bounds])   # keep start feasible (REV cap < kelly_w)
 
     conviction_raw = np.array([
         _conviction_score(next(t for t in active_signals if t["sym"] == sym))
@@ -805,7 +811,8 @@ def get_trends():
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,
         portfolio_value=500000,
-        max_single=0.15,            # per-name cap 15% (was 25%; caps REV names too)
+        max_single=0.15,            # per-name cap 15% for MOM names
+        rev_single=0.05,            # REV (mean-reversion) capped 5% - junior sleeve
         max_risk_contribution=0.35,
         min_portfolio_vol=0.08,     # floor: 8%   (~1/9 Kelly at Sharpe ~0.7)
         max_portfolio_vol=0.135,     # ceiling: 13.5% (~1/5 Kelly) - see
