@@ -32,48 +32,98 @@ from macro.indicators.mathstats import *
 # =========================
 # III. Traditional Technical Signals
 # =========================
+# Capitulation reserve sizing (2026-08-24): scale-in from $1k at the entry
+# threshold up to the full reserve (20% of the $500k book, matching the
+# backtested 20% reserve) at z >= 4.
+_VIX_PORTFOLIO_VALUE = 500_000
+_VIX_MAX_DEPLOY = int(0.20 * _VIX_PORTFOLIO_VALUE)   # $100k
+_VIX_MIN_DEPLOY = 1_000
+
+
 @ttl_cache(30)
 def get_vix_signal():
+    """VIX fear-gauge SPY buyer - capitulation lifecycle (2026-08-24).
+
+    Buy/sell rewired to the validated crisis-only tactical-buyer form
+    (backtest_gss_capitulation, 2007-26: +0.06 Sharpe / +1.1%/yr on a 20%
+    reserve). Two rules the old z-only version lacked, both of which the
+    backtest showed matter:
+      - Entry needs the AND: vol spike (z > 2) AND price washout
+        (SPY RSI14 < 30). Pure z-triggers deployed too early in 2008;
+        the AND was the only entry that did not backfire.
+      - Defined exit: SPY back within 5% of its 252d high -> reserve
+        returns to cash. (The old z-based TRIMs were never validated and
+        are removed - this recovery exit is the sell side now.)
+
+    Scale-in: deploy grows linearly from $1k at z=2 to the full $100k
+    reserve (20% of the $500k book) at z >= 4.
+    Deployment state is walked deterministically over history, so the
+    signal needs no persisted state.
+    """
     try:
         shared_data = _get_shared_market_data()
         vix = _get_close(shared_data, '^VIX')
-        rsp = _get_close(shared_data, 'RSP')
         spy = _get_close(shared_data, 'SPY')
 
-        vix_tail = vix.tail(50)
+        # Same gauge as before: VIX z vs its rolling 50d mean/std.
+        zs = (vix - vix.rolling(50).mean()) / vix.rolling(50).std()
+        rsi14 = compute_RSI(spy, 14)
+        dd = spy / spy.rolling(252, min_periods=60).max() - 1.0
+
+        df = pd.concat({"z": zs, "rsi": rsi14, "dd": dd}, axis=1).dropna()
+        if df.empty:
+            raise ValueError("insufficient history for VIX capitulation state")
+
+        def ladder(zval):
+            # Maintain-level from z: $1k at z=2, full $100k reserve at z>=4.
+            depth = min(max((zval - 2.0) / 2.0, 0.0), 1.0)
+            return int(round(_VIX_MIN_DEPLOY + depth * (_VIX_MAX_DEPLOY - _VIX_MIN_DEPLOY), -2))
+
+        # Walk the episode state. Enter on capitulation (z>2 AND washout);
+        # the MAINTAIN level ratchets UP with the episode's high-water z
+        # (deeper panic -> bigger target; a cooling z does NOT sell you down
+        # mid-episode - the backtested exit is price recovery, not z decay);
+        # full exit (sell all) when SPY recovers to within 5% of its high.
+        deployed = False
+        exited_today = False
+        hw_z = 0.0
+        for z_, r_, d_ in df[["z", "rsi", "dd"]].itertuples(index=False):
+            if deployed and d_ > -0.05:
+                deployed = False
+                exited_today = True
+                hw_z = 0.0
+            else:
+                exited_today = False
+                if not deployed and z_ > 2.0 and r_ < 30.0:
+                    deployed = True
+                    hw_z = z_
+                elif deployed:
+                    hw_z = max(hw_z, z_)
+
+        z = float(df["z"].iloc[-1])
+        r_now = float(df["rsi"].iloc[-1])
+        dd_now = float(df["dd"].iloc[-1])
         v_last = float(vix.iloc[-1])
-        vix_mean = vix_tail.mean()
-        vix_std = vix_tail.std()
-        z = float((v_last - vix_mean) / vix_std)
 
-        ratio = rsp / spy
-        current_ratio = float(ratio.iloc[-1])
-        ma50_ratio = float(ratio.tail(50).mean())
-        breadth_failing = current_ratio < ma50_ratio
-
-        spy_ma50 = float(spy.rolling(50).mean().iloc[-1])
-        spy_ma200 = float(spy.rolling(200).mean().iloc[-1])
-        spy_last = float(spy.iloc[-1])
-        spy_in_uptrend = spy_last > spy_ma50 and spy_last > spy_ma200
-
-        spy_slope, spy_r2 = _trend_stats(spy, 10, 10)
-        spy_trending = spy_slope > 0 and spy_r2 > 0.6
-
-        if z > 4.0:
-            signal = "AGGRESSIVE_BUY" if spy_trending else "SCALE_IN"
-        elif z > 2.0:
-            signal = "SCALE_IN" if spy_in_uptrend else "HOLD"
-        elif z < -1.5:
-            signal = "AGGRESSIVE_TRIM"
-        elif z < -1.0 and breadth_failing:
-            signal = "CAUTIOUS_TRIM"
+        target = ladder(hw_z) if deployed else 0
+        if deployed and z > 2.0 and r_now < 30.0:
+            signal = "BUY (CAPITULATION)"       # trigger live: add up to target
+        elif exited_today:
+            signal = "EXIT (RECOVERED)"         # sell all - reserve back to cash
+        elif deployed:
+            signal = "DEPLOYED_HOLD"            # maintain target until recovery
         else:
             signal = "HOLD"
 
-        return {"vix": round(v_last, 2), "z": round(z, 2), "signal": signal}
+        return {
+            "vix": round(v_last, 2), "z": round(z, 2), "signal": signal,
+            "spy_rsi14": round(r_now, 1), "from_high": round(dd_now * 100, 1),
+            "target": target,                    # $ to maintain (0 = flat)
+        }
     except Exception as e:
         print(f"VIX Signal Error: {e}")
-        return {"vix": 0, "z": 0, "signal": "ERROR"}
+        return {"vix": 0, "z": 0, "signal": "ERROR",
+                "spy_rsi14": 0, "from_high": 0, "target": 0}
 
 
 def get_mean_reversion():

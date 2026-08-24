@@ -1,9 +1,17 @@
 <div class="card">
     <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-4">VIX Fear Gauge (SPY)</h2>
     <div class="card-highlight">
-        <p class="{{ 'status-green' if 'BUY' in vix_mr.signal else 'status-red' if 'TRIM' in vix_mr.signal else '' }}">
+        <p class="{{ 'status-green' if 'BUY' in vix_mr.signal
+                     else 'status-red' if 'EXIT' in vix_mr.signal or 'TRIM' in vix_mr.signal
+                     else 'text-cyan-400' if 'DEPLOYED' in vix_mr.signal else '' }}">
             {{ vix_mr.signal.replace('_', ' ') }}
         </p>
+        {% if vix_mr.target and vix_mr.target > 0 %}
+        <p class="text-[11px] font-black text-green-400 font-mono mt-1"
+           title="Reserve to maintain, from the z-score ladder: $1k at z=2 scaling to $100k (20% of book) at z>=4. Ratchets up with the episode's peak z; sells ALL when SPY recovers to within 5% of its 252d high.">
+            MAINTAIN ${{ "{:,.0f}".format(vix_mr.target) }}
+        </p>
+        {% endif %}
         <div class="details-row mt-4">
             <div>
                 <p class="label-small">VIX</p>
@@ -13,7 +21,10 @@
                 <p class="label-small">Z-Score</p>
                 <p class="font-mono font-bold">{{ vix_mr.z }}</p>
             </div>
+            <div>
+                <p class="label-small">SPY RSI14</p>
+                <p class="font-mono font-bold">{{ vix_mr.spy_rsi14 }}</p>
+            </div>
         </div>
     </div>
 </div>
-
