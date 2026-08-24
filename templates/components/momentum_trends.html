@@ -96,6 +96,12 @@
                            else 'text-yellow-400' }}">
                         {{ item.status }}
                     </p>
+                    {% if item.adaptive_signal is defined and item.adaptive_signal in ['MOM', 'REV'] %}
+                    <p class="text-[9px] font-black uppercase tracking-wider leading-none
+                        {{ 'text-green-400' if item.adaptive_signal == 'MOM' else 'text-cyan-400' }}">
+                        {{ 'TREND' if item.adaptive_signal == 'MOM' else 'MEAN REVERT' }}
+                    </p>
+                    {% endif %}
                     <p class="text-[9px] text-slate-500 font-mono">{{ item.weight_pct }}% wt</p>
                 </div>
             </div>
@@ -172,6 +178,14 @@
                                else 'status-yellow' }}">
                             {{ item.status }}
                         </p>
+                        {# --- explicit trade type: spell out TREND / MEAN REVERT next to the action --- #}
+                        {% if item.adaptive_signal is defined and item.adaptive_signal in ['MOM', 'REV'] %}
+                        <p class="text-[10px] font-black uppercase tracking-wider leading-tight
+                            {{ 'text-green-400' if item.adaptive_signal == 'MOM' else 'text-cyan-400' }}"
+                            title="ER {{ item.eff_ratio }} -> {{ item.adaptive_state }}. How this name is being traded: TREND = momentum long; MEAN REVERT = RSI2 oversold buy in an uptrend.">
+                            {{ 'TREND' if item.adaptive_signal == 'MOM' else 'MEAN REVERT' }}
+                        </p>
+                        {% endif %}
                         <p class="label-small uppercase font-bold">Stop: ${{ item.stop }}</p>
                     </div>
                 </div>
