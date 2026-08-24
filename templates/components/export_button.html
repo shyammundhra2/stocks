@@ -69,9 +69,9 @@ function formatJsonAsReadableText(data) {
     if (active.length) {
         t += "ACTIVE POSITIONS\n";
         t += table(
-            ["SYM", "NAME", "STATUS", "$ALLOC", "WT%", "RISK%", "U"],
-            active.map(x => [x.sym, x.name, x.status, num(x.dollar_amount, 0), num(x.weight_pct, 1), num(x.risk_contribution, 1), num(x.u_fit, 2)]),
-            ["l", "l", "l", "r", "r", "r", "r"]
+            ["SYM", "NAME", "STATUS", "$ALLOC", "WT%", "RISK%"],
+            active.map(x => [x.sym, x.name, x.status, num(x.dollar_amount, 0), num(x.weight_pct, 1), num(x.risk_contribution, 1)]),
+            ["l", "l", "l", "r", "r", "r"]
         ) + "\n";
     }
 
@@ -79,14 +79,13 @@ function formatJsonAsReadableText(data) {
     if (trends.length) {
         t += "MOMENTUM TRENDS (all, sorted by conviction)\n";
         t += table(
-            ["SYM", "PRICE", "STATUS", "SLOPE", "R2", "Z", "RSI", "ER", "STATE", "SIG", "H", "U", "POST", "P(stp)%", "ALLOC$"],
+            ["SYM", "PRICE", "STATUS", "SLOPE", "R2", "Z", "RSI", "ER", "STATE", "SIG", "H", "P(stp)%", "ALLOC$"],
             trends.map(x => [
                 x.sym, num(x.price, 2), x.status, num(x.slope, 2), num(x.r2, 2), num(x.slope_z, 2),
                 num(x.rsi14, 1), num(x.eff_ratio, 2), get(x, 'adaptive_state'), get(x, 'adaptive_signal'),
-                num(x.hurst, 2), num(x.u_fit, 2),
-                num(x.persistence_score, 2), num((x.p_stop || 0) * 100, 0), num(x.dollar_amount, 0)
+                num(x.hurst, 2), num((x.p_stop || 0) * 100, 0), num(x.dollar_amount, 0)
             ]),
-            ["l", "r", "l", "r", "r", "r", "r", "r", "l", "l", "r", "r", "r", "r", "r"]
+            ["l", "r", "l", "r", "r", "r", "r", "r", "l", "l", "r", "r", "r"]
         ) + "\n";
     }
 
@@ -119,7 +118,7 @@ function formatJsonAsReadableText(data) {
     t += rule();
     t += "Columns: SLOPE=1000x daily log-return | R2=trend fit | Z=slope z-score | "
        + "ER=efficiency ratio[0-1] | STATE/SIG=adaptive router (TREND->MOM, CHOP->REV, else FLAT) | "
-       + "H=Hurst | U=U-reversal fit[0-1] (drives sizing) | POST=persistence score[-1..1] | "
+       + "H=Hurst[0-1] (discounts sizing below 0.45/above 0.55) | "
        + "P(stp)=stop-before-target prob\n";
     t += rule();
     return t;
