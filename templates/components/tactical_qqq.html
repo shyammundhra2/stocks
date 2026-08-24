@@ -1,10 +1,17 @@
 <div class="card">
     <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-4">Tactical QQQ (RSI 2)</h2>
     <div class="card-highlight">
-        <p class="{{ 'status-green' if 'BUY' in mr.signal else '' }} text-3xl font-black">
+        <p class="{{ 'status-green' if 'BUY' in mr.signal
+                     else 'status-red' if 'EXIT' in mr.signal or 'RISK OFF' in mr.signal
+                     else '' }} text-3xl font-black">
             {{ mr.signal }}
         </p>
+        {% if mr.deploy and mr.deploy > 0 %}
+        <p class="text-[11px] font-black text-green-400 font-mono mt-1"
+           title="Sized by vol headroom: largest QQQ add keeping total book vol at the 15% cap (accounts for book-QQQ correlation). Max hold ~1 week; exit RSI2>=70.">
+            DEPLOY ${{ "{:,.0f}".format(mr.deploy) }}
+        </p>
+        {% endif %}
         <p class="label-small mt-2">RSI(2): {{ mr.rsi2 }} | QQQ: ${{ mr.price }}</p>
     </div>
 </div>
-

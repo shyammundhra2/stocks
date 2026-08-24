@@ -824,6 +824,12 @@ def get_trends():
     )
 
     summary["risk_gate"] = "RISK-OFF" if gate_riskoff else "RISK-ON"
+    # Live book weights (fraction of book) for downstream vol-budget sizing
+    # (get_mean_reversion's tactical-QQQ deploy reads these).
+    summary["weights"] = {
+        r["sym"]: round(r["weight_pct"] / 100.0, 4)
+        for r in optimized_results if r.get("weight_pct", 0) > 0
+    }
     _portfolio_summary = summary
     return optimized_results
 

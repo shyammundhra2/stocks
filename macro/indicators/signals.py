@@ -126,6 +126,51 @@ def get_vix_signal():
                 "spy_rsi14": 0, "from_high": 0, "target": 0}
 
 
+def _vol_headroom_deploy(shared_data, tactical_sym="QQQ",
+                         vol_cap=0.15, portfolio_value=500_000):
+    """Tactical deploy sized by the vol budget: the largest w such that
+    book + w*tactical stays at/below the 15% vol cap,
+        sig_p^2 + w^2 sig_q^2 + 2 w sig_p sig_q rho = cap^2.
+    Correlation is what makes this honest - a rho~0.75 tactical dollar costs
+    more vol than a diversifying one, and the formula charges for it.
+    Countercyclical for free: when the risk gate has de-risked the book
+    (low sig_p), headroom is large - exactly when RSI2/capitulation fire.
+    Uses live book weights from the portfolio summary (get_trends runs
+    first in app.py); returns 0 if unavailable or already at cap.
+    """
+    try:
+        from macro.indicators.portfolio import get_portfolio_summary
+        weights = (get_portfolio_summary() or {}).get("weights") or {}
+        if not weights:
+            return 0
+        rets = shared_data["Close"].pct_change().tail(63)
+        if tactical_sym not in rets.columns:
+            return 0
+        book = None
+        for s, wt in weights.items():
+            if s in rets.columns:
+                leg = rets[s].fillna(0) * wt
+                book = leg if book is None else book + leg
+        if book is None:
+            return 0
+        q = rets[tactical_sym].fillna(0)
+        sig_p = float(book.std() * np.sqrt(252))
+        sig_q = float(q.std() * np.sqrt(252))
+        rho = float(np.corrcoef(book, q)[0, 1])
+        if not np.isfinite(rho):
+            rho = 1.0                                   # conservative
+        if sig_p >= vol_cap or sig_q <= 0:
+            return 0
+        a = sig_q ** 2
+        b = 2.0 * sig_p * sig_q * rho
+        c = sig_p ** 2 - vol_cap ** 2
+        w_max = (-b + np.sqrt(b * b - 4 * a * c)) / (2 * a)
+        return int(round(max(w_max, 0.0) * portfolio_value, -3))
+    except Exception as e:
+        print(f"Vol headroom error: {e}")
+        return 0
+
+
 def get_mean_reversion():
     try:
         shared_data = _get_shared_market_data()
@@ -145,20 +190,28 @@ def get_mean_reversion():
 
         # Exit is intentionally RSI(2)-only. The unused dma10 computation and
         # its mismatched "DMA5" error message were removed (2026-06-11).
+        # BUY tightened <=10 -> <=5 (2026-08-24): per-trade study 2005-26,
+        # 5d max hold: RSI2<=5 carries the whole edge (+0.36%/trade, n=410);
+        # the 5-10 band is negative (-0.12%, n=43).
         if price < sma200:
             signal = "RISK OFF"
-        elif rsi2 <= 10:
+        elif rsi2 <= 5:
             signal = "BUY"
         elif rsi2 >= 70:
             signal = "EXIT"
         else:
             signal = "HOLD"
 
-        return {"price": round(price, 2), "rsi2": round(rsi2, 1), "signal": signal}
+        # Deploy sized by vol headroom (15% cap - current book vol), only
+        # when the signal actually fires.
+        deploy = _vol_headroom_deploy(shared_data) if signal == "BUY" else 0
+
+        return {"price": round(price, 2), "rsi2": round(rsi2, 1),
+                "signal": signal, "deploy": deploy}
 
     except Exception as e:
         print(f"Mean Reversion Error: {e}")
-        return {"price": 0, "rsi2": 0, "signal": "ERROR"}
+        return {"price": 0, "rsi2": 0, "signal": "ERROR", "deploy": 0}
 
 __all__ = [
     "get_vix_signal",
