@@ -115,6 +115,7 @@ def _kelly_covariance_optimizer(
         portfolio_value=500000,
         max_single=0.15,
         rev_single=0.05,
+        max_deploy=0.65,
         max_risk_contribution=0.30,
         min_portfolio_vol=0.08,
         max_portfolio_vol=0.135,
@@ -188,7 +189,7 @@ def _kelly_covariance_optimizer(
         sym = available[0]
         item = next(t for t in trends if t["sym"] == sym)
         _rs = 1.0 if sym in DEFENSIVE_ASSETS else regime_scalar   # defensives exempt
-        w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * _rs, max_single)
+        w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * _rs, max_single, max_deploy)
         dollar_amount = round(w * portfolio_value, 2)
         updated_trends = []
         for t in trends:
@@ -309,6 +310,18 @@ def _kelly_covariance_optimizer(
         if fb_vol > effective_vol_cap and fb_vol > 0:
             fb = fb * (effective_vol_cap / fb_vol)
         optimized_weights = fb
+
+    # Hard max-deployment cap (2026-08-25, backtest_gss_maxdeploy): a transparent
+    # backstop ON TOP of the vol cap. After expanding to 52 names, broad rallies
+    # let deployment spike toward 100% in correlated equity - the covariance vol
+    # cap lags crash-correlation spikes, so cap total gross exposure at max_deploy
+    # and send the excess to cash. Backtest 2011-26 at 65%: Sharpe 0.89->0.94,
+    # maxDD -14.2->-11.2%, CAGR 7.7->6.4% - survival-tilted (matches the
+    # compounding-while-surviving objective); helps most in fast crashes (COVID
+    # -20->-14%) that outrun the monthly rebalance.
+    _gross = float(optimized_weights.sum())
+    if _gross > max_deploy and _gross > 0:
+        optimized_weights = optimized_weights * (max_deploy / _gross)
 
     port_vol = np.sqrt(_compute_portfolio_var(optimized_weights, cov_matrix))
     risk_contribs = _compute_risk_contribution(optimized_weights, cov_matrix)
@@ -827,6 +840,10 @@ def get_trends():
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,
         portfolio_value=500000,
+        max_deploy=0.65,            # hard cap on total gross deployment (rest ->
+                                    # cash). Backstop above the vol cap for the
+                                    # 52-name book (backtest_gss_maxdeploy):
+                                    # Sharpe 0.94, maxDD -11.2%, survival-tilted.
         max_single=0.075,           # per-name MOM cap 7% ($37k on 500k). Lowered
                                     # from 15% (2026-08-25, backtest_gss_name_cap):
                                     # 15% over-concentrated inverse-vol picks,
