@@ -100,36 +100,29 @@ def main():
             return "REV"
         return None
 
-    def sim(mode):
-        w = {c: 0. for c in present}; ret = np.zeros(n); turn = np.zeros(n)
-        for j in range(si, n - 1):
-            if j in rd:
-                if mode == "equalwt_hold":
-                    sel = [c for c in present if avail[c][j] and fin(pv[c][j])]
-                else:  # adaptive_full
-                    sel = [c for c in present if route(c, j) and fin(pv[c][j])]
-                w = {c: (1.0 / len(sel) if c in sel else 0.0) for c in present} if sel else {c: 0. for c in present}
-                turn[j + 1] += sum(abs(w[c] - (0.0)) for c in [])  # (turnover approx below)
-            s = 0.
-            for c in present:
-                if w[c] != 0 and fin(pv[c][j + 1]) and fin(pv[c][j]):
-                    s += w[c] * (pv[c][j + 1] / pv[c][j] - 1.)
-            ret[j + 1] = s + max(1.0 - sum(w.values()), 0.) * bil[j + 1]
-        # turnover: recompute honestly (full swap each rebalance is the worst case)
-        sc = slice(si + 1, n)
-        # approximate cost: charge COST on ~monthly turnover of the selected set
-        return ret[sc], idx[sc].values
+    def conv(c, j, kind):
+        if kind == "REV":
+            return max((RSI_BUY - RS2[c][j]) / RSI_BUY, 0.0) * R2[c][j]
+        return max(SL[c][j] * R2[c][j], 0.0)
 
-    # honest cost: rebuild with turnover tracking
     def sim_cost(mode):
         w = {c: 0. for c in present}; ret = np.zeros(n); turn = np.zeros(n)
         for j in range(si, n - 1):
             if j in rd:
                 if mode == "equalwt_hold":
                     sel = [c for c in present if avail[c][j] and fin(pv[c][j])]
+                    neww = {c: (1.0 / len(sel) if c in sel else 0.0) for c in present} if sel else {c: 0. for c in present}
                 else:
-                    sel = [c for c in present if route(c, j) and fin(pv[c][j])]
-                neww = {c: (1.0 / len(sel) if c in sel else 0.0) for c in present} if sel else {c: 0. for c in present}
+                    routed = {c: route(c, j) for c in present}
+                    sel = [c for c in present if routed[c] and fin(pv[c][j])]
+                    if not sel:
+                        neww = {c: 0. for c in present}
+                    elif mode == "adaptive_equalwt":
+                        neww = {c: (1.0 / len(sel) if c in sel else 0.0) for c in present}
+                    else:  # adaptive_conv: weight ~ conviction (slope*r2 / oversold depth)
+                        cv = {c: max(conv(c, j, routed[c]), 0.0) for c in sel}
+                        tot = sum(cv.values())
+                        neww = {c: (cv.get(c, 0.0) / tot if tot > 0 else 0.0) for c in present}
                 turn[j + 1] += sum(abs(neww[c] - w[c]) for c in present); w = neww
             s = 0.
             for c in present:
@@ -140,7 +133,9 @@ def main():
         return ret[sc] - turn[sc] * (COST / 1e4), idx[sc].values
 
     spy = close["SPY"].pct_change().values[si + 1:]; dts = idx[si + 1:].values
-    res = {"adaptive_full": sim_cost("adaptive_full"), "equalwt_hold": sim_cost("equalwt_hold")}
+    res = {"adaptive_conv": sim_cost("adaptive_conv"),
+           "adaptive_equalwt": sim_cost("adaptive_equalwt"),
+           "equalwt_hold": sim_cost("equalwt_hold")}
 
     windows = [("2020-2026 (regime that matters)", "2020-01-01", END),
                ("  2020-2023", "2020-01-01", "2023-12-31"),
@@ -149,11 +144,11 @@ def main():
     print(f"{'window':>34s} {'strategy':>14s} {'Sharpe':>7s} {'Sortino':>8s} {'CAGR':>7s} {'maxDD':>7s}")
     print("-" * 88)
     for lab, lo, hi in windows:
-        for name in ["adaptive_full", "equalwt_hold"]:
+        for name in ["adaptive_conv", "adaptive_equalwt", "equalwt_hold"]:
             r, d = res[name]; sh, so, cg, dd = perf(r, d, lo, hi)
-            print(f"{lab:>34s} {name:>14s} {sh:>7.2f} {so:>8.2f} {cg:>7.1%} {dd:>7.1%}")
+            print(f"{lab:>34s} {name:>16s} {sh:>7.2f} {so:>8.2f} {cg:>7.1%} {dd:>7.1%}")
         sh, so, cg, dd = perf(spy, dts, lo, hi)
-        print(f"{'':>34s} {'SPY':>14s} {sh:>7.2f} {so:>8.2f} {cg:>7.1%} {dd:>7.1%}")
+        print(f"{'':>34s} {'SPY':>16s} {sh:>7.2f} {so:>8.2f} {cg:>7.1%} {dd:>7.1%}")
         print()
     print(f"Done in {time.time() - t0:.0f}s")
 
