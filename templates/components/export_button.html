@@ -102,17 +102,25 @@ function formatJsonAsReadableText(data) {
     if (mls) t += mls + "\n";
 
     // --- ROTATION ---
-    const rot = (title, arr) => {
+    // rank126: show the 6-month return the country/commodity tables are now
+    // ranked by (+mom for countries, reversion/-mom for commodities).
+    const rot = (title, arr, rank126) => {
         if (!Array.isArray(arr) || !arr.length) return "";
+        const headers = rank126 ? ["NAME", "6mo%", "SLOPE", "R2", "dSLOPE", "GRAD"]
+                                : ["NAME", "SLOPE", "R2", "dSLOPE", "GRAD"];
+        const aligns = rank126 ? ["l", "r", "r", "r", "r", "r"] : ["l", "r", "r", "r", "r"];
         return title + "\n" + table(
-            ["NAME", "SLOPE", "R2", "dSLOPE", "GRAD"],
-            arr.map(x => [get(x, 'name'), num(x.slope, 2), num(x.r2, 2), num(x.slope_change, 2), num(x.gradient, 0)]),
-            ["l", "r", "r", "r", "r"]
+            headers,
+            arr.map(x => {
+                const base = [num(x.slope, 2), num(x.r2, 2), num(x.slope_change, 2), num(x.gradient, 0)];
+                return rank126 ? [get(x, 'name'), num(x.ret_126, 1), ...base] : [get(x, 'name'), ...base];
+            }),
+            aligns
         ) + "\n";
     };
     t += rot("SECTOR ROTATION", data.sr?.all_ranked);
-    t += rot("COUNTRY ROTATION", data.countries);
-    t += rot("COMMODITY ROTATION", data.commodities);
+    t += rot("COUNTRY ROTATION (ranked: 6mo momentum)", data.countries, true);
+    t += rot("COMMODITY ROTATION (ranked: 6mo reversion — laggards first)", data.commodities, true);
     t += rot("CURRENCY ROTATION (X->USD)", data.currencies);
 
     t += rule();

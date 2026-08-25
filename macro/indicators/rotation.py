@@ -55,8 +55,20 @@ def get_sector_rotation():
         return {"all_ranked": []}
 
 
+def _ret_126(series):
+    """126d (~6mo) simple return, the validated ranking lookback. NaN-safe."""
+    s = series.dropna()
+    if len(s) < 127:
+        return float("nan")
+    return float(s.iloc[-1] / s.iloc[-127] - 1.0)
+
+
 @ttl_cache(30)
 def get_country_rotation():
+    # Ranked by 6-month (126d) MOMENTUM. backtest_rank_predictors 2007-26:
+    # mom126 is the only country signal with real edge (IC +0.044, top-pick
+    # +1.5% excess/63d, 54% hit); it beats the 20d slope this used to sort by.
+    # slope/r2/gradient kept for the rotation-map scatter.
     try:
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
@@ -65,8 +77,14 @@ def get_country_rotation():
             slope, r2 = _trend_stats(data[s], 20, 20)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
+            ret126 = _ret_126(data[s])
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
-                            "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change,
+                            "ret_126": round(ret126 * 100, 1) if ret126 == ret126 else None,
+                            "rank_score": ret126})            # + momentum: leaders first
+        # Rank leaders first; NaN scores sink to the bottom.
+        results.sort(key=lambda x: (x["rank_score"] if x["rank_score"] == x["rank_score"]
+                                    else float("-inf")), reverse=True)
         return results
     except Exception as e:
         print(f"Country Rotation Error: {e}")
@@ -75,6 +93,11 @@ def get_country_rotation():
 
 @ttl_cache(30)
 def get_commodity_rotation():
+    # Ranked by 6-month (126d) MEAN-REVERSION (buy the laggards). commodities
+    # mean-revert at these horizons: mom126 IC is -0.113 (momentum backfires),
+    # so the NEGATED 126d return is the edge (backtest_commodity_reversion
+    # 2007-26: rev_126 IC +0.132, top-pick +4.7% excess/63d, 55% hit).
+    # slope/r2/gradient kept for the rotation-map scatter.
     try:
         shared_data = _get_shared_market_data()
         data = shared_data['Close']
@@ -83,8 +106,14 @@ def get_commodity_rotation():
             slope, r2 = _trend_stats(data[s], 20, 20)
             gradient = _compute_gradient(data[s].tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(data[s])
+            ret126 = _ret_126(data[s])
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
-                            "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change,
+                            "ret_126": round(ret126 * 100, 1) if ret126 == ret126 else None,
+                            "rank_score": (-ret126) if ret126 == ret126 else float("nan")})
+        # Reversion: biggest 6-month LOSERS ranked first; NaN sinks.
+        results.sort(key=lambda x: (x["rank_score"] if x["rank_score"] == x["rank_score"]
+                                    else float("-inf")), reverse=True)
         return results
     except Exception as e:
         print(f"Commodity Rotation Error: {e}")
