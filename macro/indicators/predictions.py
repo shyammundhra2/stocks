@@ -32,21 +32,73 @@ from macro.indicators.cache import *
 # =========================
 @ttl_cache(30)
 def get_ml_sector_prediction():
+    # 2026-08-25: replaced the RandomForest sector model (no validated OOS edge,
+    # and cross-sectional sector ranking has NEGATIVE IC - sectors share one
+    # equity beta) with the SAME adaptive router used in get_trends, scoped to
+    # sectors: each sector routed by its own ER to momentum (TREND) or RSI2
+    # reversion (CHOP), gated >200DMA, sized inverse-vol. Long-only + cash -
+    # there is no "short"; the underweight is simply not held (FLAT -> cash).
+    # backtest_gss_sectors_only 2007-26: Sharpe 0.78 vs SPY 0.63, this is the
+    # validated per-sector trend/mean-revert tension.
     try:
-        tickers = list(SECTOR_NAMES.keys()) + ML_MACRO_TICKERS
-        res = predict_assets(model_path("sector_model.joblib"), tickers, SECTOR_NAMES, "sector")
-        probs = res["probabilities"]
-        ranked = [
-            {"ticker": k, "name": SECTOR_NAMES.get(k, k), "confidence": round(v * 100, 1)}
-            for k, v in probs.items()
-        ]
-        top, bottom = ranked[0], ranked[-1]
+        from macro.indicators.data import _get_shared_market_data
+        from macro.indicators.mathstats import _efficiency_ratio, _trend_stats
+        data = _get_shared_market_data()["Close"]
+        held = []; flat = []
+        for t, name in SECTOR_NAMES.items():
+            if t not in data.columns:
+                continue
+            c = data[t].dropna()
+            if len(c) < 210:
+                continue
+            last = float(c.iloc[-1])
+            s50 = float(c.rolling(50).mean().iloc[-1])
+            s200 = float(c.rolling(200).mean().iloc[-1])
+            slope, r2 = _trend_stats(c, 20, 20)
+            rsi2 = float(compute_RSI(c, 2).iloc[-1])
+            eff = _efficiency_ratio(c, 20)
+            vol63 = float(c.pct_change().rolling(63).std().iloc[-1])
+            above200 = last > s200
+            sig, state = "FLAT", "MID"
+            if eff >= 0.40:
+                state = "TREND"
+                if above200 and last > s50 and slope > 0:
+                    sig = "MOM"
+            elif eff <= 0.35:
+                state = "CHOP"
+                if above200 and rsi2 < 15:
+                    sig = "REV"
+            rec = {"ticker": t, "name": name, "state": state, "signal": sig,
+                   "eff_ratio": round(eff, 2),
+                   "invvol": (1.0 / vol63) if (vol63 and vol63 > 0) else 0.0}
+            (held if sig in ("MOM", "REV") else flat).append(rec)
+
+        # inverse-vol allocation among qualifying sectors, 15%/5% caps,
+        # normalized to 100% of the sector sleeve (FLAT sectors = 0%, held in cash)
+        tot = sum(h["invvol"] for h in held)
+        for h in held:
+            raw = (h["invvol"] / tot) if tot > 0 else 0.0
+            h["confidence"] = round(min(raw, 0.05 if h["signal"] == "REV" else 0.15) * 100, 1)
+        s2 = sum(h["confidence"] for h in held)
+        if s2 > 0:
+            for h in held:
+                h["confidence"] = round(h["confidence"] / s2 * 100, 1)
+        for f in flat:
+            f["confidence"] = 0.0
+        held.sort(key=lambda x: x["confidence"], reverse=True)
+        ranked = held + flat
+        if not ranked:
+            _na = {"name": "N/A", "ticker": "N/A", "confidence": 0, "state": "-", "signal": "FLAT"}
+            return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0}
+        top = ranked[0]
+        bottom = ranked[-1]
         return {"top": top, "bottom": bottom,
-                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
+                "spread": round(top["confidence"] - bottom["confidence"], 1),
+                "all": ranked, "n_held": len(held)}
     except Exception as e:
-        print(f"ML Sector Error: {e}")
-        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
-        return {"top": _na, "bottom": _na, "spread": 0, "all": []}
+        print(f"Sector Prediction Error: {e}")
+        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0, "state": "-", "signal": "FLAT"}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0}
 
 
 def _ranker_to_prediction(rotation_list):
