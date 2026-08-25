@@ -870,6 +870,25 @@ def get_trends():
         r["sym"]: round(r["weight_pct"] / 100.0, 4)
         for r in optimized_results if r.get("weight_pct", 0) > 0
     }
+
+    # Top correlations for EVERY name (display), not just held positions. The
+    # optimizer only computes corr over the routed (MOM/REV) names it sizes;
+    # here we build a full-universe 60-day correlation so FLAT names also show
+    # their top-3 correlated peers. Display-only - never enters sizing.
+    try:
+        _syms = [r["sym"] for r in optimized_results
+                 if r["sym"] in shared_data["Close"].columns]
+        _rets = shared_data["Close"][_syms].pct_change().tail(60)
+        _corr = _rets.corr()
+        for r in optimized_results:
+            if r["sym"] in _corr.columns and not r.get("top_correlations"):
+                col = _corr[r["sym"]].dropna()
+                top = sorted(((k, v) for k, v in col.items() if k != r["sym"]),
+                             key=lambda x: abs(x[1]), reverse=True)[:3]
+                r["top_correlations"] = {k: round(float(v), 2) for k, v in top}
+    except Exception as e:
+        print(f"Full-universe correlation error: {e}")
+
     _portfolio_summary = summary
     return optimized_results
 

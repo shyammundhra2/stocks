@@ -271,9 +271,9 @@
 
                 </div>
 
-                {# --- Weight / risk / correlation row (allocated positions only) --- #}
-                {% if item.weight_pct or item.risk_contribution %}
-                <div class="flex gap-4 mt-2 border-t border-slate-700 pt-2">
+                {# --- Weight / risk (held positions) + correlation (ALL names) --- #}
+                {% if item.weight_pct or item.risk_contribution or item.top_correlations %}
+                <div class="flex gap-4 mt-2 border-t border-slate-700 pt-2 flex-wrap">
 
                     {% if item.weight_pct %}
                     <p class="label-small font-mono text-slate-400">Wt: {{ item.weight_pct }}%</p>
@@ -286,7 +286,8 @@
                     {% endif %}
 
                     {% if item.top_correlations %}
-                    <p class="label-small font-mono text-slate-500">
+                    <p class="label-small font-mono text-slate-500"
+                       title="Top 3 correlated names (60-day daily-return correlation)">
                         Corr: {% for k, v in item.top_correlations.items() %}{{ k }}({{ v }}) {% endfor %}
                     </p>
                     {% endif %}
