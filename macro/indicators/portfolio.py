@@ -178,6 +178,39 @@ def _kelly_covariance_optimizer(
     if not active_signals:
         return trends, {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
 
+    # Top-K blend cut on the MOMENTUM sleeve (2026-08-25, backtest_gss_topk_select
+    # / _horserace / _hi52_robust). Rank routed MOM names by a blend of two weakly-
+    # correlated trend proxies - slope*r2 (path smoothness) and 52-week-high
+    # proximity (George-Hwang 2004 anchoring) - and keep the best K. This is the
+    # ONE place the hi52 edge survives the live machinery: cutting by slope*r2
+    # alone is a no-op, but the blend cut lifts 2020-26 Sharpe 1.28->1.35, last-2y
+    # CAGR 20.2%->21.0%, and TIGHTENS maxDD (-12.2%->-11.7%) because inverse-vol
+    # sizing still governs the survivors. MOM averages ~4-5 names so K=8 only
+    # binds in broad rallies (>8 names trending). The REV/RSI2 sleeve is left
+    # fully intact - only over-broad momentum is trimmed. Edge is modest and
+    # recent-concentrated (flat pre-2020); expect forward decay (McLean-Pontiff).
+    TOPK_MOM = 8
+    _mom = [t for t in active_signals if t.get("adaptive_signal") == "MOM"]
+    _rev = [t for t in active_signals if t.get("adaptive_signal") == "REV"]
+    if len(_mom) > TOPK_MOM:
+        _close = shared_data["Close"]
+
+        def _hi52(sym):
+            if sym not in _close.columns:
+                return np.nan
+            s = _close[sym].dropna()
+            if len(s) < 60:
+                return np.nan
+            mx = float(s.tail(252).max())
+            return float(s.iloc[-1] / mx) if mx > 0 else np.nan
+
+        _slr2 = pd.Series({t["sym"]: max(t.get("slope", 0.0) * t.get("r2", 0.0), 0.0)
+                           for t in _mom})
+        _h52 = pd.Series({t["sym"]: _hi52(t["sym"]) for t in _mom})
+        _blend = (_slr2.rank(pct=True) + _h52.rank(pct=True)) / 2.0
+        _keep = set(_blend.sort_values(ascending=False).head(TOPK_MOM).index)
+        active_signals = [t for t in _mom if t["sym"] in _keep] + _rev
+
     tickers = [t["sym"] for t in active_signals]
     available = [t for t in tickers if t in shared_data['Close'].columns]
 
@@ -536,6 +569,28 @@ def get_trends():
         _spy_df["Close"].squeeze().values if _spy_df is not None else None
     )
 
+    # Cross-sectional trend-map conviction for the REV "outside 3 iso curves"
+    # gate (2026-08-25, backtest_gss_revcurve). The rotation map draws iso-
+    # conviction hyperbolas |slope|.R2 = k at k = {0.18, 0.36, 0.6} * xabs, with
+    # xabs = max(|slope|, 3) in MAP units (scale=20). "Outside the 3 curves" =
+    # below the innermost: |slope|.R2 < 0.18 * xabs. Reserving RSI2 reversion for
+    # these genuinely-directionless names - on top of ER<=0.35 (which alone lets
+    # choppy-but-drifting names through) AND rsi2<15 - cut REV day-to-day churn
+    # -21%, lifted 2020-26 Sharpe 1.39->1.57, and tightened maxDD -11.5->-10.7%
+    # with 2011-19 flat (not a data-snooped level - 0.18 is the map's own curve).
+    # get_trends' slope is scale=10 (half the map's scale=20), so working in
+    # scale-10 units the MAP floor of 3 becomes 1.5 - algebraically identical.
+    _map_conv = {}
+    _abs_slopes = []
+    for _sym in TREND_ASSETS:
+        _df = _dfs.get(_sym)
+        if _df is None or _df.empty:
+            continue
+        _sl, _r2 = _trend_stats(_df["Close"].squeeze(), 20, 10)
+        _map_conv[_sym] = abs(_sl) * _r2
+        _abs_slopes.append(abs(_sl))
+    _rev_curve_k1 = 0.18 * max(max(_abs_slopes, default=0.0), 1.5)
+
     for sym, name in TREND_ASSETS.items():
         try:
             df = _dfs.get(sym)
@@ -579,7 +634,11 @@ def get_trends():
                 adaptive_signal = "MOM" if (above200 and last > s50 and slope > 0) else "FLAT"
             elif eff_ratio <= 0.35:
                 adaptive_state = "CHOP"
-                adaptive_signal = "REV" if (above200 and rsi2 < 15) else "FLAT"
+                # REV requires all three: ER<=0.35 (choppy) AND rsi2<15 (oversold)
+                # AND outside the 3 iso-conviction curves (genuinely directionless).
+                _outside_curves = _map_conv.get(sym, float("inf")) < _rev_curve_k1
+                adaptive_signal = ("REV" if (above200 and rsi2 < 15 and _outside_curves)
+                                   else "FLAT")
             else:
                 adaptive_state, adaptive_signal = "MID", "FLAT"
 
