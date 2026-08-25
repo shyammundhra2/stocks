@@ -49,46 +49,54 @@ def get_ml_sector_prediction():
         return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
 
+def _ranker_to_prediction(rotation_list):
+    """Convert a validated rotation ranker (sorted best-first, with rank_score
+    + ret_126) into the tile's prediction shape. 'confidence' is a display
+    ALLOCATION weight: rank_scores shifted so the weakest = 0, normalized to
+    100 - a long-only tilt toward the strongest signals (NOT a calibrated
+    probability). 2026-08-25: replaces the XGB country/commodity models,
+    which had no honest OOS edge (single-split, momentum-signed - wrong for
+    commodities). See backtest_rank_predictors / backtest_commodity_reversion.
+    """
+    valid = [r for r in rotation_list
+             if r.get("rank_score") is not None and r["rank_score"] == r["rank_score"]]
+    if not valid:
+        _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": []}
+    scores = np.array([r["rank_score"] for r in valid], dtype=float)
+    shifted = scores - scores.min()
+    total = shifted.sum()
+    weights = (shifted / total * 100.0) if total > 0 else np.full(len(valid), 100.0 / len(valid))
+    ranked = [
+        {"ticker": r["sym"], "name": r["name"], "confidence": round(float(w), 1),
+         "ret_126": r.get("ret_126")}
+        for r, w in zip(valid, weights)
+    ]
+    top, bottom = ranked[0], ranked[-1]
+    return {"top": top, "bottom": bottom,
+            "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
+
+
 @ttl_cache(30)
 def get_ml_country_prediction():
+    # Rerouted to the validated 6-month MOMENTUM ranker (get_country_rotation).
     try:
-        tickers = list(COUNTRIES.keys()) + ML_MACRO_TICKERS + ['SPY']
-        res = predict_assets(model_path("country_model.joblib"), tickers, COUNTRIES, "country")
-        probs = res["probabilities"]
-        ranked = [
-            {"ticker": k, "name": COUNTRIES.get(k, k), "confidence": round(v * 100, 1)}
-            for k, v in probs.items()
-        ]
-        top, bottom = ranked[0], ranked[-1]
-        return {"top": top, "bottom": bottom,
-                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
+        from macro.indicators.rotation import get_country_rotation
+        return _ranker_to_prediction(get_country_rotation())
     except Exception as e:
-        print(f"ML Country Error: {e}")
+        print(f"Country Prediction Error: {e}")
         _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
         return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
 
 @ttl_cache(30)
 def get_ml_commodity_prediction():
+    # Rerouted to the validated 6-month REVERSION ranker (get_commodity_rotation).
     try:
-        res = predict_commodities(
-            sector_model_path=model_path("commodity_sector_model.joblib"),
-            commodity_model_path=model_path("commodity_model.joblib"),
-            friendly_names=COMMODITIES,
-            use_cache=True,
-            top_n_sectors=5,
-            top_n_per_sector=5
-        )
-        probs = res["probabilities"]
-        ranked = [
-            {"ticker": k, "name": COMMODITIES.get(k, k), "confidence": round(v * 100, 1)}
-            for k, v in probs.items()
-        ]
-        top, bottom = ranked[0], ranked[-1]
-        return {"top": top, "bottom": bottom,
-                "spread": round(top["confidence"] - bottom["confidence"], 1), "all": ranked}
+        from macro.indicators.rotation import get_commodity_rotation
+        return _ranker_to_prediction(get_commodity_rotation())
     except Exception as e:
-        print(f"ML Commodity Error: {e}")
+        print(f"Commodity Prediction Error: {e}")
         _na = {"name": "N/A", "ticker": "N/A", "confidence": 0}
         return {"top": _na, "bottom": _na, "spread": 0, "all": []}
 
