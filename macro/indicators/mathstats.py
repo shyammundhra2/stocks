@@ -422,25 +422,21 @@ def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
 def _effective_vol_cap(regime, base_min=0.08, base_max=0.15, regime_scalar=None):
     """
     Compute dynamic portfolio vol ceiling (Lever B).
-    2026-08-25: accepts the vol-target regime_scalar directly (Lever A's
-    value) so both levers share one signal; falls back to the legacy
-    6-condition scalar when not provided. ml_slow stays at 40% - the one
-    OOS-validated ML signal (SPY strided AUC 0.625); weight held at 40%
-    deliberately (its history can't be backtested without lookahead, so
-    the directly-verified vol-target scalar keeps the larger share).
+    2026-08-25 (2nd rev): ml_slow REMOVED from the blend - honest
+    walk-forward (backtest_ml_slow_walkforward/improve) showed pooled AUC
+    0.51 (coin flip); the earlier "0.625 OOS" was a single 2024-26 holdout
+    landing on the model's luckiest years. The one predictable thing
+    (crash risk via current vol) is already what the vol-target scalar
+    reads directly. ml_slow stays computed for DISPLAY (header chip, Copy
+    Report) but no longer moves capital. The regime arg is retained for
+    signature stability and the legacy-scalar fallback.
     No defensive exemption here on purpose: the covariance optimizer
     already tilts toward vol-cheap defensives when the cap tightens.
     """
-    ml_slow = regime.get("ml_slow", 50.0) / 100.0        # 0.0 - 1.0
     if regime_scalar is None:
         regime_scalar = get_regime_scalar(regime)         # legacy fallback
 
-    combined = (
-        regime_scalar * 0.60   # vol-target scalar - directly backtested
-        + ml_slow     * 0.40   # validated SPY structural signal
-    )
-
-    vol_cap = base_min + combined * (base_max - base_min)
+    vol_cap = base_min + regime_scalar * (base_max - base_min)
     return round(max(base_min, min(vol_cap, base_max)), 4)
 
 
