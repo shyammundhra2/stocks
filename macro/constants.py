@@ -60,20 +60,17 @@ TREND_ASSETS = {
     "IGV": "Software",
     "CIBR": "Cyber Security",
     "ITA": "Defense",
-    # Subsector breadth added 2026-08-25 (backtest_gss_breadth_categories):
-    # equity dispersion - industries trend at different times -> +1%/yr CAGR
-    # (6.1->7.1%) at unchanged Sharpe 0.84. Gated like equities.
-    "XBI": "Biotech",
-    "XHB": "Homebuilders",
-    "XRT": "Retail",
-    "KRE": "Regional Banks",
-    "XOP": "Oil & Gas E&P",
-    "OIH": "Oil Services",
-    "IYT": "Transports",
-    "GDX": "Gold Miners",
-    "KIE": "Insurance",
+    # 2026-08-25: reverted the 15-name breadth batch, then re-added ONLY the
+    # names that improve full-deployment 2020-26 CAGR (backtest_gss_addwinners):
+    # FDN +0.19% and SIL +0.86% are ROBUST (help 2011-19 too); XOP +0.79% and
+    # REMX +1.21% are regime-specific commodity/energy bets (flat/neg 2011-19).
+    # The other 11 (KRE -3.83% worst) HURT CAGR and were dropped. Universe 40.
+    # (Return-max posture: at full deployment, fewer/better names concentrate;
+    # on the throttled config the wider set was better - see 36_vs_51.)
     "FDN": "Internet",
-    "IHI": "Medical Devices",
+    "SIL": "Silver Miners",
+    "XOP": "Oil & Gas E&P",
+    "REMX": "Rare Earth/Strategic Metals",
 
     # Commodities & Real Assets
     "GLD": "Gold",
@@ -87,15 +84,8 @@ TREND_ASSETS = {
     "COPX": "Copper Stocks",
     "SLX": "Steel Stocks",
     "WOOD" : "Lumber Stocks",
-    # Commodity-stock breadth added 2026-08-25 (backtest_gss_commodity_stocks):
-    # producer-equity dispersion -> +0.8%/yr CAGR (6.9->7.7%) AND Sharpe up
-    # 0.84->0.89, DD +1.1pt. Curated non-redundant subset (dropped URA~URNM,
-    # XES/IEO~XOP/OIH, PICK/IGE/GUNR~XME). Gated like equities. Caveat: all
-    # launched ~2010, untested in a 2008-style crash.
-    "SIL": "Silver Miners",
-    "REMX": "Rare Earth/Strategic Metals",
-    "LIT": "Lithium/Battery",
-    "GNR": "Natural Resources",
+    # (SIL/REMX kept above with the CAGR-improvers; LIT -0.95% and GNR +0.08%
+    #  were dropped 2026-08-25 - LIT reduces full-deploy CAGR, GNR is noise.)
 
     # International Equities
     "INDA": "India",
