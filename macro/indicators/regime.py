@@ -68,6 +68,11 @@ from macro.indicators.mathstats import *
 #     _qualify_regime() / the dashboard template degrade gracefully
 #     (regime["hmm"] = None, regime["regime_qualifier"] = None).
 # =========================
+# Per-date memo for the sparkline's strided slow-ML composite points. Past
+# dates' values are immutable (data only up to that date), so each is computed
+# once per process instead of on every 30s refresh. Display-only, output-identical.
+_SLOW_HIST_CACHE = {}
+
 _hmm_cache = {"model": None, "labels": None, "fitted_at": None}
 _HMM_REFIT_INTERVAL = 7 * 24 * 3600  # 7 days
 
@@ -508,22 +513,27 @@ def get_risk_regime():
         is_risk_on = composite_score > 0.55
 
         # -----------------------------------------------
-        # Composite history for the sparkline: the SAME composite
-        # (0.55*technical + 0.45*ml_slow) evaluated at each 20-day stride date,
+        # Composite history for the sparkline (returned as "history"): the SAME
+        # composite (0.55*technical + 0.45*ml_slow) at each 20-day stride date,
         # so the line's endpoint equals the current composite = the dot.
-        # (The fast-ML series history_points is retired from the composite and
-        # kept only as the "ml_fast" scalar.) Falls back to fast-ML on error.
+        # PERF 2026-08-25: the 4 past stride points use data only up to a fixed
+        # past date, so their value is immutable - memoize per date so each is
+        # computed once per process instead of re-running the RandomForest
+        # predict on every 30s refresh. Output-identical. Falls back on error.
         # -----------------------------------------------
         try:
             from macro.ml_engine import get_dual_ml_confidence_for_kelly as _dual
             composite_history = []
             for _ts in recent_dates[:-1]:
-                _dt = data.loc[:_ts]
-                _passes = sum(1 for d in _regime_details(_dt) if d["pass"])
-                _slow = _dual(spy_df.loc[:_ts])['slow']
-                composite_history.append(
-                    round((_passes / 6.0 * 0.55 + _slow / 100.0 * 0.45) * 100, 1)
-                )
+                _key = pd.Timestamp(_ts).normalize()
+                _cv = _SLOW_HIST_CACHE.get(_key)
+                if _cv is None:
+                    _dt = data.loc[:_ts]
+                    _passes = sum(1 for d in _regime_details(_dt) if d["pass"])
+                    _slow = _dual(spy_df.loc[:_ts])['slow']
+                    _cv = round((_passes / 6.0 * 0.55 + _slow / 100.0 * 0.45) * 100, 1)
+                    _SLOW_HIST_CACHE[_key] = _cv
+                composite_history.append(_cv)
             composite_history.append(float(round(composite_score * 100, 1)))   # endpoint = dot
         except Exception as e:
             print(f"Composite history error: {e}")

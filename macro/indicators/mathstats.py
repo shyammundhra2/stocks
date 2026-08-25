@@ -173,18 +173,19 @@ def _hurst_exponent(series, max_lag=40):
             if n_windows < 2:
                 continue
 
-            rs_window = []
-            for i in range(n_windows):
-                window = log_returns[i * lag:(i + 1) * lag]
-                mean_adj = window - window.mean()
-                cumdev = np.cumsum(mean_adj)
-                r = cumdev.max() - cumdev.min()
-                s = window.std(ddof=1)
-                if s > 0:
-                    rs_window.append(r / s)
+            # Vectorized R/S over the n_windows non-overlapping blocks (PERF
+            # 2026-08-25): reshape to (n_windows, lag) and compute per-row
+            # rescaled range in one pass. Identical math/result to the prior
+            # per-window Python loop - verified byte-identical across the live
+            # universe - just without the per-block call overhead.
+            W = log_returns[:n_windows * lag].reshape(n_windows, lag)
+            cumdev = np.cumsum(W - W.mean(axis=1, keepdims=True), axis=1)
+            r = cumdev.max(axis=1) - cumdev.min(axis=1)
+            s = W.std(axis=1, ddof=1)
+            rs = r[s > 0] / s[s > 0]
 
-            if rs_window:
-                rs_values.append(np.mean(rs_window))
+            if rs.size:
+                rs_values.append(np.mean(rs))
                 ers_values.append(_expected_rs(lag))
                 used_lags.append(lag)
 

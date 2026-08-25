@@ -502,20 +502,19 @@ def get_trends():
     global _portfolio_summary
     # 2026-06-11: per-asset ML is DISPLAY-ONLY telemetry. OOS validation
     # showed no edge on non-SPY names (transfer AUC 0.47), so ml_conf
-    # values are still computed and returned for dashboard monitoring,
-    # but no longer enter sizing, status logic, or conviction scoring.
-    # 2026-06-18: that telemetry is now batched into ONE predict_proba per
-    # model for the whole universe instead of one call per asset (~33x).
-    # Outputs are identical (verified vs the per-asset path); this only
-    # removes the per-call sklearn predict overhead that dominated load time.
-    from macro.ml_engine import get_dual_ml_confidence_for_kelly_batch
+    # 2026-08-25 PERF: the per-asset dual-ML batch was removed. Its outputs
+    # (ml_conf_slow/fast/divergence/regime) were display-only telemetry with
+    # no OOS edge (transfer AUC 0.47) - already stripped from the cards and
+    # Copy Report and never used in sizing/status/conviction - so running the
+    # model per asset (~52 predict_proba) was pure dead compute. The regime-
+    # level SPY ml_slow (get_risk_regime) still loads the model for its display
+    # badge; get_trends no longer touches it.
 
     shared_data = _get_shared_market_data()
     results = []
     symbols = list(TREND_ASSETS.keys())
 
-    # Pre-build each asset's frame once (reused in the loop below) and batch
-    # the display-only dual-ML telemetry across the whole universe.
+    # Pre-build each asset's frame once (reused in the loop below).
     _dfs = {}
     for _sym in symbols:
         try:
@@ -527,10 +526,6 @@ def get_trends():
                 _dfs[_sym] = _d
         except Exception:
             continue
-    try:
-        _dual_map = get_dual_ml_confidence_for_kelly_batch(list(_dfs.items()))
-    except Exception:
-        _dual_map = {}
 
     # Risk-off equity gate (2026-08-24): buffered SPY-200DMA +/-3% hysteresis.
     # When risk-off, equity names are forced FLAT (router-excluded); DEFENSIVE
@@ -563,25 +558,6 @@ def get_trends():
                 if _nlen - k >= 25
             ] or [[slope, r2]]
             slope_prev, r2_prev = slope_r2_path[0]   # ~1 month ago (path start)
-
-            # U-reversal fit over the same ~1-month path (down -> ~0,0 -> up).
-            # Now drives conviction/sizing in place of the linear strength.
-            u_fit = _u_fit([p[0] for p in slope_r2_path], [p[1] for p in slope_r2_path])
-
-            # Dual ML - TELEMETRY ONLY (2026-06-11). Real values returned
-            # for dashboard monitoring; never consumed by sizing or status.
-            # Sourced from the batched predict above; missing -> neutral.
-            dual = _dual_map.get(sym)
-            if dual is not None:
-                ml_conf_slow = dual['slow']
-                ml_conf_fast = dual['fast']
-                ml_divergence = dual['divergence']
-                ml_regime = dual['regime']
-            else:
-                ml_conf_slow = 50.0
-                ml_conf_fast = 50.0
-                ml_divergence = 0.0
-                ml_regime = "N/A"
 
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
@@ -617,14 +593,11 @@ def get_trends():
             _v63 = c.pct_change().rolling(63).std().iloc[-1]
             vol63 = float(_v63) if np.isfinite(_v63) else None
 
-            # Hurst exponent - trend persistence
+            # Hurst exponent - feeds the hurst_discount in sizing (below) and the
+            # Copy Report H column. The persistence classifier (variance ratio +
+            # weekly autocorr) that this used to blend into was removed 2026-08-25
+            # (dead: zero IC, stripped from display) - hurst alone is retained.
             hurst = _hurst_exponent(c, max_lag=40)
-
-            # Trend vs. mean-reversion posture (~2-3mo). Hurst + variance
-            # ratio (q=21) + weekly-return autocorr, blended to one score.
-            vr21 = _variance_ratio(c, q=21)
-            wk_autocorr = _return_autocorr(c, block=5, lag=1)
-            persistence = _persistence_classify(hurst, vr21, wk_autocorr)
 
             # Z-Score calculation - vectorized rolling 20-day log-slope
             # (2026-06-29; window widened 10->20 with the headline trend).
@@ -687,9 +660,10 @@ def get_trends():
                  0.80
             ))
 
-            # Vol-targeted sizing (signature unchanged; ml arg neutral 50)
+            # Vol-targeted sizing. The 4th arg (legacy ml_conf_slow) is ignored
+            # by _compute_kelly_size - pass neutral 50.0.
             position = _compute_kelly_size(
-                last, slope, atr, ml_conf_slow, r2,
+                last, slope, atr, 50.0, r2,
                 delta_slope=delta_slope,
                 divergence_discount=combined_discount
             )
@@ -770,15 +744,10 @@ def get_trends():
                 "slope_prev": round(slope_prev, 2),   # slope ~1 month ago (path start)
                 "r2_prev": round(r2_prev, 2),         # R² ~1 month ago (path start)
                 "slope_r2_path": slope_r2_path,       # daily [slope,r2] over last ~1mo (map hover path)
-                "u_fit": u_fit,                       # U-reversal fit [0,1]; drives conviction
-                # ml_conf fields are TELEMETRY - real model outputs for
-                # dashboard monitoring. OOS-invalidated for decisions
-                # (transfer AUC 0.47); nothing downstream consumes them.
+                # ml_conf = trend-quality strength as a percent (not a model
+                # output). Per-asset dual-ML fields and u_fit were removed
+                # 2026-08-25 - dead (displayed nowhere, not in sizing).
                 "ml_conf": round(strength*100,1),
-                "ml_conf_slow": ml_conf_slow,
-                "ml_conf_fast": ml_conf_fast,
-                "divergence": ml_divergence,
-                "regime": ml_regime,
                 "strength": round(strength, 3),     # trend-quality multiplier [0,1]
                 "rsi14": round(rsi14, 1),
                 "rsi2": round(rsi2, 1),
@@ -790,12 +759,7 @@ def get_trends():
                 "slope": round(slope, 2),
                 "slope_z": round(slope_z, 2),
                 "delta_slope": round(delta_slope, 4),
-                "hurst": hurst,                     # trend persistence [0,1]
-                "vr21": vr21,                       # Lo-MacKinlay VR (q=21): >1 trend, <1 revert
-                "wk_autocorr": wk_autocorr,         # weekly-return lag-1 autocorr
-                "persistence_score": persistence["persistence_score"],   # [-1,1]: +trend, -revert
-                "persistence_label": persistence["persistence_label"],   # TREND/NEUTRAL/MEAN-REVERT
-                "persistence_arrow": persistence["persistence_arrow"],   # ↑ / ↔ / ↻
+                "hurst": hurst,                     # trend persistence [0,1] (feeds sizing discount)
                 "p_stop": p_stop,                   # corrected stop-before-target prob
                 "stop": position['stop'],
                 "target": position['target'],
