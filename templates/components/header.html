@@ -46,6 +46,16 @@
             {{ regime.confidence }}%
         </div>
 
+        {% if regime.ml_slow is defined and regime.ml_slow %}
+        <p class="text-[10px] font-bold font-mono mb-2
+            {{ 'text-green-400' if regime.ml_slow >= 60
+               else 'text-red-400' if regime.ml_slow < 40
+               else 'text-gray-400' }}"
+            title="SPY slow ML model (OOS AUC 0.625 - the one validated ML signal). Feeds 45% of the confidence blend above and 40% of the live portfolio vol cap.">
+            ML SLOW: {{ regime.ml_slow }}%
+        </p>
+        {% endif %}
+
         <div class="w-full max-w-[200px] bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
             <div class="h-full transition-all duration-500
                 {{ 'bg-green-500' if regime.status == 'RISK-ON' else 'bg-red-500' }}"
