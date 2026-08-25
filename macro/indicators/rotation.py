@@ -145,9 +145,12 @@ def get_currency_rotation():
         invert_set = {"EURUSD=X", "GBPUSD=X", "AUDUSD=X"}
         results = []
         for s, n in CURRENCIES.items():
-            c = data[s].dropna().tail(60)
+            # Keep the FULL (inverted) series so the hover path has room for a
+            # trailing window; use tail(60) only for the current slope/r2 point.
+            c_full = data[s].dropna()
             if s not in invert_set:
-                c = (1 / c).replace([np.inf, -np.inf], np.nan).dropna()
+                c_full = (1 / c_full).replace([np.inf, -np.inf], np.nan).dropna()
+            c = c_full.tail(60)
             if len(c) < 5:
                 continue
             slope, r2 = _trend_stats(c, 60, 60)
@@ -155,7 +158,7 @@ def get_currency_rotation():
             slope_change = _compute_slope_change(c)
             results.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2,
                             "gradient": gradient, "slope_change": slope_change,
-                            "slope_r2_path": _slope_r2_path(c, window=60, scale=60)})
+                            "slope_r2_path": _slope_r2_path(c_full, window=60, scale=60)})
         return results
     except Exception as e:
         print(f"Currency Rotation Error: {e}")
