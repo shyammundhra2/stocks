@@ -95,7 +95,6 @@ TREND_ASSETS = {
     "SIL": "Silver Miners",
     "REMX": "Rare Earth/Strategic Metals",
     "LIT": "Lithium/Battery",
-    "GDXJ": "Junior Gold Miners",
     "GNR": "Natural Resources",
 
     # International Equities
