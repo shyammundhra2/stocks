@@ -827,7 +827,14 @@ def get_trends():
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,
         portfolio_value=500000,
-        max_single=0.15,            # per-name cap 15% for MOM names
+        max_single=0.075,           # per-name MOM cap 7% ($37k on 500k). Lowered
+                                    # from 15% (2026-08-25, backtest_gss_name_cap):
+                                    # 15% over-concentrated inverse-vol picks,
+                                    # adding drawdown w/o return. 7% is the lowest
+                                    # cap preserving full CAGR (6.0%) while cutting
+                                    # maxDD -16.3%->-11.9% and lifting Sharpe
+                                    # 0.74->0.82. Concentration limit, not per-name
+                                    # Kelly (that lever is max_portfolio_vol below).
         rev_single=0.05,            # REV (mean-reversion) capped 5% - junior sleeve
         max_risk_contribution=0.35,
         min_portfolio_vol=0.08,     # floor: 8%   (~1/9 Kelly at Sharpe ~0.7)
