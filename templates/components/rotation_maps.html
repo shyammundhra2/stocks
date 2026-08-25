@@ -1,119 +1,182 @@
 <!-- Sector Rotation -->
 <div class="card">
-    <h2 class="text-xs font-black text-green-400 uppercase tracking-widest mb-4 italic">Sector Rotation: Slope vs R²</h2>
+    <h2 class="text-xs font-black text-green-400 uppercase tracking-widest mb-2 italic">Sector Rotation: Slope vs R²</h2>
+    <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily slope/R² path over the last month (faded trail). Dotted curves = equal |slope|·R² conviction.</p>
     <div id="rotationMap" class="plot-container"></div>
 </div>
 
 <!-- Country Rotation -->
 <div class="card">
-    <h2 class="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 italic">Country Rotation: Slope vs R²</h2>
+    <h2 class="text-xs font-black text-emerald-400 uppercase tracking-widest mb-2 italic">Country Rotation: Slope vs R²</h2>
+    <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily path. Dotted curves = equal |slope|·R² conviction.</p>
     <div id="countryRotation" class="plot-container"></div>
 </div>
 
 <!-- Commodity Rotation -->
 <div class="card">
-    <h2 class="text-xs font-black text-orange-400 uppercase tracking-widest mb-4 italic">Commodity Rotation: Slope vs R²</h2>
+    <h2 class="text-xs font-black text-orange-400 uppercase tracking-widest mb-2 italic">Commodity Rotation: Slope vs R²</h2>
+    <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily path. Dotted curves = equal |slope|·R² conviction.</p>
     <div id="commodityRotation" class="plot-container"></div>
 </div>
 
 <!-- Currency Rotation -->
 <div class="card">
-    <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-4 italic">Currency Rotation (X → USD)</h2>
+    <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-2 italic">Currency Rotation (X → USD)</h2>
+    <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily path. Dotted curves = equal |slope|·R² conviction.</p>
     <div id="currencyRotation" class="plot-container"></div>
 </div>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    const baseAnnotations = [
-        {x:2, y:0.9, text:'LEADING', showarrow:false, font:{color:'#22c55e', size:10}},
-        {x:-2, y:0.9, text:'WEAKENING', showarrow:false, font:{color:'#eab308', size:10}},
-        {x:-2, y:0.1, text:'LAGGING', showarrow:false, font:{color:'#ef4444', size:10}},
-        {x:2, y:0.1, text:'IMPROVING', showarrow:false, font:{color:'#3b82f6', size:10}}
+(function () {
+    var baseAnnotations = [
+        { x: 2, y: 0.9, text: 'LEADING', showarrow: false, font: { color: '#22c55e', size: 10 } },
+        { x: -2, y: 0.9, text: 'WEAKENING', showarrow: false, font: { color: '#eab308', size: 10 } },
+        { x: -2, y: 0.1, text: 'LAGGING', showarrow: false, font: { color: '#ef4444', size: 10 } },
+        { x: 2, y: 0.1, text: 'IMPROVING', showarrow: false, font: { color: '#3b82f6', size: 10 } }
     ];
 
-    function plotRotation(id, data) {
-        if (!document.getElementById(id)) return;
+    // Build one rotation map with iso-conviction dotted curves + a per-hover
+    // faded "ghost" trace tracing that marker's daily slope/R² path over the
+    // last ~month - the same interaction as the momentum trends map.
+    function plotRotationMap(id, data) {
+        var el = document.getElementById(id);
+        if (!el || !window.Plotly) return;
 
-        const markerTrace = {
-            x: data.map(d => d.x),
-            y: data.map(d => d.y),
-            text: data.map(d => d.name),
-            mode: 'markers+text',
-            textposition: 'top center',
+        var xs = data.map(function (d) { return d.x; });
+        var xabs = Math.max.apply(null, xs.map(Math.abs).concat([3]));
+
+        // 3 iso-conviction curves |slope|·R² = k, each drawn on both the
+        // positive (leading) and negative (weakening/lagging) sides.
+        var kvals = [0.18, 0.36, 0.6].map(function (f) { return f * xabs; });
+        var contours = [];
+        kvals.forEach(function (k) {
+            [1, -1].forEach(function (sgn) {
+                var xa = [], ya = [];
+                for (var t = 0; t <= 40; t++) {
+                    var xv = sgn * (k + (xabs - k) * t / 40);
+                    if (Math.abs(xv) < 1e-6) continue;
+                    var yv = k / Math.abs(xv);
+                    if (yv <= 1) { xa.push(xv); ya.push(yv); }
+                }
+                contours.push({
+                    x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
+                    line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false
+                });
+            });
+        });
+
+        var ghost = {
+            x: [], y: [], mode: 'lines+markers', type: 'scatter', hoverinfo: 'skip',
+            showlegend: false,
+            line: { color: 'rgba(148,163,184,0.45)', width: 1.5 },
+            marker: { size: 5, color: 'rgba(148,163,184,0.45)' }
+        };
+        var ghostIdx = contours.length;
+        var markerIdx = contours.length + 1;
+
+        var markers = {
+            x: xs,
+            y: data.map(function (d) { return d.y; }),
+            text: data.map(function (d) { return d.name; }),
+            customdata: data.map(function (d) { return [d.ret_126 == null ? '' : d.ret_126]; }),
+            mode: 'markers+text', textposition: 'top center',
+            textfont: { size: 9, color: '#cbd5e1' },
+            hovertemplate: '%{text}<br>slope %{x:.2f}, R² %{y:.2f}<extra></extra>',
             marker: {
                 size: 12,
-                color: data.map(d => d.x > 0 ? '#22c55e' : '#ef4444'),
-                line: { color: '#fff', width: 1 }
+                color: data.map(function (d) { return d.x > 0 ? '#22c55e' : '#ef4444'; }),
+                line: { color: '#0f172a', width: 1 }, opacity: 0.9
             },
             type: 'scatter'
         };
 
-        const minArrowLength = 0.05; // minimum arrow length
-const maxArrowLength = 0.3;  // maximum arrow length (you already had this)
+        Plotly.newPlot(id, contours.concat([ghost, markers]), {
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
+            hovermode: 'closest',
+            xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+            yaxis: { title: 'R²', range: [0, 1], gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+            annotations: baseAnnotations, showlegend: false
+        }, { responsive: true, displayModeBar: false });
 
-const maxSlopeChange = Math.max(...data.map(d => Math.abs(d.slope_change || 0)), 1);
-
-    const arrowAnnotations = data.map(d => {
-        // Skip if essential data is missing
-        if (d.gradient == null || d.slope_change == null || d.y == null || d.y < 0) return null;
-
-        // Convert slope gradient to radians
-        const angleRad = d.gradient * Math.PI / 180;
-
-        // Scale length with min length
-        const length = minArrowLength + (maxArrowLength - minArrowLength) * Math.abs(d.slope_change) / maxSlopeChange;
-
-        return {
-            x: d.x,
-            y: d.y,
-            ax: d.x - length * Math.cos(angleRad),
-            ay: d.y - length * Math.sin(angleRad),
-            xref: 'x', yref: 'y',
-            axref: 'x', ayref: 'y',
-            showarrow: true,
-            arrowhead: 3,
-            arrowsize: 1,
-            arrowwidth: 1.5,
-            arrowcolor: '#facc15'
-        };
-    }).filter(a => a);
-
-        Plotly.newPlot(id, [markerTrace], {
-            paper_bgcolor:'rgba(0,0,0,0)',
-            plot_bgcolor:'rgba(0,0,0,0)',
-            font:{color:'#94a3b8',size:10},
-            margin:{t:40,r:40,b:40,l:40},
-            xaxis:{title:'Slope (%)',gridcolor:'#334155',zerolinecolor:'#64748b',zerolinewidth:2},
-            yaxis:{title:'R²',range:[0,1],gridcolor:'#334155',zerolinecolor:'#64748b',zerolinewidth:2},
-            annotations: [...baseAnnotations, ...arrowAnnotations],
-            responsive:true,
-            displayModeBar:false
+        // Per-hover ghost path (rAF-deferred + debounced unhover, same safeguards
+        // as the trends map to avoid the hover "sticking"/flicker).
+        var gd = el, shown = -1, rafPending = false, clearTimer = null;
+        function paintGhost() {
+            rafPending = false;
+            var pth = (shown >= 0 && data[shown] && data[shown].slope_r2_path) ? data[shown].slope_r2_path : [];
+            Plotly.restyle(id, {
+                x: [pth.map(function (q) { return q[0]; })],
+                y: [pth.map(function (q) { return q[1]; })]
+            }, [ghostIdx]);
+        }
+        function showGhost(i) {
+            if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
+            if (i === shown) return;
+            shown = i;
+            if (!rafPending) { rafPending = true; requestAnimationFrame(paintGhost); }
+        }
+        gd.on('plotly_hover', function (ev) {
+            var p = ev.points[0];
+            if (p && p.curveNumber === markerIdx) showGhost(p.pointNumber);
+        });
+        gd.on('plotly_unhover', function () {
+            if (clearTimer) clearTimeout(clearTimer);
+            clearTimer = setTimeout(function () { clearTimer = null; showGhost(-1); }, 130);
+        });
+        gd.addEventListener('mouseleave', function () {
+            if (clearTimer) clearTimeout(clearTimer);
+            clearTimer = null; shown = -2; showGhost(-1);
         });
     }
 
-    // Plot all rotations with slope-change scaled arrows
-    plotRotation('rotationMap', [
-        {% for s in sr.all_ranked %}
-        { name: "{{ s.name }}", x: {{ s.slope }}, y: {{ s.r2 }}, gradient: {{ s.gradient|default('0') }}, slope_change: {{ s.slope_change|default('0') }} },
-        {% endfor %}
-    ]);
+    var MAPS = [
+        ['rotationMap', [
+            {% for s in sr.all_ranked %}
+            { name: "{{ s.name }}", x: {{ s.slope }}, y: {{ s.r2 }}, ret_126: {{ s.ret_126|default('null') }}, slope_r2_path: {{ s.slope_r2_path|default([[s.slope, s.r2]])|tojson }} },
+            {% endfor %}
+        ]],
+        ['countryRotation', [
+            {% for c in countries %}
+            { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, ret_126: {{ c.ret_126|default('null') }}, slope_r2_path: {{ c.slope_r2_path|default([[c.slope, c.r2]])|tojson }} },
+            {% endfor %}
+        ]],
+        ['commodityRotation', [
+            {% for c in commodities %}
+            { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, ret_126: {{ c.ret_126|default('null') }}, slope_r2_path: {{ c.slope_r2_path|default([[c.slope, c.r2]])|tojson }} },
+            {% endfor %}
+        ]],
+        ['currencyRotation', [
+            {% for c in currencies %}
+            { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, ret_126: null, slope_r2_path: {{ c.slope_r2_path|default([[c.slope, c.r2]])|tojson }} },
+            {% endfor %}
+        ]]
+    ];
 
-    plotRotation('countryRotation', [
-        {% for c in countries %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
-        {% endfor %}
-    ]);
-
-    plotRotation('commodityRotation', [
-        {% for c in commodities %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
-        {% endfor %}
-    ]);
-
-    plotRotation('currencyRotation', [
-        {% for c in currencies %}
-        { name: "{{ c.name }}", x: {{ c.slope }}, y: {{ c.r2 }}, gradient: {{ c.gradient|default('0') }}, slope_change: {{ c.slope_change|default('0') }} },
-        {% endfor %}
-    ]);
-});
+    // Robust init: retry until Plotly (CDN) is present, draw all maps, then
+    // resize as the layout settles / on width changes (handles hidden tabs).
+    (function initRotationMaps() {
+        if (!window.Plotly) { setTimeout(initRotationMaps, 100); return; }
+        MAPS.forEach(function (m) { plotRotationMap(m[0], m[1]); });
+        [60, 250, 600, 1200].forEach(function (ms) {
+            setTimeout(function () {
+                MAPS.forEach(function (m) {
+                    var e = document.getElementById(m[0]);
+                    if (e && window.Plotly) Plotly.Plots.resize(m[0]);
+                });
+            }, ms);
+        });
+        if (window.ResizeObserver) {
+            MAPS.forEach(function (m) {
+                var e = document.getElementById(m[0]);
+                if (!e) return;
+                var lastW = 0;
+                new ResizeObserver(function () {
+                    var w = e.clientWidth;
+                    if (w && Math.abs(w - lastW) > 1) { lastW = w; if (window.Plotly) Plotly.Plots.resize(m[0]); }
+                }).observe(e);
+            });
+        }
+    })();
+})();
 </script>

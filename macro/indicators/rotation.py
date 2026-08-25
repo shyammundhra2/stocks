@@ -32,6 +32,20 @@ from macro.indicators.mathstats import *
 # =========================
 # IV. Rotation
 # =========================
+def _slope_r2_path(series, window=20, scale=20, days=21):
+    """Daily [slope, r2] path over the last ~`days` sessions (oldest -> today),
+    for the rotation-map hover ghost - mirrors get_trends' slope_r2_path. Each
+    point is that day's trailing 20-bar trend stats. NaN-safe; falls back to a
+    single current point when there isn't enough history."""
+    s = series.dropna()
+    nlen = len(s)
+    path = [list(_trend_stats(s.iloc[:nlen - k], window, scale))
+            for k in range(days, -1, -1) if nlen - k >= window + 5]
+    if not path:
+        path = [list(_trend_stats(s, window, scale))]
+    return [[round(p[0], 3), round(p[1], 3)] for p in path]
+
+
 @ttl_cache(30)
 def get_sector_rotation():
     try:
@@ -47,7 +61,8 @@ def get_sector_rotation():
             out.append({
                 "name": name, "gain": f"{rel[t]:+.2%}",
                 "is_positive": slope > 0, "r2": r2, "slope": slope,
-                "gradient": gradient, "slope_change": slope_change
+                "gradient": gradient, "slope_change": slope_change,
+                "slope_r2_path": _slope_r2_path(data[t]),
             })
         return {"all_ranked": sorted(out, key=lambda x: x["slope"], reverse=True)}
     except Exception as e:
@@ -81,6 +96,7 @@ def get_country_rotation():
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
                             "gradient": gradient, "slope_change": slope_change,
                             "ret_126": round(ret126 * 100, 1) if ret126 == ret126 else None,
+                            "slope_r2_path": _slope_r2_path(data[s]),
                             "rank_score": ret126})            # + momentum: leaders first
         # Rank leaders first; NaN scores sink to the bottom.
         results.sort(key=lambda x: (x["rank_score"] if x["rank_score"] == x["rank_score"]
@@ -110,6 +126,7 @@ def get_commodity_rotation():
             results.append({"sym": s, "name": n, "slope": slope, "r2": r2,
                             "gradient": gradient, "slope_change": slope_change,
                             "ret_126": round(ret126 * 100, 1) if ret126 == ret126 else None,
+                            "slope_r2_path": _slope_r2_path(data[s]),
                             "rank_score": (-ret126) if ret126 == ret126 else float("nan")})
         # Reversion: biggest 6-month LOSERS ranked first; NaN sinks.
         results.sort(key=lambda x: (x["rank_score"] if x["rank_score"] == x["rank_score"]
@@ -137,7 +154,8 @@ def get_currency_rotation():
             gradient = _compute_gradient(c.tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(c)
             results.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2,
-                            "gradient": gradient, "slope_change": slope_change})
+                            "gradient": gradient, "slope_change": slope_change,
+                            "slope_r2_path": _slope_r2_path(c, window=60, scale=60)})
         return results
     except Exception as e:
         print(f"Currency Rotation Error: {e}")
