@@ -87,6 +87,16 @@ TREND_ASSETS = {
     "COPX": "Copper Stocks",
     "SLX": "Steel Stocks",
     "WOOD" : "Lumber Stocks",
+    # Commodity-stock breadth added 2026-08-25 (backtest_gss_commodity_stocks):
+    # producer-equity dispersion -> +0.8%/yr CAGR (6.9->7.7%) AND Sharpe up
+    # 0.84->0.89, DD +1.1pt. Curated non-redundant subset (dropped URA~URNM,
+    # XES/IEO~XOP/OIH, PICK/IGE/GUNR~XME). Gated like equities. Caveat: all
+    # launched ~2010, untested in a 2008-style crash.
+    "SIL": "Silver Miners",
+    "REMX": "Rare Earth/Strategic Metals",
+    "LIT": "Lithium/Battery",
+    "GDXJ": "Junior Gold Miners",
+    "GNR": "Natural Resources",
 
     # International Equities
     "INDA": "India",

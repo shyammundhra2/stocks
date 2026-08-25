@@ -36,7 +36,8 @@ WIN, ER_HI, ER_LO, RSI_BUY = 20, 0.40, 0.35, 15.0
 MOM_CAP, REV_CAP, COST, BUF = 0.075, 0.05, 5.0, 0.03
 
 BASE = list(TREND_ASSETS.keys())   # already 47 (includes subsectors + GDX)
-COMMOD_STOCKS = ["SIL", "GDXJ", "URA", "REMX", "LIT", "PICK", "GNR", "IGE", "GUNR", "XES", "IEO"]
+# Curated non-redundant subset (drop URA~URNM, XES/IEO~XOP/OIH, PICK/IGE/GUNR~XME)
+COMMOD_STOCKS = ["SIL", "REMX", "LIT", "GDXJ", "GNR"]
 
 
 def roll_sr(p, win):
