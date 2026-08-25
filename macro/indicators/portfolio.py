@@ -157,10 +157,15 @@ def _kelly_covariance_optimizer(
     }
 
     if regime is not None:
+        # Lever B: vol cap shares the same vol-target scalar as Lever A
+        # (60%) blended with ml_slow (40%). No defensive exemption here -
+        # the covariance optimizer already tilts toward vol-cheap
+        # defensives when the cap tightens.
         effective_vol_cap = _effective_vol_cap(
             regime,
             base_min=min_portfolio_vol,
             base_max=max_portfolio_vol,
+            regime_scalar=regime_scalar,
         )
     else:
         effective_vol_cap = max_portfolio_vol
@@ -182,7 +187,8 @@ def _kelly_covariance_optimizer(
     if len(available) < 2:
         sym = available[0]
         item = next(t for t in trends if t["sym"] == sym)
-        w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * regime_scalar, max_single)
+        _rs = 1.0 if sym in DEFENSIVE_ASSETS else regime_scalar   # defensives exempt
+        w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * _rs, max_single)
         dollar_amount = round(w * portfolio_value, 2)
         updated_trends = []
         for t in trends:
@@ -206,11 +212,15 @@ def _kelly_covariance_optimizer(
     cov_matrix, corr_matrix = _compute_covariance_matrix(shared_data, available)
     cov_values = cov_matrix.values
 
-    # Raw weights from sizing (vol-targeted), regime-scaled.
-    # Variable name kept for diff stability.
+    # Raw weights from sizing (vol-targeted), regime-scaled (Lever A).
+    # DEFENSIVE_ASSETS exempt from the throttle (2026-08-25,
+    # backtest_gss_regime_scalar_simple): scaling GLD/SLV/DBC/TLT down
+    # shrank crisis hedges exactly when they protect the book - the broad
+    # throttle turned 2022 from +2.6% to -2.2%. Matches the buffered
+    # equity gate's own defensive exemption.
     kelly_weights = np.array([
         next(t["dollar_amount"] for t in active_signals if t["sym"] == sym)
-        / portfolio_value * regime_scalar
+        / portfolio_value * (1.0 if sym in DEFENSIVE_ASSETS else regime_scalar)
         for sym in available
     ])
 
@@ -804,9 +814,15 @@ def get_trends():
         reverse=True
     )
 
-    # Get regime once - passed to optimizer for dynamic vol cap
+    # Get regime once - passed to optimizer for dynamic vol cap.
+    # 2026-08-25: scalar switched from the 6-condition lookup to the
+    # vol-target formula (SPY 21d realized vol vs its 252d median) -
+    # see get_vol_regime_scalar for the evidence trail. The regime dict
+    # still feeds ml_slow into the vol cap (Lever B).
     regime = get_risk_regime()
-    scalar = get_regime_scalar(regime)
+    scalar = get_vol_regime_scalar(
+        _spy_df["Close"].squeeze().values if _spy_df is not None else None
+    )
 
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,

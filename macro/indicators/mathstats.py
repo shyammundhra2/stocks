@@ -419,16 +419,24 @@ def _stop_hit_probability(price, stop, target, slope, atr, projection_days=63):
 # the Kelly fraction now: full Kelly vol for the strategy equals its
 # Sharpe, so 8-15% against a plausible Sharpe ~0.7 is ~1/5 to 1/9 Kelly.
 # =========================
-def _effective_vol_cap(regime, base_min=0.08, base_max=0.15):
+def _effective_vol_cap(regime, base_min=0.08, base_max=0.15, regime_scalar=None):
     """
-    Compute dynamic portfolio vol ceiling.
-    Signature unchanged; ml_fast no longer used (dead signal OOS).
+    Compute dynamic portfolio vol ceiling (Lever B).
+    2026-08-25: accepts the vol-target regime_scalar directly (Lever A's
+    value) so both levers share one signal; falls back to the legacy
+    6-condition scalar when not provided. ml_slow stays at 40% - the one
+    OOS-validated ML signal (SPY strided AUC 0.625); weight held at 40%
+    deliberately (its history can't be backtested without lookahead, so
+    the directly-verified vol-target scalar keeps the larger share).
+    No defensive exemption here on purpose: the covariance optimizer
+    already tilts toward vol-cheap defensives when the cap tightens.
     """
     ml_slow = regime.get("ml_slow", 50.0) / 100.0        # 0.0 - 1.0
-    regime_scalar = get_regime_scalar(regime)             # 0.0 - 1.0
+    if regime_scalar is None:
+        regime_scalar = get_regime_scalar(regime)         # legacy fallback
 
     combined = (
-        regime_scalar * 0.60   # observable macro conditions - primary
+        regime_scalar * 0.60   # vol-target scalar - directly backtested
         + ml_slow     * 0.40   # validated SPY structural signal
     )
 
@@ -438,9 +446,43 @@ def _effective_vol_cap(regime, base_min=0.08, base_max=0.15):
 
 
 def get_regime_scalar(regime):
+    """LEGACY 6-condition lookup - retained as _effective_vol_cap's fallback
+    and for display. Superseded in sizing by get_vol_regime_scalar
+    (2026-08-25): breadth/credit tested with a mean-reversion signature
+    (fail -> better forward returns, no protective hit-rate gap) and the
+    stepped lookup throttled defensive hedges in crises."""
     passes = sum(1 for d in regime["details"] if d["pass"])
     scalars = {6: 1.0, 5: 0.85, 4: 0.70, 3: 0.50, 2: 0.30, 1: 0.15, 0: 0.0}
     return scalars.get(passes, 0.0)
+
+
+def get_vol_regime_scalar(spy_close):
+    """Vol-target regime scalar (2026-08-25, backtest_gss_regime_scalar_simple:
+    full-cycle Sharpe 0.75 vs 0.74, maxDD -16.2% vs -17.3%, and the only
+    formula that didn't hurt 2008/2022 once defensives were exempted).
+
+        scalar = clip( median_252(rv21) / rv21_now, 0.25, 1.0 )
+
+    where rv21 = SPY 21d realized vol, annualized. Continuous (no stepped
+    cliffs - the buffered-gate lesson), pure SPY price (zero extra tickers,
+    no model dependency), floored at 0.25 (throttle, never shutoff - exits
+    are the router/gate's job). Applied to non-defensive MOM sizing only;
+    DEFENSIVE_ASSETS are exempt (throttling GLD/TLT shrank crisis hedges
+    exactly when they protect - 2022 +2.6% -> -2.2% before the exemption).
+    Returns 1.0 (no throttle) on insufficient/invalid data.
+    """
+    try:
+        c = pd.Series(spy_close).dropna()
+        if len(c) < 90:
+            return 1.0
+        rv = c.pct_change().rolling(21).std() * np.sqrt(252)
+        med = rv.rolling(252, min_periods=60).median()
+        rv_now, med_now = float(rv.iloc[-1]), float(med.iloc[-1])
+        if not (np.isfinite(rv_now) and np.isfinite(med_now)) or rv_now <= 0:
+            return 1.0
+        return float(np.clip(med_now / rv_now, 0.25, 1.0))
+    except Exception:
+        return 1.0
 
 __all__ = [
     "_safe_r2",
@@ -459,4 +501,5 @@ __all__ = [
     "_stop_hit_probability",
     "_effective_vol_cap",
     "get_regime_scalar",
+    "get_vol_regime_scalar",
 ]
