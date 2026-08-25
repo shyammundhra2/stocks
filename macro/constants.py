@@ -60,6 +60,20 @@ TREND_ASSETS = {
     "IGV": "Software",
     "CIBR": "Cyber Security",
     "ITA": "Defense",
+    # Subsector breadth added 2026-08-25 (backtest_gss_breadth_categories):
+    # equity dispersion - industries trend at different times -> +1%/yr CAGR
+    # (6.1->7.1%) at unchanged Sharpe 0.84. Gated like equities.
+    "XBI": "Biotech",
+    "XHB": "Homebuilders",
+    "XRT": "Retail",
+    "KRE": "Regional Banks",
+    "XOP": "Oil & Gas E&P",
+    "OIH": "Oil Services",
+    "IYT": "Transports",
+    "GDX": "Gold Miners",
+    "KIE": "Insurance",
+    "FDN": "Internet",
+    "IHI": "Medical Devices",
 
     # Commodities & Real Assets
     "GLD": "Gold",
