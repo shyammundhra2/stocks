@@ -83,7 +83,8 @@
         </p>
 
         {% if regime.hmm %}
-        <div class="mt-3 text-xs font-mono text-gray-400">
+        <div class="mt-3 text-xs font-mono text-gray-400"
+             title="Telemetry only - does not drive sizing. Backtested (backtest_regime_hmm): coincides with, and is a worse crash predictor than, the vol-target scalar; kept as a display badge like ML SLOW.">
             HMM Crisis Risk:
             <span class="
                 {{ 'text-red-400' if regime.hmm.p_crisis > 0.33
@@ -91,6 +92,7 @@
                    else 'text-green-400' }}">
                 {{ (regime.hmm.p_crisis * 100)|round(0) }}%
             </span>
+            <span class="text-[9px] text-gray-600 uppercase">telemetry</span>
         </div>
         {% endif %}
     </div>
