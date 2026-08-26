@@ -72,12 +72,15 @@ def build_panel():
     return panel.sort_values("date").reset_index(drop=True)
 
 
-def main():
-    panel = build_panel()
-    print(f"panel: {len(panel):,} metro-months, {panel['metro'].nunique()} metros, "
-          f"{panel['date'].min().date()} -> {panel['date'].max().date()}\n")
+def _gbm():
+    return GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05,
+                                     subsample=0.8, min_samples_leaf=30, random_state=42)
 
-    # ---- WALK-FORWARD validation (yearly, expanding; target must be matured) ----
+
+def compute_metro_ranking():
+    """Returns {asof, skill:{rank_ic, ic_pos, top_bot}, ranking:[{metro,fwd12,mom12,vs36,vol}]}.
+    Walk-forward validated; current ranking from a model trained on all matured data."""
+    panel = build_panel()
     oof = []
     for yr in range(2012, 2026):
         cut = pd.Timestamp(f"{yr}-01-01") - pd.DateOffset(months=HORIZON + 1)
@@ -85,40 +88,38 @@ def main():
         te = panel[(panel["date"] >= pd.Timestamp(f"{yr}-01-01")) & (panel["date"] < pd.Timestamp(f"{yr+1}-01-01"))]
         if len(tr) < 500 or len(te) < 20:
             continue
-        m = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05,
-                                      subsample=0.8, min_samples_leaf=30, random_state=42)
-        m.fit(tr[FEATS], tr["target"])
-        te = te.copy(); te["pred"] = m.predict(te[FEATS])
-        oof.append(te)
+        m = _gbm(); m.fit(tr[FEATS], tr["target"])
+        te = te.copy(); te["pred"] = m.predict(te[FEATS]); oof.append(te)
     oof = pd.concat(oof)
-    print("=== WALK-FORWARD OOS validation ===")
-    r = spearmanr(oof["pred"], oof["target"]).correlation
-    print(f"pooled rank corr(pred, actual fwd-12m): {r:+.3f}   (n={len(oof):,})")
-    # per-month cross-sectional rank IC (does it RANK metros right each month?)
     ics = [spearmanr(g["pred"], g["target"]).correlation for _, g in oof.groupby("date") if len(g) >= 5]
     ics = [x for x in ics if x == x]
-    print(f"monthly cross-sectional rank IC: mean {np.mean(ics):+.3f}  (share>0 {np.mean(np.array(ics)>0):.0%}, n_months {len(ics)})")
-    # top vs bottom third by predicted, actual forward return
     oof["bucket"] = oof.groupby("date")["pred"].transform(lambda s: pd.qcut(s.rank(method="first"), 3, labels=["bot", "mid", "top"]))
     tb = oof.groupby("bucket")["target"].mean()
-    print(f"actual fwd-12m by predicted bucket: top {tb.get('top', np.nan):+.1f}%  "
-          f"mid {tb.get('mid', np.nan):+.1f}%  bot {tb.get('bot', np.nan):+.1f}%  "
-          f"(top-bot spread {tb.get('top', 0)-tb.get('bot', 0):+.1f}%)")
+    skill = {"rank_ic": round(float(np.mean(ics)), 3), "ic_pos": round(float(np.mean(np.array(ics) > 0)), 2),
+             "top_bot": round(float(tb.get("top", 0) - tb.get("bot", 0)), 1), "n": int(len(oof))}
 
-    # ---- CURRENT ranking (train on all matured data, predict latest per metro) ----
     matured = panel[panel["date"] <= panel["date"].max() - pd.DateOffset(months=HORIZON)]
-    model = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05,
-                                      subsample=0.8, min_samples_leaf=30, random_state=42)
-    model.fit(matured[FEATS], matured["target"])
+    model = _gbm(); model.fit(matured[FEATS], matured["target"])
     latest = panel.sort_values("date").groupby("metro").tail(1).copy()
     latest["pred"] = model.predict(latest[FEATS])
     latest = latest.sort_values("pred", ascending=False)
-    print(f"\n=== CURRENT metro ranking (forward-12m HPA forecast, as of {panel['date'].max().date()}) ===")
+    ranking = [{"metro": r["metro"], "fwd12": round(float(r["pred"]), 1), "mom12": round(float(r["mom12"]), 1),
+                "vs36": round(float(r["px_vs_ma36"]), 1), "vol": round(float(r["vol12"]), 1)}
+               for _, r in latest.iterrows()]
+    return {"asof": str(panel["date"].max().date()), "skill": skill, "ranking": ranking}
+
+
+def main():
+    d = compute_metro_ranking()
+    s = d["skill"]
+    print("=== WALK-FORWARD OOS validation ===")
+    print(f"monthly cross-sectional rank IC: {s['rank_ic']:+.3f}  (positive {s['ic_pos']:.0%} of months, n={s['n']:,})")
+    print(f"top vs bottom third: +{s['top_bot']:.1f}%/yr actual OOS spread")
+    print(f"\n=== CURRENT metro ranking (fwd-12m HPA forecast, as of {d['asof']}) ===")
     print(f"{'#':>2} {'metro':16s} {'fwd12m%':>8s} {'mom12%':>7s} {'vs36mMA%':>9s} {'vol%':>5s}")
-    for i, (_, r) in enumerate(latest.iterrows(), 1):
-        print(f"{i:>2} {r['metro']:16s} {r['pred']:>+7.1f} {r['mom12']:>+7.1f} {r['px_vs_ma36']:>+9.1f} {r['vol12']:>5.1f}")
-    print("\n[honest read: trust the RANK, not the precise %. Housing momentum is real (+0.75 autocorr),")
-    print(" but 12m point forecasts are noisy - the OOS rank IC above is the actual skill.]")
+    for i, r in enumerate(d["ranking"], 1):
+        print(f"{i:>2} {r['metro']:16s} {r['fwd12']:>+7.1f} {r['mom12']:>+7.1f} {r['vs36']:>+9.1f} {r['vol']:>5.1f}")
+    print("\n[honest read: trust the RANK, not the precise % - OOS rank IC above is the real skill.]")
 
 
 if __name__ == "__main__":

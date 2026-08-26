@@ -94,14 +94,17 @@ def macro():
     # macrocockpit is a standalone package, separate from the trading engine.
     from macrocockpit.macro_board import get_macro_dashboard
     from macrocockpit.cycles import get_cycles
+    from macrocockpit.housing import get_metro_ranking
     md = get_macro_dashboard()
     cy = get_cycles()
+    hz = get_metro_ranking()      # cached; refreshes in background if >1 day old
     charts = dict(md.get("charts", {}))
     charts["cycles"] = cy      # cycle chart series bundled for the client
     resp = make_response(render_template(
         "macro_dashboard.html",
         md=md,
         cy=cy,
+        hz=hz,
         charts_json=json.dumps(charts),
         rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         active_tab="macro",

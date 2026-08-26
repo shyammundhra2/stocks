@@ -124,6 +124,37 @@
     </div>
   </div>
 
+  <!-- Metro housing ranking (validated, cached) -->
+  {% if hz.ranking %}
+  <div class="mt-5">
+    <div class="flex justify-between items-center mb-2">
+      <p class="text-[10px] uppercase tracking-widest text-teal-400">Metro Housing Ranking — validated forward-12m HPA forecast</p>
+      {% if hz.refreshing %}<span class="text-[9px] text-yellow-400 animate-pulse">↻ refreshing</span>{% endif %}
+    </div>
+    <div class="bg-slate-900 rounded p-3">
+      {% if hz.skill %}
+      <p class="text-[10px] text-slate-400 mb-2">
+        OOS (walk-forward): cross-sectional rank IC <span class="text-green-400 font-mono">+{{ hz.skill.rank_ic }}</span>
+        ({{ (hz.skill.ic_pos*100)|int }}% of months positive) · top-vs-bottom third
+        <span class="text-green-400 font-mono">+{{ hz.skill.top_bot }}%/yr</span> · as of {{ hz.asof }}
+      </p>
+      {% endif %}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1 text-xs">
+        {% for m in hz.ranking %}
+        <div class="flex justify-between border-b border-slate-800/50 py-1">
+          <span class="text-slate-200">{{ loop.index }}. {{ m.metro }}</span>
+          <span class="font-mono">
+            <span class="{{ 'text-green-400' if m.fwd12>3 else 'text-yellow-400' if m.fwd12>0 else 'text-red-400' }}">{{ '%+.1f'|format(m.fwd12) }}%</span>
+            <span class="text-slate-500 ml-2">mom {{ '%+.1f'|format(m.mom12) }}% · vs3yr {{ '%+.0f'|format(m.vs36) }}%</span>
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="text-[9px] text-slate-600 mt-2">Trust the RANK, not the precise % — housing is the one asset class where forecasting validates (+0.75 autocorrelation). Cached daily; refreshes in background.</p>
+    </div>
+  </div>
+  {% endif %}
+
   <p class="text-[10px] text-slate-600 mt-4">
     ISM PMI uses Industrial Production as a proxy (real ISM paywalled since 2016). All values are live
     from FRED + markets, computed deterministically. Information/context, not a trade signal.
