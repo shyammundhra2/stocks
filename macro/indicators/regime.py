@@ -411,7 +411,14 @@ def _regime_details(data):
 @ttl_cache(30)
 def get_risk_regime():
     try:
-        raw, risk_tickers = _get_extended_data()
+        # Reuse the shared market data (already fetched by get_trends this
+        # request) instead of a 2nd overlapping _get_extended_data download.
+        # The 9 tickers _regime_details needs (SPY/RSP/HYG/IEF/^TNX/^IRX/^VIX/
+        # ^MOVE/JPY=X) are all in the shared set; same group_by=column format,
+        # 1y >= the 300d this used. risk_tickers is only a list for the sparkline
+        # (predict_assets does its own fetch), so define it directly.
+        raw = _get_shared_market_data()
+        risk_tickers = list(set(ML_MACRO_TICKERS + ['RSP', 'SPY'] + list(SECTOR_NAMES.keys())))
         data = raw['Close'].ffill()
 
         # -----------------------------------------------
