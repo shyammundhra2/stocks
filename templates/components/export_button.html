@@ -89,18 +89,6 @@ function formatJsonAsReadableText(data) {
         ) + "\n";
     }
 
-    // --- AI ML ALLOCATIONS ---
-    const mlBlock = (title, m) => {
-        if (!m) return "";
-        let s = `${title}: OW ${get(m, 'top.name')} ${get(m, 'top.confidence')}%   `
-              + `UW ${get(m, 'bottom.name')} ${get(m, 'bottom.confidence')}%   spread ${get(m, 'spread')}%\n`;
-        const all = (m.all || []).slice(0, 8).map(x => `${get(x, 'name') || get(x, 'ticker')} ${get(x, 'confidence')}%`).join(', ');
-        if (all) s += `  ${all}\n`;
-        return s;
-    };
-    const mls = mlBlock("AI SECTOR", data.ml_sector) + mlBlock("AI COUNTRY", data.ml_country) + mlBlock("AI COMMODITY", data.ml_commodity);
-    if (mls) t += mls + "\n";
-
     // --- ROTATION ---
     // rank126: show the 6-month return the country/commodity tables are now
     // ranked by (+mom for countries, reversion/-mom for commodities).

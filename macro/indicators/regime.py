@@ -422,58 +422,15 @@ def get_risk_regime():
         data = raw['Close'].ffill()
 
         # -----------------------------------------------
-        # ML Risk Model - 20-day stride history (5 points)
-        # RETAINED FOR DASHBOARD SPARKLINE ONLY (2026-06-11):
-        # fast model holdout AUC 0.516 - no longer enters the
-        # composite or any sizing/risk decision.
+        # ML risk-model sparkline REMOVED 2026-08-26 - the fast model's holdout
+        # AUC was 0.516 (coin flip), display-only telemetry that loaded
+        # risk_model.joblib via predict_assets on every new date. ml_fast is
+        # neutralized; the header sparkline uses the (technical) composite_history
+        # below. recent_dates is kept - the composite history still strides on it.
         # -----------------------------------------------
-        history_points = []
         recent_dates = data.index[::-20][:5][::-1]
-
-        # Display-only sparkline: persist EVERY computed point keyed by date
-        # and only compute the ones not already stored. Because the 20-session
-        # stride passes back over each date on four later days, persisting the
-        # newest point too means each date is computed once (the day it first
-        # appears) and read from disk thereafter -> steady state is ~1
-        # predict_assets per new trading day, zero on intraday reloads.
-        #
-        # Consequence (intended): the most-recent point freezes at its
-        # first-computed value for the day rather than refreshing each reload.
-        # This is telemetry only (ml_fast / history are display-only and never
-        # enter the composite, sizing, or status), so a frozen sparkline point
-        # is fine. To force the newest point live again, delete its key from
-        # the riskhist_*.json sidecar (or clear the file).
-        _rh_base = _risk_history_base(risk_tickers)
-        _rh_cache = _risk_history_load(_rh_base)
-        _rh_dirty = False
-
-        for ts in recent_dates:
-            _key = pd.Timestamp(ts).normalize().strftime('%Y-%m-%d')
-
-            if _key in _rh_cache:
-                history_points.append(_rh_cache[_key])
-                continue
-
-            ml_res = predict_assets(
-                model_path=model_path("risk_model.joblib"),
-                tickers=risk_tickers,
-                friendly_names={},
-                model_type="risk",
-                as_of_date=ts
-            )
-            probs = ml_res.get('probabilities', {})
-            conf_val = round(probs.get('Class 1', 0) * 100, 1)
-            history_points.append(conf_val)
-            _rh_cache[_key] = conf_val
-            _rh_dirty = True
-
-        if _rh_dirty:
-            if len(_rh_cache) > 400:        # bound growth; keep most recent
-                for _k in sorted(_rh_cache)[:-400]:
-                    del _rh_cache[_k]
-            _risk_history_save(_rh_base, _rh_cache)
-
-        ml_fast_conf = history_points[-1]
+        history_points = []
+        ml_fast_conf = 50.0
 
         # -----------------------------------------------
         # SPY slow-ML REMOVED 2026-08-26 (from get_trends + regime).
