@@ -40,6 +40,12 @@ OUTPUT_CSV = "macro_2027_ranking_enhanced.csv"
 
 MOM_LOOKBACK = 252      # 12 months
 MOM_SKIP = 21           # skip last month (12-1 momentum)
+# Artifact guards (match the research scripts): a spinoff/split backfill (e.g.
+# SNDK spun from WDC Feb-2025) fakes huge momentum. Drop names with >400% 12-1
+# momentum OR any >50% single-day move in the window - almost always a corporate
+# action, not real momentum.
+MOM_CAP = 4.0
+JUMP_CAP = 0.50
 # Concentration: hold the top TOP_N momentum names equal-weight. This is a small
 # ~1%-of-net-worth / $50k RETURN sleeve, so we concentrate for CAGR (drawdown is
 # tolerable at this size). backtest_stock_concentration.py (2005-26, gated):
@@ -179,7 +185,10 @@ def infer_today(top_n=25):
             continue
         close = data['Close']
         mom = momentum_12_1(close)
-        if not np.isfinite(mom):
+        if not np.isfinite(mom) or mom <= 0 or mom > MOM_CAP:
+            continue
+        # corporate-action artifact: a huge single-day move in the window
+        if float(close.pct_change().tail(MOM_LOOKBACK).abs().max()) > JUMP_CAP:
             continue
         sma200 = close.rolling(DMA_200).mean().iloc[-1]
         slope1m, r2_1m = calculate_slope_r2(close, 21)
