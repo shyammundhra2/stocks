@@ -469,26 +469,19 @@ def get_risk_regime():
         ml_fast_conf = history_points[-1]
 
         # -----------------------------------------------
-        # SPY Slow ML Prediction - the validated signal
-        # (strided OOS AUC 0.625 on SPY, the asset it trained on)
+        # SPY slow-ML REMOVED 2026-08-26 (from get_trends + regime).
+        # Honest walk-forward (backtest_ml_slow_walkforward) showed the "0.625"
+        # was single-split luck; pooled AUC 0.51 = coin flip. It was never in
+        # sizing (that uses the vol-target scalar) yet dominated the trading-tab
+        # load: ~3.7s to load the model bundle + ~4s of predict_proba on EVERY
+        # regime compute (and every strided sparkline point). Neutralized -
+        # get_dual_ml_confidence_for_kelly is no longer called, so the model
+        # bundle never loads. Composite is now the 6 macro conditions only;
+        # ml_slow is shown neutral for display continuity.
         # -----------------------------------------------
-        try:
-            from macro.ml_engine import get_dual_ml_confidence_for_kelly
-
-            spy_df = raw[['Open', 'High', 'Low', 'Close', 'Volume']].xs(
-                'SPY', level=1, axis=1
-            ).dropna() if isinstance(raw.columns, pd.MultiIndex) else raw.dropna()
-
-            spy_dual = get_dual_ml_confidence_for_kelly(spy_df)
-            ml_slow_conf = spy_dual['slow']
-            spy_regime = spy_dual['regime']
-            spy_divergence = spy_dual['divergence']
-
-        except Exception as e:
-            print(f"SPY slow ML error: {e}")
-            ml_slow_conf = 50.0   # neutral - do NOT fall back to fast (noise)
-            spy_regime = "Unknown"
-            spy_divergence = 0.0
+        ml_slow_conf = 50.0     # neutral (dead signal removed)
+        spy_regime = "N/A"
+        spy_divergence = 0.0
 
         # -----------------------------------------------
         # Technical Conditions (6 independent checks)
@@ -526,17 +519,16 @@ def get_risk_regime():
         # computed once per process instead of re-running the RandomForest
         # predict on every 30s refresh. Output-identical. Falls back on error.
         # -----------------------------------------------
+        # ml_slow NEUTRALIZED 2026-08-26 (dead signal removed) - each point is now
+        # just the 6-condition technical score, still memoized per date.
         try:
-            from macro.ml_engine import get_dual_ml_confidence_for_kelly as _dual
             composite_history = []
             for _ts in recent_dates[:-1]:
                 _key = pd.Timestamp(_ts).normalize()
                 _cv = _SLOW_HIST_CACHE.get(_key)
                 if _cv is None:
-                    _dt = data.loc[:_ts]
-                    _passes = sum(1 for d in _regime_details(_dt) if d["pass"])
-                    _slow = _dual(spy_df.loc[:_ts])['slow']
-                    _cv = round((_passes / 6.0 * 0.55 + _slow / 100.0 * 0.45) * 100, 1)
+                    _passes = sum(1 for d in _regime_details(data.loc[:_ts]) if d["pass"])
+                    _cv = round((_passes / 6.0 * 0.55 + 0.5 * 0.45) * 100, 1)   # neutral ml
                     _SLOW_HIST_CACHE[_key] = _cv
                 composite_history.append(_cv)
             composite_history.append(float(round(composite_score * 100, 1)))   # endpoint = dot
