@@ -43,7 +43,7 @@ def ttl_cache(ttl_seconds=3600):
 
 FRED = ["GDPC1", "BUSLOANS", "TTLCONS", "UNRATE", "ICSA", "JTSJOL", "RSAFS", "UMCSENT",
         "CPIAUCSL", "PCEPILFE", "T5YIE", "FEDFUNDS", "T10Y2Y", "BAMLH0A0HYM2", "NFCI",
-        "M2SL", "WALCL", "RRPONTSYD", "WTREGEN", "DTWEXBGS",
+        "M2SL", "WALCL", "RRPONTSYD", "WTREGEN", "DTWEXBGS", "USINFO",
         "GACDISA066MSFRBNY", "GACDFSA066MSFRBPHI", "BACTSAMFRBDAL"]   # regional Fed mfg
 REG_FED = ["GACDISA066MSFRBNY", "GACDFSA066MSFRBPHI", "BACTSAMFRBDAL"]
 SECTORS = ["XLK", "XLF", "XLI", "XLY", "XLE", "XLV", "XLP", "XLU", "XLB", "XLRE", "XLC"]
@@ -154,6 +154,8 @@ def get_macro_dashboard():
     claims4 = fr["ICSA"].rolling(4).mean() if "ICSA" in fr else pd.Series(dtype=float)
     claims = float(claims4.dropna().iloc[-1]) / 1000 if len(claims4.dropna()) else np.nan  # thousands
     jolts = fv("JTSJOL") / 1000 if "JTSJOL" in fr else np.nan   # millions
+    # Information-sector payrolls YoY = honest tech-labor proxy (no forecast).
+    info_yoy = fr["USINFO"].pct_change(12).dropna().iloc[-1] * 100 if "USINFO" in fr else np.nan
     conf = fv("UMCSENT"); nfci = fv("NFCI"); be5 = fv("T5YIE")
     # regional-Fed manufacturing 'PMI' composite (diffusion, centered ~0)
     pmi_ser = pd.concat([fr[c].resample("ME").last() for c in REG_FED if c in fr], axis=1).mean(axis=1).dropna() if any(c in fr for c in REG_FED) else pd.Series(dtype=float)
@@ -230,6 +232,7 @@ def get_macro_dashboard():
             ("Unemployment Rate", fmt(fv("UNRATE"), "%"), "Tight" if fv("UNRATE") < 4.5 else "Loosening"),
             ("Initial Claims (4wk avg)", fmt(claims, "k", 0), "Low" if claims == claims and claims < 240 else "Rising"),
             ("Job Openings (JOLTS)", fmt(jolts, "M", 1), ""),
+            ("Tech jobs (Info-sector YoY)", fmt(info_yoy, "%"), "Contracting" if info_yoy == info_yoy and info_yoy < 0 else "Growing"),
         ]),
         ("III. Consumer", [
             ("Retail Sales (YoY)", fmt(retail_yoy, "%"), "Solid" if retail_yoy > 2 else "Soft"),
