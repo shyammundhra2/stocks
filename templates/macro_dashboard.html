@@ -58,30 +58,54 @@
       </table>
     </div>
     {% endfor %}
+  </div>
 
-    <!-- Sector strength -->
-    <div class="bg-slate-900 rounded p-3">
-      <p class="font-bold text-teal-400 text-sm mb-2">VIII. Sector Strength (3-month)</p>
-      <div class="grid grid-cols-2 gap-3 text-xs">
-        <div>
-          <p class="text-green-400 font-bold mb-1">Strongest</p>
-          {% for name, v in md.sector_strength.strong %}
-          <div class="flex justify-between py-0.5"><span>{{ name }}</span><span class="font-mono text-green-400">+{{ v }}%</span></div>
-          {% endfor %}
+  <!-- Validated cycle context (dead stock/sine cycles omitted) -->
+  <div class="mt-5">
+    <p class="text-[10px] uppercase tracking-widest text-teal-400 mb-2">
+      Cycle Context — validated leading indicators only (stock/sine cycles omitted: no OOS power)
+    </p>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+      <div class="bg-slate-900 rounded p-3">
+        <div class="flex justify-between items-start mb-2">
+          <p class="font-bold text-sm text-slate-200">Recession Risk (leading)</p>
+          {% if cy.recession %}<span class="text-2xl font-black {{ 'text-red-400' if cy.recession.risk_pct>=30 else 'text-yellow-400' if cy.recession.risk_pct>=15 else 'text-green-400' }}">{{ cy.recession.risk_pct }}%</span>{% endif %}
         </div>
-        <div>
-          <p class="text-red-400 font-bold mb-1">Weakest</p>
-          {% for name, v in md.sector_strength.weak %}
-          <div class="flex justify-between py-0.5"><span>{{ name }}</span><span class="font-mono text-red-400">{{ v }}%</span></div>
-          {% endfor %}
+        {% if cy.recession %}
+        <div class="text-xs space-y-1">
+          <div class="flex justify-between"><span class="text-slate-400">Yield curve 10y-3m</span><span class="font-mono {{ 'text-red-400' if cy.recession.curve_state=='INVERTED' else 'text-slate-200' }}">{{ cy.recession.curve }} ({{ cy.recession.curve_state }})</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Credit spread Baa-10y</span><span class="font-mono text-slate-200">{{ cy.recession.credit }}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Sahm rule</span><span class="font-mono {{ 'text-red-400' if cy.recession.sahm_trig else 'text-slate-200' }}">{{ cy.recession.sahm }}{{ ' TRIGGERED' if cy.recession.sahm_trig else '' }}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Warnings active</span><span class="font-mono">{{ cy.recession.warnings }}/3</span></div>
         </div>
+        <div id="ch_reccurve" class="h-40 mt-2"></div>
+        <p class="text-[10px] text-slate-500 mt-1">{{ cy.recession.lead }}. As of {{ cy.recession.asof }}.</p>
+        {% else %}<p class="text-xs text-slate-500">FRED unavailable</p>{% endif %}
+      </div>
+
+      <div class="bg-slate-900 rounded p-3">
+        <div class="flex justify-between items-start mb-2">
+          <p class="font-bold text-sm text-slate-200">Real-Estate Cycle</p>
+          {% if cy.realestate %}<span class="text-lg font-black {{ 'text-green-400' if cy.realestate.lean=='UP' else 'text-yellow-400' if cy.realestate.lean=='COOLING' else 'text-red-400' }}">{{ cy.realestate.lean }}</span>{% endif %}
+        </div>
+        {% if cy.realestate %}
+        <div class="text-xs space-y-1">
+          <div class="flex justify-between"><span class="text-slate-400">Case-Shiller 12m momentum</span><span class="font-mono text-slate-200">{{ cy.realestate.momentum }}%</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Months' supply (corr {{ cy.realestate.sup_corr }})</span><span class="font-mono {{ 'text-red-400' if cy.realestate.supply and cy.realestate.supply>6 else 'text-slate-200' }}">{{ cy.realestate.supply }}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Building permits YoY</span><span class="font-mono text-slate-200">{{ cy.realestate.permit_yoy }}%</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Momentum → fwd-12m corr</span><span class="font-mono text-green-400">+{{ cy.realestate.mom_corr }}</span></div>
+        </div>
+        <div id="ch_recs" class="h-40 mt-2"></div>
+        <p class="text-[10px] text-slate-500 mt-1">Housing autocorrelation +0.75 (real, unlike stocks); months'-supply is the strongest leading signal. As of {{ cy.realestate.asof }}.</p>
+        {% else %}<p class="text-xs text-slate-500">FRED unavailable</p>{% endif %}
       </div>
     </div>
   </div>
 
   <p class="text-[10px] text-slate-600 mt-4">
-    Gaps flagged honestly: ISM PMI uses Industrial Production as a proxy (real ISM paywalled since 2016);
-    CFTC net-JPY needs a COT feed (shown N/A). This is information/context, not a trade signal.
+    ISM PMI uses Industrial Production as a proxy (real ISM paywalled since 2016). All values are live
+    from FRED + markets, computed deterministically. Information/context, not a trade signal.
   </p>
 </div>
 </div>
@@ -114,6 +138,11 @@
   line('ch_curve', C.curve, '10Y-2Y yield curve', 'rgb(13,148,136)', true);
   line('ch_hyoas', C.hyoas, 'HY OAS (credit spread) %', 'rgb(180,83,9)', false);
   line('ch_netliq', C.netliq, 'Net liquidity ($tn)', 'rgb(59,130,246)', false);
+  // validated cycles
+  if (C.cycles && C.cycles.recession && C.cycles.recession.chart)
+    line('ch_reccurve', C.cycles.recession.chart, '10y-3m curve (recession lead)', 'rgb(13,148,136)', true);
+  if (C.cycles && C.cycles.realestate && C.cycles.realestate.chart_mom)
+    line('ch_recs', C.cycles.realestate.chart_mom, 'Case-Shiller 12m momentum %', 'rgb(34,197,94)', true);
   // VIX + MOVE dual
   if (C.vix || C.move) {
     const tr = [];

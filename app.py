@@ -64,8 +64,14 @@ def index():
 
     serializable_data = convert_to_serializable(all_data)
 
+    # Top-10 stock sleeve: stale-while-revalidate - reads the cached CSV instantly
+    # (never blocks) and refreshes in a background thread only when >1 day old.
+    from stockselection.selected import get_selected_stocks
+    selected_stocks = get_selected_stocks()
+
     resp = make_response(render_template(
         "dashboard.html",
+        selected_stocks=selected_stocks,
         regime=all_data["regime"],
         vix_mr=all_data["vix_mr"],
         mr=all_data["mr"],
@@ -96,11 +102,16 @@ def macro():
     # tab's initial load is never delayed by it. Disk-cached + incremental FRED.
     # macrocockpit is a standalone package, separate from the trading engine.
     from macrocockpit.macro_board import get_macro_dashboard
+    from macrocockpit.cycles import get_cycles
     md = get_macro_dashboard()
+    cy = get_cycles()
+    charts = dict(md.get("charts", {}))
+    charts["cycles"] = cy      # cycle chart series bundled for the client
     resp = make_response(render_template(
         "macro_dashboard.html",
         md=md,
-        charts_json=json.dumps(md.get("charts", {})),
+        cy=cy,
+        charts_json=json.dumps(charts),
         rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         active_tab="macro",
     ))

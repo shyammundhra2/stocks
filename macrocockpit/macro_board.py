@@ -217,7 +217,6 @@ def get_macro_dashboard():
         ("VI. Carry & FX", [
             ("USD/JPY", fmt(mv("JPY=X"), "", 1), ""),
             ("USD/JPY Realized Vol", fmt(jpy_vol, "%"), "Crowded-short risk" if jpy_vol == jpy_vol and jpy_vol > 12 else ""),
-            ("CFTC Net JPY", "N/A", "needs COT feed (manual)"),
         ]),
         ("VII. Breadth", [("% Sectors > 200DMA", fmt(breadth, "%", 0), "Broad" if breadth == breadth and breadth > 60 else "Narrow")]),
     ]

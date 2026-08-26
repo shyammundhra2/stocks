@@ -1,0 +1,22 @@
+<div class="bg-slate-800 rounded p-3">
+  <div class="flex justify-between items-center mb-1">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider">Stock Sleeve — Top 10 (momentum + gate)</p>
+    {% if selected_stocks.refreshing %}<span class="text-[9px] text-yellow-400 animate-pulse">↻ refreshing</span>{% endif %}
+  </div>
+  {% if selected_stocks.stocks %}
+  <p class="text-[10px] text-slate-500 mb-2">{{ selected_stocks.gate }} · {{ selected_stocks.asof }}</p>
+  <table class="w-full text-xs">
+    {% for s in selected_stocks.stocks %}
+    <tr class="border-b border-slate-700/40 last:border-0">
+      <td class="py-1 font-bold text-white w-12">{{ s.ticker }}</td>
+      <td class="py-1 text-slate-500 text-[10px]">{{ s.sector }}</td>
+      <td class="py-1 text-right font-mono text-green-400">+{{ s.mom }}%</td>
+      <td class="py-1 text-right font-mono text-slate-300 w-16">${{ '{:,.0f}'.format(s.alloc) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="text-[9px] text-slate-600 mt-1.5">$50k sleeve · ≤3/sector · equal-weight · hold only when gate risk-on. Cached daily; refreshes in background.</p>
+  {% else %}
+  <p class="text-xs text-slate-500 py-2">Computing… first run downloads the S&P 500 in the background — check back shortly.</p>
+  {% endif %}
+</div>
