@@ -124,6 +124,7 @@ def _kelly_covariance_optimizer(
         regime=None,
         current_weights=None,
         incumbency_bonus=0.0,
+        deploy_throttle=1.0,
 ):
     """
     Covariance portfolio optimizer with dynamic vol cap.
@@ -223,6 +224,8 @@ def _kelly_covariance_optimizer(
         item = next(t for t in trends if t["sym"] == sym)
         _rs = 1.0 if sym in DEFENSIVE_ASSETS else regime_scalar   # defensives exempt
         w = min(max(item["dollar_amount"] / portfolio_value, 0.02) * _rs, max_single, max_deploy)
+        if 0.0 < deploy_throttle < 1.0:
+            w *= deploy_throttle
         dollar_amount = round(w * portfolio_value, 2)
         updated_trends = []
         for t in trends:
@@ -355,6 +358,18 @@ def _kelly_covariance_optimizer(
     _gross = float(optimized_weights.sum())
     if _gross > max_deploy and _gross > 0:
         optimized_weights = optimized_weights * (max_deploy / _gross)
+
+    # VIX term-structure deploy throttle (2026-08-25, backtest_gss_vix_term-
+    # structure). Scales the whole book down when the term structure inverts
+    # (backwardation = stress), rest to cash. Applied AFTER the deploy cap so it
+    # composes as a further risk-off multiplier. A forward-looking crash timer
+    # the 200DMA gate lags: 2020-26 maxDD -10.7 -> -5.7% for ~0.5% CAGR (4x
+    # cheaper than a spot-VIX throttle - the term structure re-deploys for the
+    # rebound instead of staying throttled through the whole recovery). Fails
+    # open (throttle=1.0) if VIX3M data is unavailable. Uniform scaling (incl.
+    # defensives) matches the validated backtest.
+    if 0.0 < deploy_throttle < 1.0:
+        optimized_weights = optimized_weights * deploy_throttle
 
     port_vol = np.sqrt(_compute_portfolio_var(optimized_weights, cov_matrix))
     risk_contribs = _compute_risk_contribution(optimized_weights, cov_matrix)
@@ -859,6 +874,11 @@ def get_trends():
     scalar = get_vol_regime_scalar(
         _spy_df["Close"].squeeze().values if _spy_df is not None else None
     )
+    # VIX term-structure deploy throttle (forward-looking crash timer; fails
+    # open to 1.0 if VIX3M is unavailable). See vix_ts_deploy_throttle.
+    vix_throttle = vix_ts_deploy_throttle()
+    _vix_ts = get_vix_term_structure()            # ttl-cached; same call as above
+    _vix_ts_ratio = float(_vix_ts.iloc[-1]) if len(_vix_ts) else None
 
     optimized_results, summary = _kelly_covariance_optimizer(
         sorted_results, shared_data,
@@ -884,9 +904,13 @@ def get_trends():
         regime_scalar=scalar,
         conviction_threshold=0.5,
         regime=regime,              # pass regime for dynamic vol cap
+        deploy_throttle=vix_throttle,
     )
 
     summary["risk_gate"] = "RISK-OFF" if gate_riskoff else "RISK-ON"
+    summary["vix_throttle"] = round(vix_throttle, 2)
+    summary["vix_ts_ratio"] = round(_vix_ts_ratio, 3) if _vix_ts_ratio is not None else None
+    summary["vix_inverted"] = bool(_vix_ts_ratio is not None and _vix_ts_ratio > 1.0)
     # Live book weights (fraction of book) for downstream vol-budget sizing
     # (get_mean_reversion's tactical-QQQ deploy reads these).
     summary["weights"] = {

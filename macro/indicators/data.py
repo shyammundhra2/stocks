@@ -5,9 +5,12 @@ import threading
 import time
 import math
 import os
+import io
+import ssl
 import json
 import hashlib
 import tempfile
+import urllib.request
 from functools import wraps, lru_cache
 from scipy.optimize import minimize
 
@@ -290,6 +293,91 @@ def _get_close(shared_data, ticker):
     except Exception:
         return pd.Series(dtype=float)
 
+
+# =========================
+# VIX term structure (VIX / VIX3M)  -- added 2026-08-25
+#
+# The forward-looking stress signal: backwardation (VIX > VIX3M, ratio > 1)
+# flags stress BEFORE spot VIX level rises; contango (< 1) = calm. yfinance
+# serves ^VIX3M as a SINGLE latest row only (no history), so the series comes
+# from CBOE's public daily-history CSV. Disk-cached 6h; serves stale on network
+# failure; yfinance ^VIX3M latest as a last-resort single-point fallback so the
+# live throttle survives a CBOE outage. Empty series only if every source fails
+# (throttle then fails OPEN -> no throttle -> current behavior).
+#
+# Drives the deploy throttle (validated backtest_gss_vix_termstructure: 2020-26
+# maxDD -10.7 -> -5.7% for ~0.5% CAGR give-up, 4x cheaper than the spot-VIX
+# throttle) and the regime HMM's 4th feature.
+# =========================
+_VIX_TS_CACHE = os.path.join(_STORE_DIR, "vix_termstructure.parquet")
+_VIX_TS_DISK_TTL = 6 * 3600
+
+
+def _cboe_index_series(sym):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    url = f"https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    raw = urllib.request.urlopen(req, context=ctx, timeout=20).read()
+    df = pd.read_csv(io.BytesIO(raw))
+    df.columns = [c.strip().upper() for c in df.columns]
+    dcol = next(c for c in df.columns if "DATE" in c)
+    ccol = next(c for c in df.columns if "CLOSE" in c)
+    df[dcol] = pd.to_datetime(df[dcol])
+    return df.set_index(dcol)[ccol].sort_index()
+
+
+@ttl_cache(30)
+def get_vix_term_structure():
+    """VIX/VIX3M term-structure ratio series (CBOE primary, 6h disk cache,
+    yfinance latest fallback). Returns an empty Series if all sources fail."""
+    try:
+        if os.path.exists(_VIX_TS_CACHE) and (time.time() - os.path.getmtime(_VIX_TS_CACHE)) < _VIX_TS_DISK_TTL:
+            return pd.read_parquet(_VIX_TS_CACHE)["ts"]
+    except Exception:
+        pass
+    try:
+        vix = _cboe_index_series("VIX")
+        vix3m = _cboe_index_series("VIX3M")
+        ts = (vix / vix3m).dropna()
+        if len(ts):
+            try:
+                ts.to_frame("ts").to_parquet(_VIX_TS_CACHE)
+            except Exception:
+                pass
+            return ts
+    except Exception:
+        pass
+    try:                                   # network failed -> serve stale disk
+        return pd.read_parquet(_VIX_TS_CACHE)["ts"]
+    except Exception:
+        pass
+    try:                                   # last resort: yfinance latest point
+        v = yf.download("^VIX", period="5d", progress=False, auto_adjust=False)["Close"].dropna()
+        v3 = yf.download("^VIX3M", period="5d", progress=False, auto_adjust=False)["Close"].dropna()
+        if len(v) and len(v3):
+            return pd.Series([float(v.iloc[-1]) / float(v3.iloc[-1])], index=[v.index[-1]])
+    except Exception:
+        pass
+    return pd.Series(dtype=float)
+
+
+def vix_ts_deploy_throttle(floor=0.30):
+    """Continuous deploy throttle from the latest VIX term structure:
+    f = clip(1.0 - 2.5*(ratio - 0.90), floor, 1.0). Contango (ratio <= 0.9) ->
+    1.0 (full deploy); backwardation (ratio > 1) -> throttled toward floor.
+    Fails OPEN (returns 1.0) when data is unavailable, so a data outage can
+    never wrongly cut the book - it just reverts to un-throttled behavior."""
+    ts = get_vix_term_structure()
+    if ts is None or len(ts) == 0:
+        return 1.0
+    last = float(ts.iloc[-1])
+    if not np.isfinite(last):
+        return 1.0
+    return float(np.clip(1.0 - 2.5 * (last - 0.90), floor, 1.0))
+
+
 __all__ = [
     "_STORE_DIR",
     "_STORE_TTL",
@@ -311,4 +399,6 @@ __all__ = [
     "_get_shared_market_data",
     "_get_extended_data",
     "_get_close",
+    "get_vix_term_structure",
+    "vix_ts_deploy_throttle",
 ]

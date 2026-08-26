@@ -83,6 +83,25 @@
         </div>
         {% endif %}
 
+        {# --- VIX term structure (VIX/VIX3M) deploy throttle --- #}
+        {% if portfolio_summary.vix_ts_ratio is defined and portfolio_summary.vix_ts_ratio is not none %}
+        <div class="bg-slate-800 rounded p-3"
+             title="VIX/VIX3M term structure. >1.0 = backwardation (stress) → book throttled toward cash; <1.0 = contango (calm) → full deploy. Throttle f = clip(1.0 - 2.5*(ratio - 0.9), 0.3, 1.0).">
+            <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">VIX Term / Throttle</p>
+            <p class="text-lg font-black
+                {{ 'text-red-400' if portfolio_summary.vix_inverted
+                   else 'text-yellow-400' if portfolio_summary.vix_throttle < 1.0
+                   else 'text-green-400' }}">
+                {{ portfolio_summary.vix_ts_ratio }}
+                <span class="text-xs font-bold">
+                    {{ 'INVERTED' if portfolio_summary.vix_inverted
+                       else ('THROTTLE ' ~ (portfolio_summary.vix_throttle * 100) | int ~ '%') if portfolio_summary.vix_throttle < 1.0
+                       else 'CONTANGO' }}
+                </span>
+            </p>
+        </div>
+        {% endif %}
+
     </div>
 
     {# --- Active Positions Strip --- #}

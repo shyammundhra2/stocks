@@ -202,6 +202,11 @@ def get_regime_hmm_state(n_states=3):
         # --------------------------------------------------
         # Build feature matrix
         # --------------------------------------------------
+        # (2026-08-25: a 4th VIX-term-structure feature was tried and reverted -
+        # backtest_gss_hmm_eval / _regime_predictors showed it DOUBLED the state-
+        # switch rate with no forward edge. Crises are not predictable from these
+        # coincident features; the HMM is descriptive risk telemetry, and the
+        # actionable term-structure signal lives in the deploy throttle instead.)
 
         df = pd.DataFrame({
             "ret": ret_trend,
