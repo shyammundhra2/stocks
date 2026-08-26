@@ -52,3 +52,7 @@ coverage.xml
 cover/
 .idea/
 .idea/
+
+# Project-specific: virtualenv + regenerable data caches
+venv/
+*.parquet
