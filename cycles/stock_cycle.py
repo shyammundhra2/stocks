@@ -1,3 +1,17 @@
+"""
+RETIRED 2026-08-26. This boosted-HP + periodogram + sine-projection method has NO
+out-of-sample power on STOCKS - proven in backtest_cycle_oos.py: the projected
+cycle's 12m direction hits 45% vs an 80% base rate (anti-predictive), the
+'dominant cycle' wanders 3-15yr (band-pass-filtered noise, not a real cycle), and
+the HP reading revises heavily in real time. Stocks have ~zero return
+autocorrelation (-0.08 at 1yr), so there is no cycle to project.
+
+Kept for reference only. Honest replacements:
+  - economic_cycle_composite.py : validated leading-indicator recession dashboard
+    (yield curve / credit spread / Sahm) - the honest macro-cycle context.
+  - real_estate_honest.py : the ONE place cycles work - home prices autocorrelate
+    +0.75, so momentum + supply/permits genuinely lead (unlike stocks).
+"""
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
