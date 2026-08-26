@@ -1,0 +1,1 @@
+from macrocockpit.macro_board import get_macro_dashboard

@@ -1,0 +1,129 @@
+{% extends "layout.html" %}
+{% block content %}
+{% set score = md.roro_score %}
+{% set rc = 'text-green-400' if score >= 61 else 'text-red-400' if score <= 40 else 'text-yellow-400' %}
+{% set rb = 'bg-green-500' if score >= 61 else 'bg-red-500' if score <= 40 else 'bg-yellow-500' %}
+
+<div class="min-h-screen bg-slate-950 text-slate-200 font-sans">
+{% include "components/nav.html" %}
+
+<div class="max-w-[1600px] mx-auto px-4 py-4">
+
+  <!-- Header: RoRo score -->
+  <div class="flex flex-wrap items-center gap-6 mb-5">
+    <div class="bg-slate-800 rounded-lg px-6 py-3 text-center">
+      <p class="text-[10px] uppercase tracking-widest text-slate-400">RoRo Score</p>
+      <p class="text-5xl font-black {{ rc }} leading-none my-1">{{ score }}</p>
+      <p class="text-sm font-bold {{ rc }}">{{ md.regime }}</p>
+      <div class="w-40 h-1.5 bg-slate-700 rounded mt-2 overflow-hidden">
+        <div class="h-full {{ rb }}" style="width: {{ score }}%"></div>
+      </div>
+    </div>
+    <div class="text-xs text-slate-400 leading-relaxed">
+      <p class="text-slate-200 font-bold text-sm mb-1">Consolidated Macro Cockpit (US)</p>
+      <p>Real data — FRED + markets, computed (not LLM-generated). Data as of <span class="text-slate-200">{{ md.asof }}</span> · rendered {{ rendered_at }}</p>
+      <p class="text-slate-500 mt-1">Risk-Off 1-40 · Neutral 41-60 · Risk-On 61-100. Deterministic RoRo = avg risk-on z-score → normal CDF.</p>
+    </div>
+  </div>
+
+  <!-- Strategic analysis -->
+  <div class="bg-slate-900 border-l-4 border-amber-500 rounded p-3 mb-5">
+    <p class="text-[10px] uppercase tracking-widest text-amber-400 mb-1">Strategic Analysis — Bond Vol / Carry</p>
+    {% for a in md.analysis %}<p class="text-xs text-slate-300">• {{ a }}</p>{% endfor %}
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-5">
+    <div id="ch_breakdown" class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_sectors"   class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_curve"     class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_hyoas"     class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_risk"      class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_netliq"    class="bg-slate-900 rounded p-2 h-64"></div>
+  </div>
+
+  <!-- Metric table -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    {% for cat, rows in md.categories %}
+    <div class="bg-slate-900 rounded p-3">
+      <p class="font-bold text-teal-400 text-sm mb-2">{{ cat }}</p>
+      <table class="w-full text-xs">
+        {% for metric, value, interp in rows %}
+        <tr class="border-b border-slate-800 last:border-0">
+          <td class="py-1.5 text-slate-300">{{ metric }}</td>
+          <td class="py-1.5 text-right font-mono font-bold text-white w-20">{{ value }}</td>
+          <td class="py-1.5 pl-3 text-slate-500 text-[11px]">{{ interp }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endfor %}
+
+    <!-- Sector strength -->
+    <div class="bg-slate-900 rounded p-3">
+      <p class="font-bold text-teal-400 text-sm mb-2">VIII. Sector Strength (3-month)</p>
+      <div class="grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <p class="text-green-400 font-bold mb-1">Strongest</p>
+          {% for name, v in md.sector_strength.strong %}
+          <div class="flex justify-between py-0.5"><span>{{ name }}</span><span class="font-mono text-green-400">+{{ v }}%</span></div>
+          {% endfor %}
+        </div>
+        <div>
+          <p class="text-red-400 font-bold mb-1">Weakest</p>
+          {% for name, v in md.sector_strength.weak %}
+          <div class="flex justify-between py-0.5"><span>{{ name }}</span><span class="font-mono text-red-400">{{ v }}%</span></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="text-[10px] text-slate-600 mt-4">
+    Gaps flagged honestly: ISM PMI uses Industrial Production as a proxy (real ISM paywalled since 2016);
+    CFTC net-JPY needs a COT feed (shown N/A). This is information/context, not a trade signal.
+  </p>
+</div>
+</div>
+
+<script>
+  const C = {{ charts_json | safe }};
+  const DARK = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                 font: { color: '#94a3b8', size: 10 }, margin: { l: 40, r: 15, t: 30, b: 30 } };
+  const CFG = { displayModeBar: false, responsive: true };
+  function line(id, s, title, color, zero) {
+    if (!s) return;
+    const tr = [{ x: s.x, y: s.y, mode: 'lines', line: { color: color, width: 2 }, fill: zero ? 'tozeroy' : 'none',
+                  fillcolor: color.replace(')', ',0.12)').replace('rgb', 'rgba') }];
+    const lay = Object.assign({}, DARK, { title: { text: title, font: { size: 12, color: '#cbd5e1' } },
+                 xaxis: { gridcolor: '#1e293b' }, yaxis: { gridcolor: '#1e293b' } });
+    if (zero) lay.shapes = [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#ef4444', dash: 'dot', width: 1 } }];
+    Plotly.newPlot(id, tr, lay, CFG);
+  }
+  function hbar(id, names, vals, title) {
+    if (!names) return;
+    const cols = vals.map(v => v >= 0 ? '#22c55e' : '#ef4444');
+    const tr = [{ x: vals, y: names, type: 'bar', orientation: 'h', marker: { color: cols } }];
+    const lay = Object.assign({}, DARK, { title: { text: title, font: { size: 12, color: '#cbd5e1' } },
+                 margin: { l: 120, r: 15, t: 30, b: 25 }, xaxis: { gridcolor: '#1e293b', zerolinecolor: '#475569' },
+                 yaxis: { autorange: 'reversed' } });
+    Plotly.newPlot(id, tr, lay, CFG);
+  }
+  hbar('ch_breakdown', (C.breakdown||{}).names, (C.breakdown||{}).vals, 'RoRo drivers (risk-on z)');
+  hbar('ch_sectors', (C.sectors||{}).names, (C.sectors||{}).vals, 'Sector strength 3mo %');
+  line('ch_curve', C.curve, '10Y-2Y yield curve', 'rgb(13,148,136)', true);
+  line('ch_hyoas', C.hyoas, 'HY OAS (credit spread) %', 'rgb(180,83,9)', false);
+  line('ch_netliq', C.netliq, 'Net liquidity ($tn)', 'rgb(59,130,246)', false);
+  // VIX + MOVE dual
+  if (C.vix || C.move) {
+    const tr = [];
+    if (C.vix)  tr.push({ x: C.vix.x,  y: C.vix.y,  name: 'VIX',  mode: 'lines', line: { color: '#f59e0b', width: 2 } });
+    if (C.move) tr.push({ x: C.move.x, y: C.move.y, name: 'MOVE', yaxis: 'y2', mode: 'lines', line: { color: '#a78bfa', width: 2 } });
+    const lay = Object.assign({}, DARK, { title: { text: 'VIX (equity) & MOVE (bond) vol', font: { size: 12, color: '#cbd5e1' } },
+                 xaxis: { gridcolor: '#1e293b' }, yaxis: { gridcolor: '#1e293b' },
+                 yaxis2: { overlaying: 'y', side: 'right', showgrid: false },
+                 legend: { orientation: 'h', y: 1.15, font: { size: 9 } }, showlegend: true });
+    Plotly.newPlot('ch_risk', tr, lay, CFG);
+  }
+</script>
+{% endblock %}

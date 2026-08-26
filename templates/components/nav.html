@@ -1,0 +1,16 @@
+<div class="max-w-[1600px] mx-auto px-4 pt-3">
+  <div class="flex gap-1 border-b border-slate-700">
+    <a href="/"
+       class="px-5 py-2 text-sm font-bold rounded-t transition
+              {{ 'bg-slate-800 text-white border-b-2 border-teal-400' if active_tab=='trading'
+                 else 'text-slate-400 hover:text-white hover:bg-slate-800/50' }}">
+      📊 Trading &amp; Trends
+    </a>
+    <a href="/macro"
+       class="px-5 py-2 text-sm font-bold rounded-t transition
+              {{ 'bg-slate-800 text-white border-b-2 border-teal-400' if active_tab=='macro'
+                 else 'text-slate-400 hover:text-white hover:bg-slate-800/50' }}">
+      🌐 Macro Cockpit
+    </a>
+  </div>
+</div>

@@ -81,8 +81,29 @@ def index():
         all_data_json=json.dumps(serializable_data),
         data_asof=data_asof,
         rendered_at=rendered_at,
+        active_tab="trading",
     ))
     # Never let the browser serve a stale cached dashboard.
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
+@app.route("/macro")
+def macro():
+    # Lazy: the macro data (FRED + markets) is fetched ONLY here, so the trading
+    # tab's initial load is never delayed by it. Disk-cached + incremental FRED.
+    # macrocockpit is a standalone package, separate from the trading engine.
+    from macrocockpit.macro_board import get_macro_dashboard
+    md = get_macro_dashboard()
+    resp = make_response(render_template(
+        "macro_dashboard.html",
+        md=md,
+        charts_json=json.dumps(md.get("charts", {})),
+        rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        active_tab="macro",
+    ))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
