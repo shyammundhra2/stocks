@@ -9,21 +9,39 @@
 
 <div class="max-w-[1600px] mx-auto px-4 py-4">
 
-  <!-- Header: RoRo score -->
-  <div class="flex flex-wrap items-center gap-6 mb-5">
-    <div class="bg-slate-800 rounded-lg px-6 py-3 text-center">
-      <p class="text-[10px] uppercase tracking-widest text-slate-400">RoRo Score</p>
-      <p class="text-5xl font-black {{ rc }} leading-none my-1">{{ score }}</p>
-      <p class="text-sm font-bold {{ rc }}">{{ md.regime }}</p>
-      <div class="w-40 h-1.5 bg-slate-700 rounded mt-2 overflow-hidden">
-        <div class="h-full {{ rb }}" style="width: {{ score }}%"></div>
-      </div>
+  <!-- HEADLINE strip: at-a-glance summary -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+    <div class="bg-slate-800 rounded-lg px-4 py-3 text-center">
+      <p class="text-[9px] uppercase tracking-widest text-slate-400">RoRo Score</p>
+      <p class="text-4xl font-black {{ rc }} leading-none my-1">{{ score }}</p>
+      <p class="text-xs font-bold {{ rc }}">{{ md.regime }}</p>
     </div>
-    <div class="text-xs text-slate-400 leading-relaxed">
-      <p class="text-slate-200 font-bold text-sm mb-1">Consolidated Macro Cockpit (US)</p>
-      <p>Real data — FRED + markets, computed (not LLM-generated). Data as of <span class="text-slate-200">{{ md.asof }}</span> · rendered {{ rendered_at }}</p>
-      <p class="text-slate-500 mt-1">Risk-Off 1-40 · Neutral 41-60 · Risk-On 61-100. Deterministic RoRo = avg risk-on z-score → normal CDF.</p>
+    {% if cy.recession %}{% set rk = cy.recession.risk_pct %}
+    <div class="bg-slate-800 rounded-lg px-4 py-3 text-center">
+      <p class="text-[9px] uppercase tracking-widest text-slate-400">Recession Risk</p>
+      <p class="text-4xl font-black leading-none my-1 {{ 'text-red-400' if rk>=30 else 'text-yellow-400' if rk>=15 else 'text-green-400' }}">{{ rk }}%</p>
+      <p class="text-xs text-slate-400">curve {{ cy.recession.curve_state }}</p>
     </div>
+    {% endif %}
+    {% for h in md.headline %}
+    <div class="bg-slate-800 rounded-lg px-4 py-3 text-center">
+      <p class="text-[9px] uppercase tracking-widest text-slate-400">{{ h.label }}</p>
+      <p class="text-2xl font-black leading-none my-1 text-{{ h.color }}-400">{{ h.value }}</p>
+      <p class="text-xs font-bold text-{{ h.color }}-400">{{ h.state }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="text-[10px] text-slate-500 mb-4">Consolidated Macro Cockpit (US) — real data (FRED + markets), computed, not LLM-generated. As of <span class="text-slate-300">{{ md.asof }}</span> · rendered {{ rendered_at }} · RoRo: Risk-Off 1-40 / Neutral 41-60 / Risk-On 61-100.</p>
+
+  <!-- LEADING indicators (forward-looking, color-coded) -->
+  <p class="text-[10px] uppercase tracking-widest text-teal-400 mb-1">Leading Indicators — forward-looking</p>
+  <div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-5">
+    {% for l in md.leading %}
+    <div class="bg-slate-900 rounded p-2 border-l-2 border-{{ l.color }}-500">
+      <p class="text-[9px] text-slate-400 leading-tight h-6">{{ l.name }}</p>
+      <p class="text-sm font-bold font-mono text-{{ l.color }}-400">{{ l.value }}</p>
+    </div>
+    {% endfor %}
   </div>
 
   <!-- Strategic analysis -->
@@ -35,11 +53,14 @@
   <!-- Charts -->
   <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-5">
     <div id="ch_breakdown" class="bg-slate-900 rounded p-2 h-64"></div>
-    <div id="ch_sectors"   class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_pmi"       class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_claims"    class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_nfci"      class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_curve"     class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_hyoas"     class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_risk"      class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_netliq"    class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_sectors"   class="bg-slate-900 rounded p-2 h-64"></div>
   </div>
 
   <!-- Metric table -->
@@ -138,6 +159,9 @@
   line('ch_curve', C.curve, '10Y-2Y yield curve', 'rgb(13,148,136)', true);
   line('ch_hyoas', C.hyoas, 'HY OAS (credit spread) %', 'rgb(180,83,9)', false);
   line('ch_netliq', C.netliq, 'Net liquidity ($tn)', 'rgb(59,130,246)', false);
+  line('ch_pmi', C.pmi, 'Mfg survey composite (PMI proxy)', 'rgb(34,197,94)', true);
+  line('ch_claims', C.claims, 'Jobless claims (4wk, k) — leading labor', 'rgb(239,68,68)', false);
+  line('ch_nfci', C.nfci, 'Financial conditions (NFCI, + = tight)', 'rgb(168,85,247)', true);
   // validated cycles
   if (C.cycles && C.cycles.recession && C.cycles.recession.chart)
     line('ch_reccurve', C.cycles.recession.chart, '10y-3m curve (recession lead)', 'rgb(13,148,136)', true);
