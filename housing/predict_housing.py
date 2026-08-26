@@ -67,7 +67,11 @@ def build_panel():
         d["metro"] = name
         rows.append(d.reset_index().rename(columns={"index": "date", "DATE": "date"}))
     panel = pd.concat(rows, ignore_index=True)
-    panel = panel.dropna(subset=FEATS + ["target"])
+    # Require valid FEATURES, but KEEP rows whose forward-12m target isn't matured
+    # yet (the most recent ~12 months). Those rows can't be trained on, but they
+    # carry the LATEST features - which is exactly what we forecast the ranking on.
+    # (Dropping them here would leave the ranking a full year stale.)
+    panel = panel.dropna(subset=FEATS)
     panel["date"] = pd.to_datetime(panel["date"])
     return panel.sort_values("date").reset_index(drop=True)
 
@@ -81,11 +85,12 @@ def compute_metro_ranking():
     """Returns {asof, skill:{rank_ic, ic_pos, top_bot}, ranking:[{metro,fwd12,mom12,vs36,vol}]}.
     Walk-forward validated; current ranking from a model trained on all matured data."""
     panel = build_panel()
+    trainable = panel.dropna(subset=["target"])   # only rows with a matured target
     oof = []
     for yr in range(2012, 2026):
         cut = pd.Timestamp(f"{yr}-01-01") - pd.DateOffset(months=HORIZON + 1)
-        tr = panel[panel["date"] <= cut]
-        te = panel[(panel["date"] >= pd.Timestamp(f"{yr}-01-01")) & (panel["date"] < pd.Timestamp(f"{yr+1}-01-01"))]
+        tr = trainable[trainable["date"] <= cut]
+        te = trainable[(trainable["date"] >= pd.Timestamp(f"{yr}-01-01")) & (trainable["date"] < pd.Timestamp(f"{yr+1}-01-01"))]
         if len(tr) < 500 or len(te) < 20:
             continue
         m = _gbm(); m.fit(tr[FEATS], tr["target"])
@@ -98,8 +103,8 @@ def compute_metro_ranking():
     skill = {"rank_ic": round(float(np.mean(ics)), 3), "ic_pos": round(float(np.mean(np.array(ics) > 0)), 2),
              "top_bot": round(float(tb.get("top", 0) - tb.get("bot", 0)), 1), "n": int(len(oof))}
 
-    matured = panel[panel["date"] <= panel["date"].max() - pd.DateOffset(months=HORIZON)]
-    model = _gbm(); model.fit(matured[FEATS], matured["target"])
+    model = _gbm(); model.fit(trainable[FEATS], trainable["target"])
+    # Rank on each metro's LATEST available features (target not matured yet).
     latest = panel.sort_values("date").groupby("metro").tail(1).copy()
     latest["pred"] = model.predict(latest[FEATS])
     latest = latest.sort_values("pred", ascending=False)
