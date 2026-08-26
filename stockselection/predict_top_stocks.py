@@ -1,424 +1,255 @@
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import xgboost as xgb
-from datetime import datetime, timedelta
-from scipy import stats
-import warnings
+"""
+S&P 500 stock-selection ranker.
+
+REWRITTEN 2026-08-25 around the only rule that survived an honest walk-forward
+backtest (backtest_stock_xsection.py / _combo.py / _bufgate.py, 2005-2026):
+
+  Cross-sectional 12-1 momentum (12-month return skipping the last month),
+  hold the TOP QUINTILE equal-weight, GATED to cash when SPY < its 200-DMA.
+
+Full-cycle vs the fair benchmark (equal-weight universe): Sharpe 1.22 vs 0.99,
+maxDD -18.6% vs -47%. The edge is survival/drawdown control (the 200-DMA gate
+avoids the 2008 momentum crash), NOT return alpha - momentum SELECTION alone
+~ties equal-weight; the gate is the driver. Same architecture as the GSS book.
+
+The prior macro-ML model (macro_model_2027.json) was RETIRED: ~all its features
+were market-wide (identical across stocks on a date), so it couldn't discriminate
+cross-sectionally, and it had no holdout / overlapping 1y labels. Kept on disk
+for reference; no longer loaded.
+
+HONEST CAVEATS baked into the reporting: survivorship bias (current-membership
+S&P 500 inflates absolute returns; the relative edge is the trustworthy part),
+10bps costs assumed, exact (not buffered) gate - buffered LOST here because
+momentum's tail is sharp crashes where a lagged exit/entry costs more than the
+whipsaw it saves.
+"""
 import time
+import warnings
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
 
 warnings.filterwarnings('ignore')
 
 # ---------------- CONFIG ----------------
 LOCAL_FILE = "sp500.csv"
-MODEL_NAME = "macro_model_2027.json"
+SECTOR_FILE = "sp500_sectors.csv"
+OUTPUT_CSV = "macro_2027_ranking_enhanced.csv"
 
-MACRO_TICKERS = ['SPY', 'RSP', '^VIX', '^MOVE', 'DX-Y.NYB',
-                 '^IRX', '^TNX', 'HYG', 'LQD']
-
-SECTOR_TICKERS = ['XLK', 'XLF', 'XLI', 'XLY', 'XLE', 'XLV',
-                  'XLP', 'XLU', 'XLB', 'XLRE', 'XLC']
-
-LOOKBACK_3M = 63
-LOOKBACK_1M = 21  # ~1 month for slope/R²
-LOOKBACK_STOP = 50
-ATR_PERIOD = 14
-ATR_MULTIPLIER = 2.5
-BUFFER_DAYS = LOOKBACK_3M * 3
-
-# Entry timing parameters
-RSI_PERIOD = 14
+MOM_LOOKBACK = 252      # 12 months
+MOM_SKIP = 21           # skip last month (12-1 momentum)
+# Concentration: hold the top TOP_N momentum names equal-weight (this is a small
+# ~1%-of-net-worth / $50k RETURN sleeve, so we concentrate for return - drawdown
+# is tolerable at this size). backtest_stock_concentration.py (2005-26, gated):
+# N=20 Sharpe 1.29 / CAGR 26% / maxDD -26% - Sharpe PLATEAUS by N=20, so tighter
+# (N=10) buys +7% CAGR at zero Sharpe gain = pure added risk AND the most
+# survivorship-flattered number. N=20 keeps each name at 5% (one blowup != gutted).
+# Knob: 10 = max return / more blowup+survivorship risk; 30 = more diversified.
+TOP_N = 20
+# Sector cap: at most this many BUYs per GICS sector (backtest_stock_sectorcap.py).
+# Sectors are a cleaner diversification axis than trailing correlation: on the
+# 10-name book the <=3/sector cap edged out naive top-10 (full Sharpe 1.32 vs
+# 1.30, 2020-26 1.22 vs 1.14, lower vol) at trivial CAGR cost, and beat the
+# correlation-constrained pick (1.27). Scaled to TOP_N here (~ceil(N/5)) so no
+# single sector dominates the sleeve. Set to None to disable. (For a tight
+# 10-name book use TOP_N=10, MAX_PER_SECTOR=3.)
+MAX_PER_SECTOR = 4
 DMA_200 = 200
+RSI_PERIOD = 14
+ATR_PERIOD = 14
+BOOK_NOTIONAL = 50_000   # sleeve size (~1% of net worth)
 
-# Performance settings
 BATCH_SIZE = 50
 RETRY_DELAY = 2
 
 
 # ---------------- INDICATORS ----------------
 def calculate_atr(high, low, close, period=14):
-    tr1 = high - low
-    tr2 = abs(high - close.shift(1))
-    tr3 = abs(low - close.shift(1))
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+    tr = pd.concat([high - low, (high - close.shift(1)).abs(),
+                    (low - close.shift(1)).abs()], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
 
 
 def calculate_rsi(close, period=14):
     if len(close) < period + 1:
         return pd.Series([np.nan] * len(close), index=close.index)
     delta = close.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    gain = delta.where(delta > 0, 0).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    return 100 - (100 / (1 + gain / loss))
 
 
 def calculate_slope_r2(close, period=21):
-    """
-    Calculate linear regression slope and R² for the last 'period' days
-    Returns: (slope, r2, p_value)
-    """
+    """1-month log-price OLS slope (%/day) and R^2 - display only."""
     if len(close) < period:
-        return np.nan, np.nan, np.nan
-
-    y = close.tail(period).values
+        return np.nan, np.nan
+    y = np.log(close.tail(period).values.astype(float))
     x = np.arange(len(y))
-
-    if len(y) < 2 or np.all(np.isnan(y)):
-        return np.nan, np.nan, np.nan
-
-    # Remove NaN values
-    mask = ~np.isnan(y)
-    if mask.sum() < 2:
-        return np.nan, np.nan, np.nan
-
-    x_clean = x[mask]
-    y_clean = y[mask]
-
-    # Linear regression
-    slope, intercept, r_value, p_value, std_err = stats.linregress(x_clean, y_clean)
-    r2 = r_value ** 2
-
-    # Normalize slope as percentage change per day
-    slope_pct = (slope / y_clean.mean()) * 100 if y_clean.mean() != 0 else 0
-
-    return slope_pct, r2, p_value
+    m = ~np.isnan(y)
+    if m.sum() < 2:
+        return np.nan, np.nan
+    x, y = x[m], y[m]
+    xc = x - x.mean()
+    slope = float((xc @ (y - y.mean())) / (xc @ xc))
+    yhat = slope * x + (y.mean() - slope * x.mean())
+    sst = float(((y - y.mean()) ** 2).sum())
+    r2 = 1 - float(((y - yhat) ** 2).sum()) / sst if sst > 0 else 0.0
+    return round(slope * 100, 3), round(max(min(r2, 1.0), 0.0), 3)
 
 
-def calculate_rolling_slopes(close, period=21, n_months=6):
-    """
-    Calculate slopes for the last n_months (rolling)
-    Returns list of slopes for zscore calculation
-
-    Default changed to 6 months for more stable Z-score calculation
-    """
-    slopes = []
-
-    # Calculate slope for each of the last n_months
-    for i in range(n_months):
-        start_idx = -(period * (i + 1))
-        end_idx = -(period * i) if i > 0 else None
-
-        window = close.iloc[start_idx:end_idx]
-        if len(window) < period:
-            continue
-
-        slope, _, _ = calculate_slope_r2(window, period=period)
-        if not np.isnan(slope):
-            slopes.append(slope)
-
-    return slopes
-
-
-def calculate_zscore(value, historical_values):
-    """Calculate zscore of current value vs historical values"""
-    if len(historical_values) < 2:
+def momentum_12_1(close):
+    """12-1 momentum: return from t-252 to t-21 (skip last month)."""
+    if len(close) < MOM_LOOKBACK + 1:
         return np.nan
-
-    mean = np.mean(historical_values)
-    std = np.std(historical_values, ddof=1)
-
-    if std == 0:
+    p_now = close.iloc[-1 - MOM_SKIP]
+    p_then = close.iloc[-MOM_LOOKBACK]
+    if not (np.isfinite(p_now) and np.isfinite(p_then)) or p_then <= 0:
         return np.nan
-
-    return (value - mean) / std
-
-
-# ---------------- SIGNAL LOGIC ----------------
-def evaluate_signal(stock_data, prob):
-    """
-    Enhanced trading signal with slope/R² analysis:
-    - BUY: probability > 50% AND RSI < 70 AND slope_3m > 0 AND R² > 0.4
-    - TRIM: slope zscore > 2.5 (momentum overextension - uses 6-month lookback)
-    - SELL: price < 50-day high - 2.5*ATR OR < 200-day SMA
-    - HOLD: everything else
-    """
-    close = stock_data['Close']
-    high = stock_data['High']
-    low = stock_data['Low']
-    current_price = close.iloc[-1]
-
-    # Basic indicators
-    rsi = calculate_rsi(close, RSI_PERIOD).iloc[-1]
-    atr = calculate_atr(high, low, close, ATR_PERIOD).iloc[-1]
-    max_high_50d = high.tail(LOOKBACK_STOP).max()
-    sma_200 = close.rolling(DMA_200).mean().iloc[-1]
-
-    # Slope and R² analysis (1 month)
-    slope_1m, r2_1m, p_value = calculate_slope_r2(close, period=LOOKBACK_1M)
-
-    # Calculate last 6 months of slopes for zscore (more stable)
-    historical_slopes = calculate_rolling_slopes(close, period=LOOKBACK_1M, n_months=6)
-
-    # Current slope zscore
-    slope_zscore = np.nan
-    if not np.isnan(slope_1m) and len(historical_slopes) >= 3:  # Need at least 3 months
-        slope_zscore = calculate_zscore(slope_1m, historical_slopes)
-
-    # Average slope over last 3 months (for trend direction)
-    slope_3m_avg = np.mean(historical_slopes[:3]) if len(historical_slopes) >= 3 else np.nan
-
-    # Handle missing SMA
-    sma_200_check = False
-    if not pd.isna(sma_200):
-        sma_200_check = current_price < sma_200
-
-    # SIGNAL LOGIC
-    signal = "HOLD"
-
-    # TRIM: Momentum overextension (increased threshold to 2.5)
-    if not np.isnan(slope_zscore) and slope_zscore > 2.5:
-        signal = "TRIM"
-
-    # SELL: Stop loss or trend break
-    elif current_price < (max_high_50d - ATR_MULTIPLIER * atr) or sma_200_check:
-        signal = "SELL"
-
-    # BUY: Model signal + momentum confirmation
-    elif (prob > 0.5 and
-          rsi < 70 and
-          not np.isnan(slope_3m_avg) and slope_3m_avg > 0 and
-          not np.isnan(r2_1m) and r2_1m > 0.4):
-        signal = "BUY"
-
-    return {
-        'RSI': rsi,
-        'ATR': atr,
-        'Max_High_50D': max_high_50d,
-        'SMA_200': sma_200,
-        'Slope_1M': slope_1m,
-        'R2_1M': r2_1m,
-        'Slope_3M_Avg': slope_3m_avg,
-        'Slope_ZScore': slope_zscore,
-        'Signal': signal
-    }
+    return float(p_now / p_then - 1.0)
 
 
-# ---------------- DATA DOWNLOAD ----------------
+# ---------------- DATA ----------------
 def download_stocks_batch(tickers, start, end, batch_size=50):
-    """Download stocks in batches with retries."""
     all_results = []
-    total_batches = (len(tickers) + batch_size - 1) // batch_size
-
+    total = (len(tickers) + batch_size - 1) // batch_size
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
-        batch_num = (i // batch_size) + 1
-        print(f"📦 Downloading batch {batch_num}/{total_batches}...")
-
-        for attempt in range(3):
+        print(f"📦 batch {(i // batch_size) + 1}/{total} ...")
+        for _ in range(3):
             try:
                 if i > 0:
                     time.sleep(RETRY_DELAY)
-
-                data = yf.download(batch, start=start, end=end,
-                                   auto_adjust=True, progress=False,
-                                   group_by='ticker', threads=True)
-
-                for ticker in batch:
+                data = yf.download(batch, start=start, end=end, auto_adjust=True,
+                                   progress=False, group_by='ticker', threads=True)
+                for t in batch:
                     try:
-                        stock_data = data[ticker] if len(batch) > 1 else data
-                        if stock_data.empty:
-                            print(f"⚠️ Skipping {ticker}: no data")
-                            continue
-                        all_results.append({'ticker': ticker, 'data': stock_data})
-                    except Exception as e:
-                        print(f"⚠️ Error processing {ticker}: {str(e)[:50]}")
+                        sd = data[t] if len(batch) > 1 else data
+                        if not sd.empty:
+                            all_results.append({'ticker': t, 'data': sd})
+                    except Exception:
                         continue
-
                 break
             except Exception as e:
-                print(f"⚠️ Batch download error: {str(e)[:50]}, retrying...")
-                time.sleep(RETRY_DELAY)
-
+                print(f"   retry ({str(e)[:40]})"); time.sleep(RETRY_DELAY)
     return all_results
 
 
-def load_company_names_from_csv():
+def load_company_names():
     try:
         df = pd.read_csv(LOCAL_FILE)
         return dict(zip(df['Symbol'], df['Company']))
-    except Exception as e:
-        print(f"⚠️ Could not load names from CSV: {e}")
+    except Exception:
         return {}
 
 
-# --- ADD THIS TO YOUR LOGIC ---
-def get_kelly_size(row):
-    if row['Signal'] != 'BUY':
-        return 0.0
-
-    p = row['Prob']
-    q = 1 - p
-
-    # Calculate 'b' (Reward/Risk)
-    # Reward: Expected move over 21 days based on Slope
-    projected_reward = row['Slope_1M'] * 21
-    # Risk: The % distance to your ATR stop
-    stop_distance_pct = (row['ATR'] * 2.5 / row['Current_Price']) * 100
-
-    if stop_distance_pct <= 0: return 0
-
-    b = projected_reward / stop_distance_pct
-
-    # Standard Kelly Formula
-    if b <= 0: return 0
-    kelly_f = p - (q / b)
-
-    # Apply Quarter-Kelly and 10% cap for "Senior Strategist" safety
-    return round(max(0, min(kelly_f / 4, 0.10))*100000, 2)
-
-
-# ---------------- INFERENCE PIPELINE ----------------
-def infer_today(top_n=25, avoid_n=25):
-    print("🚀 Starting inference pipeline with slope/R² analysis...")
-
-    # Load model
+def load_sectors():
+    """Ticker -> GICS sector (cached CSV). Missing names get their own ticker as
+    'sector' so they're never capped away."""
     try:
-        model = xgb.XGBClassifier()
-        model.load_model(MODEL_NAME)
-        print(f"✅ Model loaded: {MODEL_NAME}")
-    except FileNotFoundError:
-        raise FileNotFoundError(f"❌ Model file '{MODEL_NAME}' not found!")
+        df = pd.read_csv(SECTOR_FILE)
+        return dict(zip(df['Symbol'], df['Sector']))
+    except Exception:
+        return {}
 
-    # Date range - need more history for slope calculations
-    # Request ~500 calendar days to ensure we get 252+ trading days (1 year)
+
+# ---------------- INFERENCE ----------------
+def infer_today(top_n=25):
+    print("🚀 Momentum(12-1) + SPY-200DMA gate ranker\n")
     end = datetime.now()
-    start = end - timedelta(days=500)
-    print(f"📅 Date range: {start.date()} to {end.date()}")
+    start = end - timedelta(days=650)          # ~450 trading days > 273 needed
+    print(f"📅 {start.date()} → {end.date()}")
 
-    # Macro & sector data
-    print("📊 Downloading macro & sector data...")
-    ms = yf.download(MACRO_TICKERS + SECTOR_TICKERS,
-                     start=start, end=end,
-                     auto_adjust=True, progress=False)['Close']
+    # SPY 200-DMA gate (exact threshold - buffered lost in backtest)
+    spy = yf.download("SPY", start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    spy = pd.Series(np.asarray(spy).ravel(), index=spy.index)
+    spy_200 = spy.rolling(DMA_200).mean()
+    gate_risk_off = bool(spy.iloc[-1] < spy_200.iloc[-1]) if np.isfinite(spy_200.iloc[-1]) else False
+    gate_txt = "RISK-OFF (SPY<200DMA → book to CASH)" if gate_risk_off else "RISK-ON (SPY>200DMA)"
+    print(f"🚦 Gate: {gate_txt}   SPY {spy.iloc[-1]:.2f} vs 200DMA {spy_200.iloc[-1]:.2f}\n")
 
-    m = pd.DataFrame(index=ms.index)
-    m['Curve_Inversion'] = ms['^IRX'] - ms['^TNX']
-    m['Bond_Stress'] = ms['^MOVE']
-    m['Liquidity'] = ms['HYG'] / ms['LQD']
-    m['Concentration'] = ms['SPY'] / ms['RSP']
-    for s in SECTOR_TICKERS:
-        m[f'{s}_3M'] = ms[s].pct_change(LOOKBACK_3M, fill_method=None)
-    m = m.shift(1).dropna()
-    macro_latest = m.iloc[-1].astype(float)
-    print("✅ Macro features computed")
-
-    # Stock data
-    print("📈 Downloading stock data...")
-    symbols_df = pd.read_csv(LOCAL_FILE)
-    symbols = symbols_df['Symbol'].tolist()
-    ticker_to_name = load_company_names_from_csv()
-    stock_results = download_stocks_batch(symbols, start, end, batch_size=BATCH_SIZE)
-    print(f"✅ Downloaded {len(stock_results)}/{len(symbols)} stocks")
-
-    # Build dataframe
-    feats = ['Curve_Inversion', 'Bond_Stress', 'Liquidity',
-             'Concentration', 'Stock_Mom_3M'] + [f'{s}_3M' for s in SECTOR_TICKERS]
+    names = load_company_names()
+    sectors = load_sectors()
+    symbols = pd.read_csv(LOCAL_FILE)['Symbol'].tolist()
+    results = download_stocks_batch(symbols, start, end, BATCH_SIZE)
+    print(f"✅ {len(results)}/{len(symbols)} stocks\n")
 
     rows = []
-    for result in stock_results:
-        ticker = result['ticker']
-        data = result['data']
-
-        # Minimum data check - need 6 months for slope zscore analysis
-        min_len = max(LOOKBACK_3M, ATR_PERIOD, LOOKBACK_STOP, LOOKBACK_1M * 6)
-        if len(data) < min_len:
-            print(f"⚠️ Skipping {ticker}: not enough data ({len(data)} rows)")
+    for r in results:
+        t, data = r['ticker'], r['data']
+        if 'Close' not in data or len(data) < MOM_LOOKBACK + 1:
             continue
-
-        # Stock momentum
-        mom_3m = data['Close'].pct_change(LOOKBACK_3M, fill_method=None).iloc[-1]
-        if pd.isna(mom_3m):
-            print(f"⚠️ Skipping {ticker}: 3M momentum is NaN")
+        close = data['Close']
+        mom = momentum_12_1(close)
+        if not np.isfinite(mom):
             continue
-
-        macro_features = macro_latest.copy()
-        macro_features['Stock_Mom_3M'] = mom_3m
-
-        X = pd.DataFrame([macro_features])
-        X = X[feats].apply(pd.to_numeric, errors='coerce')
-        if X.isna().any().any():
-            print(f"⚠️ Skipping {ticker}: features contain NaN")
-            continue
-
-        # Model probability
-        prob = model.predict_proba(X)[:, 1][0]
-
-        # Evaluate enhanced signal
-        sig = evaluate_signal(data, prob)
-
-        row = macro_features.copy()
-        row['Ticker'] = ticker
-        row['Name'] = ticker_to_name.get(ticker, ticker)
-        row['Current_Price'] = data['Close'].iloc[-1]
-        row['RSI'] = sig['RSI']
-        row['ATR'] = sig['ATR']
-        row['SMA_200'] = sig['SMA_200']
-        row['Slope_1M'] = sig['Slope_1M']
-        row['R2_1M'] = sig['R2_1M']
-        row['Slope_3M_Avg'] = sig['Slope_3M_Avg']
-        row['Slope_ZScore'] = sig['Slope_ZScore']
-        row['Signal'] = sig['Signal']
-        row['Prob'] = prob
-        rows.append(row)
+        sma200 = close.rolling(DMA_200).mean().iloc[-1]
+        slope1m, r2_1m = calculate_slope_r2(close, 21)
+        rows.append({
+            'Ticker': t, 'Name': names.get(t, t),
+            'Mom_12_1': round(mom, 4),
+            'Current_Price': round(float(close.iloc[-1]), 2),
+            'SMA_200': round(float(sma200), 2) if np.isfinite(sma200) else np.nan,
+            'RSI': round(float(calculate_rsi(close, RSI_PERIOD).iloc[-1]), 1),
+            'ATR': round(float(calculate_atr(data['High'], data['Low'], close, ATR_PERIOD).iloc[-1]), 2),
+            'Slope_1M': slope1m, 'R2_1M': r2_1m,
+        })
 
     df = pd.DataFrame(rows)
-
     if df.empty:
-        print("❌ No valid stocks to process. Check CSV and data availability.")
-        return df
+        print("❌ no valid stocks"); return df
+
+    # Cross-sectional momentum rank (percentile) -> repurposes 'Prob' for
+    # downstream compatibility. BUY = the TOP_N momentum names (matches the
+    # validated top-N rule); the SPY-200DMA gate handles crash protection.
+    df['Prob'] = df['Mom_12_1'].rank(pct=True).round(3)
+    df['Sector'] = df['Ticker'].map(lambda t: sectors.get(t, t))
+    df = df.sort_values('Mom_12_1', ascending=False).reset_index(drop=True)
+
+    # Momentum-ranked walk, admitting a name only if its sector is under the cap.
+    buy_set, _sec_cnt = set(), {}
+    if not gate_risk_off:
+        for _, r in df.iterrows():
+            s = r['Sector']
+            if MAX_PER_SECTOR is None or _sec_cnt.get(s, 0) < MAX_PER_SECTOR:
+                buy_set.add(r['Ticker']); _sec_cnt[s] = _sec_cnt.get(s, 0) + 1
+            if len(buy_set) == TOP_N:
+                break
+
+    def signal(row):
+        if gate_risk_off:
+            return "GATE-CASH"                       # market gate overrides all
+        if row['Ticker'] in buy_set:
+            return "BUY"                             # top-N momentum
+        return "HOLD"
+
+    df['Signal'] = df.apply(signal, axis=1)
+    n_buy = int((df['Signal'] == "BUY").sum())
+    per_name = (1.0 / n_buy) if n_buy else 0.0       # equal-weight the top-N
+    df['Size_Allocation'] = np.where(df['Signal'] == "BUY",
+                                     round(per_name * BOOK_NOTIONAL, 2), 0.0)
 
     df = df.sort_values('Prob', ascending=False)
-    df['Prob'] = df['Prob'].round(3)
-    df['Current_Price'] = df['Current_Price'].round(2)
-    df['RSI'] = df['RSI'].round(1)
-    df['ATR'] = df['ATR'].round(2)
-    df['SMA_200'] = df['SMA_200'].round(2)
-    df['Slope_1M'] = df['Slope_1M'].round(3)
-    df['R2_1M'] = df['R2_1M'].round(3)
-    df['Slope_3M_Avg'] = df['Slope_3M_Avg'].round(3)
-    df['Slope_ZScore'] = df['Slope_ZScore'].round(2)
-    df['Size_Allocation'] = df.apply(get_kelly_size, axis=1)
+    out_cols = ['Ticker', 'Name', 'Sector', 'Prob', 'Mom_12_1', 'Signal', 'Slope_1M',
+                'R2_1M', 'RSI', 'Current_Price', 'Size_Allocation', 'ATR', 'SMA_200']
+    df['Gate'] = gate_txt
 
-    output_cols = ['Ticker', 'Name', 'Prob', 'Signal', 'Slope_1M', 'R2_1M',
-                   'Slope_3M_Avg', 'Slope_ZScore', 'RSI', 'Current_Price', "Size_Allocation"]
+    print("=" * 120)
+    print(f"TOP MOMENTUM (12-1) HOLDS   [{gate_txt}]")
+    print("=" * 120)
+    print(df[out_cols].head(top_n).to_string(index=False))
 
-    print("\n" + "=" * 140)
-    print("TOP STRATEGIC HOLDS (Enhanced with Slope/R² Analysis)")
-    print("=" * 140)
-    print(df[output_cols].head(top_n).to_string(index=False))
+    df[out_cols + ['Gate']].to_csv(OUTPUT_CSV, index=False)
+    print(f"\n✅ saved → {OUTPUT_CSV}")
 
-    # Save CSV
-    all_output_cols = output_cols + ['ATR', 'SMA_200']
-    df[all_output_cols].to_csv('macro_2027_ranking_enhanced.csv', index=False)
-    print(f"\n✅ Ranking CSV saved → macro_2027_ranking_enhanced.csv")
-
-    # Signal summary
-    total_buy = len(df[df['Signal'] == 'BUY'])
-    total_hold = len(df[df['Signal'] == 'HOLD'])
-    total_sell = len(df[df['Signal'] == 'SELL'])
-    total_trim = len(df[df['Signal'] == 'TRIM'])
-
-    print(f"\n📊 Trading Signal Summary:")
-    print(f"   • Total stocks analyzed: {len(df)}")
-    print(f"   • 🟢 BUY: {total_buy} ({total_buy / len(df) * 100:.1f}%)")
-    print(f"   • 🟡 HOLD: {total_hold} ({total_hold / len(df) * 100:.1f}%)")
-    print(f"   • 🟠 TRIM: {total_trim} ({total_trim / len(df) * 100:.1f}%)")
-    print(f"   • 🔴 SELL: {total_sell} ({total_sell / len(df) * 100:.1f}%)")
-
-    # Additional insights
-    print(f"\n📈 Momentum Insights:")
-    buy_stocks = df[df['Signal'] == 'BUY']
-    if len(buy_stocks) > 0:
-        print(f"   • BUY stocks avg R²: {buy_stocks['R2_1M'].mean():.3f}")
-        print(f"   • BUY stocks avg 3M slope: {buy_stocks['Slope_3M_Avg'].mean():.3f}%")
-
-    trim_stocks = df[df['Signal'] == 'TRIM']
-    if len(trim_stocks) > 0:
-        print(f"   • TRIM stocks avg zscore: {trim_stocks['Slope_ZScore'].mean():.2f}")
-        print(f"   • TRIM stocks (overextended momentum): {list(trim_stocks['Ticker'].head(5))}")
-
+    print(f"\n📊 {len(df)} ranked | BUY {n_buy} (top-{TOP_N}, <={MAX_PER_SECTOR}/sector) | "
+          f"HOLD {(df['Signal']=='HOLD').sum()} | "
+          f"{'ALL CASH (gate risk-off)' if gate_risk_off else 'gate risk-on'}")
+    if n_buy:
+        mix = df[df['Signal'] == 'BUY']['Sector'].value_counts().to_dict()
+        print(f"   equal-weight {per_name:.1%} each (${per_name*BOOK_NOTIONAL:,.0f} on ${BOOK_NOTIONAL:,})")
+        print(f"   sector mix: {mix}")
     return df
 
 
