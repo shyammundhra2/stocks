@@ -40,22 +40,19 @@ OUTPUT_CSV = "macro_2027_ranking_enhanced.csv"
 
 MOM_LOOKBACK = 252      # 12 months
 MOM_SKIP = 21           # skip last month (12-1 momentum)
-# Concentration: hold the top TOP_N momentum names equal-weight (this is a small
-# ~1%-of-net-worth / $50k RETURN sleeve, so we concentrate for return - drawdown
-# is tolerable at this size). backtest_stock_concentration.py (2005-26, gated):
-# N=20 Sharpe 1.29 / CAGR 26% / maxDD -26% - Sharpe PLATEAUS by N=20, so tighter
-# (N=10) buys +7% CAGR at zero Sharpe gain = pure added risk AND the most
-# survivorship-flattered number. N=20 keeps each name at 5% (one blowup != gutted).
-# Knob: 10 = max return / more blowup+survivorship risk; 30 = more diversified.
-TOP_N = 20
+# Concentration: hold the top TOP_N momentum names equal-weight. This is a small
+# ~1%-of-net-worth / $50k RETURN sleeve, so we concentrate for CAGR (drawdown is
+# tolerable at this size). backtest_stock_concentration.py (2005-26, gated):
+# top-10 CAGR ~31% vs top-20 ~26% - concentration is the CAGR lever; top-10 at
+# 10% ($5k) per name is the return choice. Knob: 20 = smoother/lower CAGR.
+TOP_N = 10
 # Sector cap: at most this many BUYs per GICS sector (backtest_stock_sectorcap.py).
-# Sectors are a cleaner diversification axis than trailing correlation: on the
-# 10-name book the <=3/sector cap edged out naive top-10 (full Sharpe 1.32 vs
-# 1.30, 2020-26 1.22 vs 1.14, lower vol) at trivial CAGR cost, and beat the
-# correlation-constrained pick (1.27). Scaled to TOP_N here (~ceil(N/5)) so no
-# single sector dominates the sleeve. Set to None to disable. (For a tight
-# 10-name book use TOP_N=10, MAX_PER_SECTOR=3.)
-MAX_PER_SECTOR = 4
+# CRITICAL at N=10: the naive top-10 is currently ~9/10 Information Technology - a
+# single-sector bet in disguise. The <=3/sector cap spreads it across ~5 sectors
+# for only ~1% CAGR (31.3->30.3%) AND lifts Sharpe (1.30->1.32, 2020-26 1.22 vs
+# 1.14). Sectors beat trailing-correlation diversification (1.32 vs 1.27). Cheap
+# insurance against single-theme wipeout - the whole risk of a concentrated book.
+MAX_PER_SECTOR = 3
 DMA_200 = 200
 RSI_PERIOD = 14
 ATR_PERIOD = 14
