@@ -133,31 +133,35 @@ def _build(cur, wk, mo):
     if conf is not None:
         head += f" (confidence {conf:.0f}%" + (f", RoRo {roro:.0f})" if roro is not None else ")")
 
+    def flag(text, sent):
+        return {"text": text, "sentiment": sent}
+
     flags, matters = [], []
-    # regime flip vs a week ago = headline change
+    # regime flip vs a week ago = headline change (to RISK-ON = bull, else bear)
     if wk and wk["reads"].get("Regime") and wk["reads"]["Regime"] != read.get("Regime"):
-        matters.append(f"Regime FLIPPED {wk['reads']['Regime']} → {read.get('Regime')} this week.")
-    # read/tag changes vs a week ago
+        matters.append(flag(f"Regime FLIPPED {wk['reads']['Regime']} → {read.get('Regime')} this week.",
+                            "bull" if read.get("Regime") == "RISK-ON" else "bear"))
+    # read/tag changes vs a week ago (informational -> neutral)
     if wk:
         for k, tag in read.items():
             bt = wk["reads"].get(k)
             if bt and bt != tag:
-                flags.append(f"{k}: “{bt}” → “{tag}”")
+                flags.append(flag(f"{k}: “{bt}” → “{tag}”", "neutral"))
     # current extreme flags (from the read tags we already compute)
     hy = read.get("HY OAS (norm 4.5)", "")
     if "Tight" in hy:
-        flags.append("Credit TIGHT vs norm — complacent, risk building (cheap tail-hedge window).")
+        flags.append(flag("Credit TIGHT vs norm — complacent, risk building (cheap tail-hedge window).", "bear"))
     elif "Wide" in hy or "Blown" in hy:
-        flags.append("Credit WIDE — stress priced; equity historically cheap ahead.")
+        flags.append(flag("Credit WIDE — stress priced; equity historically cheap ahead (contrarian).", "bull"))
     imp = sig.get("Implied fwd-12m HPA")
     if imp is not None and imp < 0:
-        flags.append(f"Housing: {read.get('Housing','elevated supply')} → implied {imp:+.1f}% forward HPA (softening).")
+        flags.append(flag(f"Housing: {read.get('Housing','elevated supply')} → implied {imp:+.1f}% forward HPA (softening).", "bear"))
     if "Inverted" in read.get("10Y-2Y Spread", ""):
-        flags.append("Yield curve INVERTED — recession risk elevated (slow signal).")
+        flags.append(flag("Yield curve INVERTED — recession risk elevated (slow signal).", "bear"))
 
     matters += flags[:3]
     if not matters:
-        matters = ["No material changes or threshold crossings this period."]
+        matters = [flag("No material changes or threshold crossings this period.", "neutral")]
     return {"headline": head,
             "changed_week": _changes(cur, wk), "changed_month": _changes(cur, mo),
             "flags": flags, "matters": matters[:3]}
@@ -193,5 +197,5 @@ if __name__ == "__main__":
     print(f"MACRO DIGEST — {d['date']}\n{d['headline']}\n")
     print(f"Changes vs 1 week ({d['week_date']}):");  [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_week"]] or print("  (building history)")
     print(f"\nChanges vs 1 month ({d['month_date']}):"); [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_month"]] or print("  (building history)")
-    print("\nFlags:"); [print("  •", f) for f in d["flags"]] or print("  (none)")
-    print("\nWhat matters:"); [print(f"  {i}. {m}") for i, m in enumerate(d["matters"], 1)]
+    print("\nFlags:"); [print(f"  • [{f['sentiment']:7s}] {f['text']}") for f in d["flags"]] or print("  (none)")
+    print("\nWhat matters:"); [print(f"  {i}. [{m['sentiment']:7s}] {m['text']}") for i, m in enumerate(d["matters"], 1)]
