@@ -84,11 +84,9 @@ TREND_ASSETS = {
     "FDN": "Internet",
     "SIL": "Silver Miners",
     "XOP": "Oil & Gas E&P",
-    "REMX": "Rare Earth/Strategic Metals",
 
     # Commodities & Real Assets
     "GLD": "Gold",
-    "SLV": "Silver",
     "XME": "Metals",
     "DBC": "Commodities",
     "MOO": "Agri",
@@ -109,7 +107,6 @@ TREND_ASSETS = {
     #  were dropped 2026-08-25 - LIT reduces full-deploy CAGR, GNR is noise.)
 
     # International Equities
-    "INDA": "India",
     "EWY": "Korea",
     "EWJ": "Japan",
     "EWZ": "Brazil",
@@ -139,14 +136,14 @@ TREND_ASSETS = {
 # rather than delete them we cap their allocation to THROTTLE_FACTOR x the
 # optimizer's weight; the freed capital simply falls to cash. EWY is left at full
 # weight (Samsung = semiconductor supply chain, on-thesis, not display-only).
-THROTTLED_ASSETS = {"EWZ", "INDA", "EWJ", "IEV", "TLT"}
+THROTTLED_ASSETS = {"EWZ", "EWJ", "IEV", "TLT"}
 THROTTLE_FACTOR = 0.30
 
 # Names NOT zeroed by the risk-off equity gate (backtest_gss_eqgate 2007-26:
 # gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's
 # best positions while equities collapsed). They still need their own >200DMA
 # trend to be bought; the gate only spares them from the SPY-based shutoff.
-DEFENSIVE_ASSETS = {"GLD", "SLV", "DBC", "TLT", "DBMF"}
+DEFENSIVE_ASSETS = {"GLD", "DBC", "TLT", "DBMF"}
 
 # --- ML Macro Tickers ---
 ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
