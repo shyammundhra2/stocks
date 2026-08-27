@@ -126,6 +126,23 @@ def _changes(cur, base, n=6):
     return [t for _r, t in out[:n]]
 
 
+def _change_summary(changes, flag):
+    """One-line net-direction read of this week's moves (the thing static flags
+    miss). Distinct from the raw flag list, so 'what matters' isn't a re-list."""
+    if not changes:
+        return None
+    bull = sum(1 for c in changes if c["sentiment"] == "bull")
+    bear = sum(1 for c in changes if c["sentiment"] == "bear")
+    if bull == 0 and bear == 0:
+        return None
+    top = changes[0]["text"].split(":")[0]
+    if bull > bear:
+        return flag(f"Risk conditions EASED this week ({bull} bullish vs {bear} bearish moves; e.g. {top}).", "bull")
+    if bear > bull:
+        return flag(f"Risk conditions DETERIORATED this week ({bear} bearish vs {bull} bullish moves; e.g. {top}).", "bear")
+    return flag(f"Mixed week ({bull} bullish, {bear} bearish moves).", "warn")
+
+
 def _build(cur, wk, mo):
     sig, read = cur["signals"], cur["reads"]
     conf, roro = sig.get("Regime confidence"), sig.get("RoRo")
@@ -136,8 +153,11 @@ def _build(cur, wk, mo):
     def flag(text, sent):
         return {"text": text, "sentiment": sent}
 
+    changed_week = _changes(cur, wk)
+    changed_month = _changes(cur, mo)
+
     flags, matters = [], []
-    # regime flip vs a week ago = headline change (to RISK-ON = bull, else bear)
+    # regime flip vs a week ago = top-priority change (to RISK-ON = bull, else bear)
     if wk and wk["reads"].get("Regime") and wk["reads"]["Regime"] != read.get("Regime"):
         matters.append(flag(f"Regime FLIPPED {wk['reads']['Regime']} → {read.get('Regime')} this week.",
                             "bull" if read.get("Regime") == "RISK-ON" else "bear"))
@@ -163,12 +183,18 @@ def _build(cur, wk, mo):
     if "Inverted" in read.get("10Y-2Y Spread", ""):
         flags.append(flag("Yield curve INVERTED — recession risk elevated (slow signal).", "bear"))
 
-    matters += flags[:3]
+    # ONE synthesis (no separate flags box - that was the redundancy): the
+    # change-story (what moved, which flags miss) + the regime flip + the
+    # standing threshold flags. These together ARE "what matters".
+    cs = _change_summary(changed_week, flag)
+    if cs:
+        matters.append(cs)
+    matters += flags
     if not matters:
         matters = [flag("No material changes or threshold crossings this period.", "neutral")]
     return {"headline": head,
-            "changed_week": _changes(cur, wk), "changed_month": _changes(cur, mo),
-            "flags": flags, "matters": matters[:3]}
+            "changed_week": changed_week, "changed_month": changed_month,
+            "matters": matters[:6]}
 
 
 def get_digest():
@@ -201,5 +227,4 @@ if __name__ == "__main__":
     print(f"MACRO DIGEST — {d['date']}\n{d['headline']}\n")
     print(f"Changes vs 1 week ({d['week_date']}):");  [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_week"]] or print("  (building history)")
     print(f"\nChanges vs 1 month ({d['month_date']}):"); [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_month"]] or print("  (building history)")
-    print("\nFlags:"); [print(f"  • [{f['sentiment']:7s}] {f['text']}") for f in d["flags"]] or print("  (none)")
     print("\nWhat matters:"); [print(f"  {i}. [{m['sentiment']:7s}] {m['text']}") for i, m in enumerate(d["matters"], 1)]

@@ -17,9 +17,9 @@
     <p class="text-xl font-black text-white">{{ d.headline }}</p>
   </div>
 
-  <!-- what matters -->
+  <!-- what matters (change-story synthesis + standing threshold flags) -->
   <div class="bg-gradient-to-br from-teal-900/30 to-slate-900 rounded-lg p-4 mb-4 border border-teal-500/30">
-    <p class="text-[10px] uppercase tracking-widest text-teal-400 mb-2">What matters</p>
+    <p class="text-[10px] uppercase tracking-widest text-teal-400 mb-2">What matters &amp; flags</p>
     <ol class="space-y-1.5 text-sm">
       {% for m in d.matters %}
       <li class="flex gap-2"><span class="text-teal-400 font-bold">{{ loop.index }}.</span><span class="{{ 'text-green-400' if m.sentiment=='bull' else 'text-red-400' if m.sentiment=='bear' else 'text-yellow-400' if m.sentiment=='warn' else 'text-slate-200' }}">{{ m.text }}</span></li>
@@ -43,13 +43,6 @@
       {% else %}<p class="text-xs text-slate-600 italic">building history</p>{% endif %}
     </div>
   </div>
-
-  {% if d.flags %}
-  <div class="bg-slate-900 rounded-lg p-4 border border-slate-800">
-    <p class="text-[10px] uppercase tracking-widest text-orange-400 mb-2">Flags / thresholds crossed</p>
-    <ul class="space-y-1.5 text-sm">{% for f in d.flags %}<li class="flex gap-2 {{ 'text-green-400' if f.sentiment=='bull' else 'text-red-400' if f.sentiment=='bear' else 'text-yellow-400' if f.sentiment=='warn' else 'text-slate-200' }}"><span>•</span><span>{{ f.text }}</span></li>{% endfor %}</ul>
-  </div>
-  {% endif %}
 
   <p class="text-[10px] text-slate-600 mt-5">Signals snapshotted ~daily; deltas use the nearest snapshot to 7 &amp; 30 days ago. Deterministic — zero hallucination. As of {{ rendered_at }}.</p>
 
