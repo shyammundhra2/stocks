@@ -85,6 +85,12 @@ TREND_ASSETS = {
     "DBC": "Commodities",
     "MOO": "Agri",
     "FCG": "FCG Natural Gas Stocks",
+    # MLPX: midstream energy / MLPs - fills the pipeline/infrastructure gap
+    # (book had upstream XOP/FCG but no midstream). Low corr (~0.4 to semis, ~0.35
+    # to broad market) = genuine diversification for the concentrated commodity+
+    # semi book. Global X ETF, history to 2013. (CPER/copper skipped - COPX+SLV
+    # already proxy metals per user.)
+    "MLPX": "Midstream Energy (MLP)",
     "COAL": "Coal Stocks",
     "URNM": "Uranium Stocks",
     "COPX": "Copper Stocks",
