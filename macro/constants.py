@@ -111,6 +111,15 @@ TREND_ASSETS = {
     "TLT": "30yr Bond",
     "IBIT": "Bitcoin",
 
+    # Diversifier / crisis hedge: managed futures (trend-following, uncorrelated
+    # -0.04 to the book). Validated overlay 2019-26 (dbmf_overlay.py): adds Sharpe
+    # 1.22->1.41 @15%, shallows maxDD -8.1%->-6.9%, helps BOTH 2020 & 2022.
+    # Momentum-timed here (held when trending, dropped in chop) - captures the
+    # crisis-alpha AND sidesteps managed-futures' flat-period bleed (2011-19).
+    # In DEFENSIVE_ASSETS (below) so the risk-off gate/throttle don't shrink it
+    # when it's most needed. Caveat: short live history (2019+), best-run sample.
+    "DBMF": "Managed Futures",
+
     # Single Stocks
     "RKT": "Rocket",
 }
@@ -129,7 +138,7 @@ THROTTLE_FACTOR = 0.30
 # gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's
 # best positions while equities collapsed). They still need their own >200DMA
 # trend to be bought; the gate only spares them from the SPY-based shutoff.
-DEFENSIVE_ASSETS = {"GLD", "SLV", "DBC", "TLT"}
+DEFENSIVE_ASSETS = {"GLD", "SLV", "DBC", "TLT", "DBMF"}
 
 # --- ML Macro Tickers ---
 ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
