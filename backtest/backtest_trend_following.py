@@ -48,6 +48,7 @@ from macro.indicators import (
     _stop_hit_probability, _compute_kelly_size, _kelly_covariance_optimizer,
     get_regime_scalar,
 )
+from macro.indicators.mathstats import _efficiency_ratio
 
 try:
     from numpy.lib.stride_tricks import sliding_window_view
@@ -147,6 +148,23 @@ def compute_asset_row(sym, df):
     s200 = float(ma_200.iloc[-1])
     rsi14 = float(compute_RSI(c, 14).iloc[-1])
     hurst = _hurst_exponent(c, max_lag=40)
+
+    # Adaptive ER router - the optimizer SELECTS on adaptive_signal (MOM/REV);
+    # without it every name is filtered to FLAT and the book stays 100% cash.
+    # Mirrors get_trends() exactly, except: (1) the REV branch omits the iso-
+    # conviction-curve refinement (minor sleeve; slightly LOOSER REV), and
+    # (2) no market-wide risk-off equity gate here (so this is a CONSERVATIVE /
+    # lower-bound estimate of the defense - production gates equities to cash in
+    # risk-off, which this doesn't).
+    rsi2 = float(compute_RSI(c, 2).iloc[-1])
+    eff_ratio = _efficiency_ratio(c, 20)
+    _above200 = last > s200
+    if eff_ratio >= 0.40:
+        adaptive_signal = "MOM" if (_above200 and last > s50 and slope > 0) else "FLAT"
+    elif eff_ratio <= 0.35:
+        adaptive_signal = "REV" if (_above200 and rsi2 < 15) else "FLAT"
+    else:
+        adaptive_signal = "FLAT"
     slope_z = slope_z_for(c, slope)
     delta_slope = _compute_delta_slope(c, window=20)
 
@@ -208,6 +226,7 @@ def compute_asset_row(sym, df):
         "sym": sym, "name": TREND_ASSETS[sym], "price": last, "status": status,
         "r2": r2, "strength": round(strength, 3), "slope": slope,
         "dollar_amount": pos_size,
+        "adaptive_signal": adaptive_signal, "eff_ratio": round(eff_ratio, 2),
     }
 
 
