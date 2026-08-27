@@ -43,6 +43,10 @@ TREND_ASSETS = {
     "SPY" : "SP 500",
     "QQQ" : "Nasdaq 100",
     "IWM" : "Russel 2000",
+    # VLUE: US value-factor tilt - top scanner trender (+64% 12-1, R2 0.81, at
+    # 52wk high), and a factor uncorrelated-ish to the growth/semi book. 2013+,
+    # ~$280M/day.
+    "VLUE": "US Value Factor",
     # US Equity Sectors
     "XLK": "Tech",
     "XLE": "Energy",
@@ -66,6 +70,10 @@ TREND_ASSETS = {
     "IGV": "Software",
     "CIBR": "Cyber Security",
     "ITA": "Defense",
+    # XBI: equal-weight biotech - top scanner trender (+68% 12-1, R2 0.81, at
+    # 52wk high). A distinct healthcare subsector, diversifying vs commodity+semi.
+    # Deep liquidity ($1.3B/day), history to 2010.
+    "XBI": "Biotech",
     # 2026-08-25: reverted the 15-name breadth batch, then re-added ONLY the
     # names that improve full-deployment 2020-26 CAGR (backtest_gss_addwinners):
     # FDN +0.19% and SIL +0.86% are ROBUST (help 2011-19 too); XOP +0.79% and
