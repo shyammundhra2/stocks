@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="min-h-screen bg-slate-950 text-slate-200 font-sans">
+{% include "components/nav.html" %}
+
+<div class="max-w-[1000px] mx-auto px-4 py-6">
+
+  <div class="flex justify-between items-baseline mb-1">
+    <h1 class="text-lg font-black text-teal-400 uppercase tracking-widest">Macro Digest</h1>
+    <span class="text-[10px] text-slate-500 font-mono">{{ d.date }}</span>
+  </div>
+  <p class="text-[10px] text-slate-600 mb-5">Deterministic change-log — what moved vs a week &amp; month ago, thresholds crossed, and what matters. No news, no LLM; templated from the same signals as the cockpit.</p>
+
+  <!-- headline -->
+  <div class="bg-slate-900 rounded-lg p-4 mb-4 border border-slate-800">
+    <p class="text-xl font-black text-white">{{ d.headline }}</p>
+  </div>
+
+  <!-- what matters -->
+  <div class="bg-gradient-to-br from-teal-900/30 to-slate-900 rounded-lg p-4 mb-4 border border-teal-500/30">
+    <p class="text-[10px] uppercase tracking-widest text-teal-400 mb-2">What matters</p>
+    <ol class="space-y-1.5 text-sm">
+      {% for m in d.matters %}
+      <li class="flex gap-2"><span class="text-teal-400 font-bold">{{ loop.index }}.</span><span>{{ m }}</span></li>
+      {% endfor %}
+    </ol>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div class="bg-slate-900 rounded-lg p-4 border border-slate-800">
+      <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-2">Changes vs 1 week
+        {% if d.week_date %}<span class="text-slate-600 normal-case">({{ d.week_date }})</span>{% endif %}</p>
+      {% if d.changed_week %}
+      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_week %}<li class="text-slate-300">{{ c }}</li>{% endfor %}</ul>
+      {% else %}<p class="text-xs text-slate-600 italic">building history — deltas appear after a few days of snapshots</p>{% endif %}
+    </div>
+    <div class="bg-slate-900 rounded-lg p-4 border border-slate-800">
+      <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-2">Changes vs 1 month
+        {% if d.month_date %}<span class="text-slate-600 normal-case">({{ d.month_date }})</span>{% endif %}</p>
+      {% if d.changed_month %}
+      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_month %}<li class="text-slate-300">{{ c }}</li>{% endfor %}</ul>
+      {% else %}<p class="text-xs text-slate-600 italic">building history</p>{% endif %}
+    </div>
+  </div>
+
+  {% if d.flags %}
+  <div class="bg-slate-900 rounded-lg p-4 border border-slate-800">
+    <p class="text-[10px] uppercase tracking-widest text-orange-400 mb-2">Flags / thresholds crossed</p>
+    <ul class="space-y-1.5 text-sm">{% for f in d.flags %}<li class="flex gap-2 text-slate-300"><span class="text-orange-400">•</span><span>{{ f }}</span></li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <p class="text-[10px] text-slate-600 mt-5">Signals snapshotted ~daily; deltas use the nearest snapshot to 7 &amp; 30 days ago. Deterministic — zero hallucination. As of {{ rendered_at }}.</p>
+
+</div>
+</div>
+{% endblock %}

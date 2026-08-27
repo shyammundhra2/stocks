@@ -126,5 +126,22 @@ def macro():
     return resp
 
 
+@app.route("/digest")
+def digest():
+    # Lazy + deterministic change-log: only gathers when this tab is opened, so
+    # it never delays the trading tab. No LLM - templated from the same signals.
+    from macrocockpit.digest import get_digest
+    d = get_digest()
+    resp = make_response(render_template(
+        "digest.html", d=d,
+        rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        active_tab="digest",
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 if __name__ == "__main__":
     app.run(debug=True)
