@@ -15,29 +15,29 @@ All data is **keyless** — `yfinance` (prices) + FRED via `pandas_datareader` (
 
 ```mermaid
 flowchart TB
-    subgraph Data["Data sources (keyless)"]
-        YF["yfinance — ETF/asset prices"]
-        FRED["FRED — macro series"]
-        CBOE["CBOE — VIX term structure"]
+    subgraph Data["Data sources - keyless"]
+        YF["yfinance - asset prices"]
+        FRED["FRED - macro series"]
+        CBOE["CBOE - VIX term structure"]
     end
 
-    subgraph Flask["Flask app (app.py)"]
+    subgraph Flask["Flask app - app.py"]
         T["/ Trading and Trends"]
-        M["/macro Macro Cockpit"]
-        D["/digest Digest"]
+        M["/macro - Macro Cockpit"]
+        D["/digest - Digest"]
     end
 
-    subgraph Engine["Trend engine — macro/"]
-        TR["get_trends()<br/>per-asset: slope·R², ATR, RSI, Hurst"]
-        RT["ER adaptive router<br/>MOM / REV / FLAT + 200DMA gate"]
-        OPT["Kelly-covariance optimizer<br/>vol-target scalar · caps · VIX throttle"]
-        REG["Regime (deterministic, weighted)<br/>forward-downside gauge"]
+    subgraph Engine["Trend engine - macro"]
+        TR["get_trends<br/>slope, R2, ATR, RSI, Hurst"]
+        RT["ER adaptive router<br/>MOM / REV / FLAT, 200DMA gate"]
+        OPT["Kelly-covariance optimizer<br/>vol-target, caps, VIX throttle"]
+        REG["Regime - deterministic<br/>forward-downside gauge"]
     end
 
-    subgraph Cockpit["Macro read — macrocockpit/ + housing/"]
-        RORO["Deterministic RoRo + categories"]
-        CYC["Cycles: recession + real-estate"]
-        HOUS["Housing metro ranker (validated)"]
+    subgraph Cockpit["Macro read - macrocockpit and housing"]
+        RORO["Deterministic RoRo and categories"]
+        CYC["Cycles - recession and real-estate"]
+        HOUS["Housing metro ranker - validated"]
         DIG["Digest change-log"]
     end
 
