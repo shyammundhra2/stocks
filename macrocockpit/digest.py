@@ -93,8 +93,23 @@ def _dir(d):
     return "↑" if d > 0 else "↓"
 
 
+# Direction of goodness: does a HIGHER value = bullish (+1) or bearish (-1)?
+# Used to color a delta green/red. Signals not listed -> neutral (yellow).
+_BULL_DIR = {
+    "RoRo": 1, "Regime confidence": 1, "Case-Shiller momentum": 1,
+    "Implied fwd-12m HPA": 1, "Retail Sales (YoY)": 1, "Consumer Confidence": 1,
+    "Mfg survey (PMI proxy)": 1, "Real GDP (YoY)": 1, "Job Openings (JOLTS)": 1,
+    "10Y-2Y Spread": 1,
+    "VIX": -1, "MOVE (bond vol)": -1, "HY OAS (norm 4.5)": -1,
+    "Fin Conditions (NFCI)": -1, "Mortgage Spread (norm 1.80)": -1,
+    "5y Inflation Expectations": -1, "Fed Funds": -1, "USD Index (broad)": -1,
+    "Unemployment Rate": -1, "Months supply": -1, "CPI (YoY)": -1,
+    "Core PCE (YoY, Fed target)": -1, "Initial Claims (4wk avg)": -1,
+}
+
+
 def _changes(cur, base, n=6):
-    """Material moves between two snapshots (relative >2% and rounded-distinct)."""
+    """Material moves between two snapshots, each tagged bull/bear/neutral."""
     if not base:
         return []
     b = base["signals"]
@@ -104,8 +119,10 @@ def _changes(cur, base, n=6):
             d = v - b[k]
             rel = abs(d) / (abs(b[k]) + 0.01)
             if rel > 0.02 and round(v, 2) != round(b[k], 2):
-                out.append((rel, f"{k}: {b[k]:g} {_dir(d)} {v:g}"))
-    out.sort(reverse=True)
+                signed = d * _BULL_DIR.get(k, 0)
+                sent = "bull" if signed > 0 else "bear" if signed < 0 else "neutral"
+                out.append((rel, {"text": f"{k}: {b[k]:g} {_dir(d)} {v:g}", "sentiment": sent}))
+    out.sort(key=lambda x: -x[0])
     return [t for _r, t in out[:n]]
 
 
@@ -174,7 +191,7 @@ def get_digest():
 if __name__ == "__main__":
     d = get_digest()
     print(f"MACRO DIGEST — {d['date']}\n{d['headline']}\n")
-    print(f"Changes vs 1 week ({d['week_date']}):");  [print("  •", c) for c in d["changed_week"]] or print("  (building history)")
-    print(f"\nChanges vs 1 month ({d['month_date']}):"); [print("  •", c) for c in d["changed_month"]] or print("  (building history)")
+    print(f"Changes vs 1 week ({d['week_date']}):");  [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_week"]] or print("  (building history)")
+    print(f"\nChanges vs 1 month ({d['month_date']}):"); [print(f"  • [{c['sentiment']:7s}] {c['text']}") for c in d["changed_month"]] or print("  (building history)")
     print("\nFlags:"); [print("  •", f) for f in d["flags"]] or print("  (none)")
     print("\nWhat matters:"); [print(f"  {i}. {m}") for i, m in enumerate(d["matters"], 1)]

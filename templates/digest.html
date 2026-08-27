@@ -9,7 +9,8 @@
     <h1 class="text-lg font-black text-teal-400 uppercase tracking-widest">Macro Digest</h1>
     <span class="text-[10px] text-slate-500 font-mono">{{ d.date }}</span>
   </div>
-  <p class="text-[10px] text-slate-600 mb-5">Deterministic change-log — what moved vs a week &amp; month ago, thresholds crossed, and what matters. No news, no LLM; templated from the same signals as the cockpit.</p>
+  <p class="text-[10px] text-slate-600 mb-2">Deterministic change-log — what moved vs a week &amp; month ago, thresholds crossed, and what matters. No news, no LLM; templated from the same signals as the cockpit.</p>
+  <p class="text-[10px] mb-5"><span class="text-green-400">■ bullish</span> &nbsp; <span class="text-red-400">■ bearish</span> &nbsp; <span class="text-yellow-400">■ neutral</span> <span class="text-slate-600">— direction of the move for risk assets / the economy</span></p>
 
   <!-- headline -->
   <div class="bg-slate-900 rounded-lg p-4 mb-4 border border-slate-800">
@@ -31,14 +32,14 @@
       <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-2">Changes vs 1 week
         {% if d.week_date %}<span class="text-slate-600 normal-case">({{ d.week_date }})</span>{% endif %}</p>
       {% if d.changed_week %}
-      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_week %}<li class="text-slate-300">{{ c }}</li>{% endfor %}</ul>
+      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_week %}<li class="{{ 'text-green-400' if c.sentiment=='bull' else 'text-red-400' if c.sentiment=='bear' else 'text-yellow-400' }}">{{ c.text }}</li>{% endfor %}</ul>
       {% else %}<p class="text-xs text-slate-600 italic">building history — deltas appear after a few days of snapshots</p>{% endif %}
     </div>
     <div class="bg-slate-900 rounded-lg p-4 border border-slate-800">
       <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-2">Changes vs 1 month
         {% if d.month_date %}<span class="text-slate-600 normal-case">({{ d.month_date }})</span>{% endif %}</p>
       {% if d.changed_month %}
-      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_month %}<li class="text-slate-300">{{ c }}</li>{% endfor %}</ul>
+      <ul class="space-y-1 font-mono text-xs">{% for c in d.changed_month %}<li class="{{ 'text-green-400' if c.sentiment=='bull' else 'text-red-400' if c.sentiment=='bear' else 'text-yellow-400' }}">{{ c.text }}</li>{% endfor %}</ul>
       {% else %}<p class="text-xs text-slate-600 italic">building history</p>{% endif %}
     </div>
   </div>
