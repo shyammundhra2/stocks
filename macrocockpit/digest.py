@@ -154,9 +154,9 @@ def _build(cur, wk, mo):
     # coloring (a tightening MOVE stays green = risk-on).
     hy = read.get("HY OAS (norm 4.5)", "")
     if "Tight" in hy:
-        flags.append(flag("Credit TIGHT vs norm — complacent/stretched, mean-reverts wider (watch; cheap tail-hedge window).", "neutral"))
+        flags.append(flag("Credit TIGHT vs norm — complacent/stretched, mean-reverts wider (watch; cheap tail-hedge window).", "warn"))
     elif "Wide" in hy or "Blown" in hy:
-        flags.append(flag("Credit WIDE — stress priced; mean-reverts tighter, equity historically cheap ahead (watch).", "neutral"))
+        flags.append(flag("Credit WIDE — stress priced; mean-reverts tighter, equity historically cheap ahead (watch).", "warn"))
     imp = sig.get("Implied fwd-12m HPA")
     if imp is not None and imp < 0:
         flags.append(flag(f"Housing: {read.get('Housing','elevated supply')} → implied {imp:+.1f}% forward HPA (softening).", "bear"))
