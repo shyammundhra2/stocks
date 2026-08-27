@@ -168,13 +168,22 @@
   const DARK = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                  font: { color: '#94a3b8', size: 10 }, margin: { l: 40, r: 15, t: 30, b: 30 } };
   const CFG = { displayModeBar: false, responsive: true };
-  function line(id, s, title, color, zero) {
+  function line(id, s, title, color, zero, norm) {
     if (!s) return;
     const tr = [{ x: s.x, y: s.y, mode: 'lines', line: { color: color, width: 2 }, fill: zero ? 'tozeroy' : 'none',
                   fillcolor: color.replace(')', ',0.12)').replace('rgb', 'rgba') }];
     const lay = Object.assign({}, DARK, { title: { text: title, font: { size: 12, color: '#cbd5e1' } },
                  xaxis: { gridcolor: '#1e293b' }, yaxis: { gridcolor: '#1e293b' } });
-    if (zero) lay.shapes = [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#ef4444', dash: 'dot', width: 1 } }];
+    const shapes = [], anns = [];
+    if (zero) shapes.push({ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#ef4444', dash: 'dot', width: 1 } });
+    // norm = long-run mean-reversion anchor (dashed slate line + label). Only for
+    // series that actually mean-revert around a stable level.
+    if (norm !== undefined && norm !== null) {
+      shapes.push({ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: norm, y1: norm, line: { color: '#cbd5e1', dash: 'dash', width: 1 } });
+      anns.push({ xref: 'paper', x: 0.02, y: norm, text: 'norm ' + norm, showarrow: false, font: { size: 9, color: '#94a3b8' }, yshift: 7, xanchor: 'left' });
+    }
+    if (shapes.length) lay.shapes = shapes;
+    if (anns.length) lay.annotations = anns;
     Plotly.newPlot(id, tr, lay, CFG);
   }
   function hbar(id, names, vals, title) {
@@ -188,13 +197,18 @@
   }
   hbar('ch_breakdown', (C.breakdown||{}).names, (C.breakdown||{}).vals, 'RoRo drivers (risk-on z)');
   hbar('ch_sectors', (C.sectors||{}).names, (C.sectors||{}).vals, 'Sector strength 3mo %');
-  line('ch_curve', C.curve, '10Y-2Y yield curve', 'rgb(13,148,136)', true);
-  line('ch_hyoas', C.hyoas, 'HY OAS (credit spread) %', 'rgb(180,83,9)', false);
+  // norm = long-run mean-reversion anchor (dashed slate). Only mean-reverting
+  // series get one: curve -> ~0.8 term-premium median; HY OAS -> ~4.5 long-run
+  // median (ICE BofA HY OAS 1997-2024; the live series truncates to 3yr so this
+  // is a fixed reference); mortgage spread -> 1.80. NFCI & PMI mean-revert to 0
+  // (already drawn by the zero-line). Net liquidity / claims TREND - no norm.
+  line('ch_curve', C.curve, '10Y-2Y yield curve', 'rgb(13,148,136)', true, 0.8);
+  line('ch_hyoas', C.hyoas, 'HY OAS (credit spread) %', 'rgb(180,83,9)', false, 4.5);
   line('ch_netliq', C.netliq, 'Net liquidity ($tn)', 'rgb(59,130,246)', false);
   line('ch_pmi', C.pmi, 'Mfg survey composite (PMI proxy)', 'rgb(34,197,94)', true);
   line('ch_claims', C.claims, 'Jobless claims (4wk, k) — leading labor', 'rgb(239,68,68)', false);
   line('ch_nfci', C.nfci, 'Financial conditions (NFCI, + = tight)', 'rgb(168,85,247)', true);
-  line('ch_mortspread', C.mortspread, 'Mortgage spread over 10yr % (norm ~1.80)', 'rgb(217,119,6)', false);
+  line('ch_mortspread', C.mortspread, 'Mortgage spread over 10yr %', 'rgb(217,119,6)', false, 1.80);
   // validated cycles
   if (C.cycles && C.cycles.recession && C.cycles.recession.chart)
     line('ch_reccurve', C.cycles.recession.chart, '10y-3m curve (recession lead)', 'rgb(13,148,136)', true);
