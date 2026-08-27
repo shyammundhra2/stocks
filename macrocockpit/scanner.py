@@ -14,6 +14,7 @@ can back a dashboard tab without blocking.
 import os
 import json
 import time
+import hashlib
 import threading
 
 import numpy as np
@@ -58,6 +59,11 @@ UNIVERSE = {
     # alt / real assets
     "IBIT": "Crypto", "DBMF": "MgdFutures", "KMLM": "MgdFutures", "VNQ": "REIT", "IGF": "Infra",
 }
+
+
+def _universe_hash():
+    """Hash of the current held universe, so the scan auto-refreshes when it changes."""
+    return hashlib.md5(",".join(sorted(TREND_ASSETS)).encode()).hexdigest()[:12]
 
 
 def _trend_r2(logp):
@@ -122,7 +128,7 @@ def _compute():
                    for _, r in df[df["held"]].sort_values("mom").iterrows()]
     return {"asof": str(close.index[-1].date()), "n_scanned": len(df),
             "n_trending": int(df["above"].sum()), "n_ranked": len(ranking),
-            "ranking": ranking, "held_status": held_status}
+            "uhash": _universe_hash(), "ranking": ranking, "held_status": held_status}
 
 
 def _refresh():
@@ -147,7 +153,8 @@ def get_scan():
         with open(_CACHE) as f:
             c = json.load(f)
         out.update({k: c.get(k) for k in ["ranking", "held_status", "asof", "n_scanned", "n_trending", "n_ranked"]})
-        out["stale"] = (time.time() - c.get("ts", 0)) > _TTL
+        # refresh if the cache aged out OR the held universe changed since last scan
+        out["stale"] = (time.time() - c.get("ts", 0)) > _TTL or c.get("uhash") != _universe_hash()
     except Exception:
         out["stale"] = True
     if out["stale"]:
