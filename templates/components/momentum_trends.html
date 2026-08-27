@@ -324,7 +324,7 @@
         <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily slope/R² path over the last month (faded trail).</p>
         <div id="trendMap" class="plot-container"></div>
         <p class="text-[10px] text-slate-500 mt-2">
-            Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal slope·R² conviction.
+            Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal |slope|·R² conviction (uptrend right, downtrend left).
         </p>
     </div>
 
@@ -388,15 +388,29 @@
                 type: 'scatter'
             };
 
-            // iso-conviction contours: slope·R² = k  ->  y = k/x  (positive-slope side)
+            // iso-conviction contours: |slope|·R² = k  ->  y = k/|x|. Drawn on BOTH
+            // the positive-slope (uptrend, right) AND negative-slope (downtrend,
+            // left) sides, so downtrends get the same conviction reference lines.
             var xmax = Math.max.apply(null, trendData.map(function (d) { return d.x; }).concat([6]));
-            var contours = [1, 2, 4].map(function (k) {
+            var xmin = Math.min.apply(null, trendData.map(function (d) { return d.x; }).concat([-6]));
+            var isoLine = function (xa, ya) {
+                return { x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
+                         line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false };
+            };
+            var contours = [];
+            [1, 2, 4].forEach(function (k) {
+                // right side (uptrend): y = k/x for x in [k, xmax]
                 var xa = [], ya = [];
                 for (var xv = k; xv <= xmax; xv += (xmax - k) / 40 || 1) {
                     var yv = k / xv; if (yv <= 1) { xa.push(xv); ya.push(yv); }
                 }
-                return { x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
-                         line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false };
+                contours.push(isoLine(xa, ya));
+                // left side (downtrend): mirror to negative slope, y = k/|x|
+                var xb = [], yb = [];
+                for (var xw = -k; xw >= xmin; xw -= (Math.abs(xmin) - k) / 40 || 1) {
+                    var yw = k / (-xw); if (yw <= 1) { xb.push(xw); yb.push(yw); }
+                }
+                contours.push(isoLine(xb, yb));
             });
 
             var ann = [
