@@ -57,6 +57,12 @@ TREND_ASSETS = {
 
     # Subsectors
     "SOXX": "Semiconductors",
+    # SMH: 2nd semi vehicle (VanEck) alongside SOXX - deliberately thickens the
+    # semiconductor tilt for the current commodity+semi cycle thesis. More
+    # NVDA/TSMC-concentrated than SOXX. History to 2005, highly liquid.
+    # (DRAM / Roundhill Memory ETF is on-thesis but too new - launched Apr 2026,
+    #  <200d history - so it can't clear the 200DMA gate yet; add ~early 2027.)
+    "SMH": "Semiconductors (VanEck)",
     "IGV": "Software",
     "CIBR": "Cyber Security",
     "ITA": "Defense",
