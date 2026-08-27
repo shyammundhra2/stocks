@@ -86,6 +86,10 @@ TREND_ASSETS = {
     # Commodities & Real Assets
     "GLD": "Gold",
     "XME": "Metals",
+    # PICK: broad global base-metals miners - scanner trender (+50% 12-1, at 52wk
+    # high; note choppy R2 ~0.10, so a rougher trend than a clean uptrend).
+    # Diversified miners breadth on-thesis for the commodity tilt. 2012+, ~$52M/day.
+    "PICK": "Global Miners",
     "DBC": "Commodities",
     "MOO": "Agri",
     "FCG": "FCG Natural Gas Stocks",
