@@ -126,6 +126,21 @@ def macro():
     return resp
 
 
+@app.route("/scanner")
+def scanner():
+    # Lazy + cached ETF trend scanner. Reads the 12h cache instantly; refreshes
+    # in a background thread if stale. Never touches the trading path.
+    from macrocockpit.scanner import get_scan
+    sc = get_scan()
+    resp = make_response(render_template(
+        "scanner.html", sc=sc,
+        rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        active_tab="scanner",
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
 @app.route("/digest")
 def digest():
     # Lazy + deterministic change-log: only gathers when this tab is opened, so

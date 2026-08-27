@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="min-h-screen bg-slate-950 text-slate-200 font-sans">
+{% include "components/nav.html" %}
+
+<div class="max-w-[1100px] mx-auto px-4 py-6">
+
+  <div class="flex justify-between items-baseline mb-1">
+    <h1 class="text-lg font-black text-teal-400 uppercase tracking-widest">ETF Trend Scanner</h1>
+    <span class="text-[10px] text-slate-500 font-mono">as of {{ sc.asof }}{% if sc.refreshing %} · <span class="text-yellow-400 animate-pulse">refreshing</span>{% endif %}</span>
+  </div>
+  <p class="text-[10px] text-slate-600 mb-1">Ranked by 12-1 momentum + trend quality (R² of the fit + 52wk-high proximity), gated to names above their 200DMA and liquid. {{ sc.n_trending }}/{{ sc.n_scanned }} of the universe are trending up.</p>
+  <p class="text-[10px] text-slate-600 mb-4"><span class="text-yellow-400">Idea watchlist, not a buy list.</span> High momentum + <span class="text-green-400">high R²</span> = clean trend; high momentum + <span class="text-red-400">low R²</span> = choppy / blow-off risk. <span class="text-teal-400">HELD</span> = already in your book.</p>
+
+  {% if sc.ranking %}
+  <div class="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+    <table class="w-full text-xs">
+      <thead class="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+        <tr>
+          <th class="text-left px-3 py-2">#</th>
+          <th class="text-left px-3 py-2">ETF</th>
+          <th class="text-left px-3 py-2">Category</th>
+          <th class="text-right px-3 py-2">12-1 mom</th>
+          <th class="text-right px-3 py-2">R² (quality)</th>
+          <th class="text-right px-3 py-2">52wk-high</th>
+          <th class="text-right px-3 py-2">%&gt;200DMA</th>
+          <th class="text-right px-3 py-2">vol</th>
+          <th class="text-center px-3 py-2">held</th>
+        </tr>
+      </thead>
+      <tbody class="font-mono">
+        {% for r in sc.ranking %}
+        <tr class="border-b border-slate-800/40 {{ 'bg-teal-900/10' if r.held }} hover:bg-slate-800/40">
+          <td class="px-3 py-1.5 text-slate-500">{{ loop.index }}</td>
+          <td class="px-3 py-1.5 font-bold text-white">{{ r.etf }}</td>
+          <td class="px-3 py-1.5 text-slate-400">{{ r.cat }}</td>
+          <td class="px-3 py-1.5 text-right {{ 'text-green-400' if r.mom > 0 else 'text-red-400' }}">{{ '%+.1f'|format(r.mom) }}%</td>
+          <td class="px-3 py-1.5 text-right {{ 'text-green-400' if r.r2 >= 0.7 else 'text-red-400' if r.r2 < 0.35 else 'text-yellow-400' }}">{{ '%.2f'|format(r.r2) }}</td>
+          <td class="px-3 py-1.5 text-right text-slate-300">{{ '%.2f'|format(r.hi52) }}</td>
+          <td class="px-3 py-1.5 text-right text-slate-400">{{ r.pct200|int }}%</td>
+          <td class="px-3 py-1.5 text-right text-slate-500">{{ r.vol|int }}%</td>
+          <td class="px-3 py-1.5 text-center">{% if r.held %}<span class="text-teal-400 text-[10px] font-bold">HELD</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="bg-slate-900 rounded-lg p-8 border border-slate-800 text-center">
+    <p class="text-slate-400">Scanning ~100 ETFs… <span class="text-yellow-400 animate-pulse">refreshing</span></p>
+    <p class="text-[10px] text-slate-600 mt-2">First load fetches the universe in the background — refresh this tab in a few seconds.</p>
+  </div>
+  {% endif %}
+
+  <p class="text-[10px] text-slate-600 mt-4">12-1 skips the last month (short-horizon reverses). Leveraged/inverse ETFs excluded. Cached 12h; refreshes in background. As of {{ rendered_at }}.</p>
+
+</div>
+</div>
+{% endblock %}
