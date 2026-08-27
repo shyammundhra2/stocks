@@ -38,23 +38,14 @@
     <!-- CENTER -->
     <div class="flex-1 flex flex-col items-center px-8 my-6 md:my-0">
 
-        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-1 font-bold">
-            ML Confidence
+        <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-1 font-bold"
+           title="Regime confidence = share of the 6 risk-on conditions passing (trend, VIX/MOVE, breadth, credit, curve, carry). RISK-ON at 4 of 6. Not ML - the deleted ml_slow term was removed 2026-08.">
+            Regime Confidence
         </p>
 
         <div class="text-6xl font-black mb-2 leading-none">
             {{ regime.confidence }}%
         </div>
-
-        {% if regime.ml_slow is defined and regime.ml_slow %}
-        <p class="text-[10px] font-bold font-mono mb-2
-            {{ 'text-green-400' if regime.ml_slow >= 60
-               else 'text-red-400' if regime.ml_slow < 40
-               else 'text-gray-400' }}"
-            title="SPY slow ML model (OOS AUC 0.625 - the one validated ML signal). Feeds 45% of the confidence blend above and 40% of the live portfolio vol cap.">
-            ML SLOW: {{ regime.ml_slow }}%
-        </p>
-        {% endif %}
 
         <div class="w-full max-w-[200px] bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
             <div class="h-full transition-all duration-500
@@ -84,7 +75,7 @@
 
         {% if regime.hmm %}
         <div class="mt-3 text-xs font-mono text-gray-400"
-             title="Telemetry only - does not drive sizing. Backtested (backtest_regime_hmm): coincides with, and is a worse crash predictor than, the vol-target scalar; kept as a display badge like ML SLOW.">
+             title="Telemetry only - does not drive sizing. Backtested (backtest_regime_hmm): coincides with, and is a worse crash predictor than, the vol-target scalar; kept as a display badge.">
             HMM Crisis Risk:
             <span class="
                 {{ 'text-red-400' if regime.hmm.p_crisis > 0.33

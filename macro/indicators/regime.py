@@ -441,9 +441,8 @@ def get_risk_regime():
         # regime compute (and every strided sparkline point). Neutralized -
         # get_dual_ml_confidence_for_kelly is no longer called, so the model
         # bundle never loads. Composite is now the 6 macro conditions only;
-        # ml_slow is shown neutral for display continuity.
+        # ml_slow fully removed 2026-08 (was a frozen 0.5; model deleted).
         # -----------------------------------------------
-        ml_slow_conf = 50.0     # neutral (dead signal removed)
         spy_regime = "N/A"
         spy_divergence = 0.0
 
@@ -464,19 +463,17 @@ def get_risk_regime():
         # Threshold 0.55: requires combined signal above neutral.
         # -----------------------------------------------
         passes = sum(1 for d in details if d["pass"])
-        technical_score = passes / 6.0          # 0.0 to 1.0
-        ml_slow_score = ml_slow_conf / 100.0    # 0.0 to 1.0
-
-        composite_score = (
-            technical_score * 0.55
-            + ml_slow_score * 0.45
-        )
+        # composite = the 6-condition technical score. ml_slow REMOVED 2026-08:
+        # its model was deleted so it was a frozen 0.5 that only COMPRESSED the
+        # confidence readout to [22.5, 77.5] without changing any label. RISK-ON
+        # is still 4-of-6 (0.5 < threshold 0.55 < 0.667), now on an honest [0,100].
+        composite_score = passes / 6.0
 
         is_risk_on = composite_score > 0.55
 
         # -----------------------------------------------
         # Composite history for the sparkline (returned as "history"): the SAME
-        # composite (0.55*technical + 0.45*ml_slow) at each 20-day stride date,
+        # composite (pure 6-condition technical score) at each 20-day stride date,
         # so the line's endpoint equals the current composite = the dot.
         # PERF 2026-08-25: the 4 past stride points use data only up to a fixed
         # past date, so their value is immutable - memoize per date so each is
@@ -492,7 +489,7 @@ def get_risk_regime():
                 _cv = _SLOW_HIST_CACHE.get(_key)
                 if _cv is None:
                     _passes = sum(1 for d in _regime_details(data.loc[:_ts]) if d["pass"])
-                    _cv = round((_passes / 6.0 * 0.55 + 0.5 * 0.45) * 100, 1)   # neutral ml
+                    _cv = round(_passes / 6.0 * 100, 1)
                     _SLOW_HIST_CACHE[_key] = _cv
                 composite_history.append(_cv)
             composite_history.append(float(round(composite_score * 100, 1)))   # endpoint = dot
@@ -510,7 +507,6 @@ def get_risk_regime():
             "status":           "RISK-ON" if is_risk_on else "RISK-OFF",
             "regime_qualifier": regime_qualifier,   # "confirmed"/"fragile"/"transitional"/None
             "confidence":       round(composite_score * 100, 1),
-            "ml_slow":          round(ml_slow_conf, 1),
             "ml_fast":          round(ml_fast_conf, 1),   # display only - not in composite
             "composite":        round(composite_score * 100, 1),
             "spy_regime":       spy_regime,
@@ -526,7 +522,6 @@ def get_risk_regime():
             "status":           "ERROR",
             "regime_qualifier": None,
             "confidence":       0,
-            "ml_slow":          0,
             "ml_fast":          0,
             "composite":        0,
             "spy_regime":       "Error",

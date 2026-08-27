@@ -49,8 +49,7 @@ function formatJsonAsReadableText(data) {
     // --- REGIME ---
     const reg = data.regime || {};
     t += `Regime: ${get(reg, 'status')} (${get(reg, 'regime_qualifier', '-')})   `
-       + `Confidence ${get(reg, 'confidence')}%   Composite ${get(reg, 'composite')}%   `
-       + `ml_slow ${get(reg, 'ml_slow')}%\n`;
+       + `Confidence ${get(reg, 'confidence')}%   Composite ${get(reg, 'composite')}%\n`;
     t += `VIX ${get(data, 'vix_mr.vix')} (z ${get(data, 'vix_mr.z')}) ${get(data, 'vix_mr.signal')}   |   `
        + `QQQ RSI2 ${get(data, 'mr.rsi2')} -> ${get(data, 'mr.signal')} (@${get(data, 'mr.price')})\n`;
     const conds = (reg.details || []).map(m => `${String(get(m, 'label')).split(' ')[0]}[${m.pass ? 'Y' : 'N'}]`).join(' ');
