@@ -462,14 +462,27 @@ def get_risk_regime():
         #
         # Threshold 0.55: requires combined signal above neutral.
         # -----------------------------------------------
-        passes = sum(1 for d in details if d["pass"])
-        # composite = the 6-condition technical score. ml_slow REMOVED 2026-08:
-        # its model was deleted so it was a frozen 0.5 that only COMPRESSED the
-        # confidence readout to [22.5, 77.5] without changing any label. RISK-ON
-        # is still 4-of-6 (0.5 < threshold 0.55 < 0.667), now on an honest [0,100].
-        composite_score = passes / 6.0
+        # Confidence = the 6 conditions WEIGHTED by validated forward-risk power
+        # (conf_signals.py, 2006-2026, forward-vol rank IC): Fear/VIX-level
+        # (-0.69) and Trend/200DMA (-0.39) dominate; Credit (-0.22) and Carry
+        # (-0.16) lighter; Breadth (~0) and Curve (+0.16, WRONG sign near-term)
+        # dropped. Coarse tiers 3/3/2/1/0/0 (mechanism-based, NOT fitted IC, to
+        # avoid overfit). It's a forward-DOWNSIDE gauge (predicts vol/drawdown,
+        # not returns). Display-only: these 6 no longer feed sizing
+        # (get_vol_regime_scalar + _spy_risk_gate do), so reshaping the number
+        # never touches the book.
+        _COND_W = {"fear": 3, "trend": 3, "credit": 2, "carry": 1, "breadth": 0, "curve": 0}
+        def _cw(lbl):
+            for _k, _v in _COND_W.items():
+                if _k in lbl.lower():
+                    return _v
+            return 1
+        def _wscore(dets):
+            _tot = sum(_cw(d["label"]) for d in dets) or 1
+            return sum(_cw(d["label"]) for d in dets if d["pass"]) / _tot
+        composite_score = _wscore(details)
 
-        is_risk_on = composite_score > 0.55
+        is_risk_on = composite_score > 0.5
 
         # -----------------------------------------------
         # Composite history for the sparkline (returned as "history"): the SAME
@@ -488,8 +501,7 @@ def get_risk_regime():
                 _key = pd.Timestamp(_ts).normalize()
                 _cv = _SLOW_HIST_CACHE.get(_key)
                 if _cv is None:
-                    _passes = sum(1 for d in _regime_details(data.loc[:_ts]) if d["pass"])
-                    _cv = round(_passes / 6.0 * 100, 1)
+                    _cv = round(_wscore(_regime_details(data.loc[:_ts])) * 100, 1)
                     _SLOW_HIST_CACHE[_key] = _cv
                 composite_history.append(_cv)
             composite_history.append(float(round(composite_score * 100, 1)))   # endpoint = dot
