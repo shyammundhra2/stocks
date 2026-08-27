@@ -54,9 +54,7 @@ TREND_ASSETS = {
     "XLB": "Materials",
     "XLV": "Healthcare",
     "XLF": "Financials",
-    "XLY": "Discretionary",
     "XLP": "Staples",
-    "XLU" : "Utilities",
     "XLRE" : "Real Estate",
 
     # Subsectors
@@ -113,7 +111,6 @@ TREND_ASSETS = {
     "IEV": "Europe",
 
     # Fixed Income & Crypto
-    "TLT": "30yr Bond",
     "IBIT": "Bitcoin",
 
     # Diversifier / crisis hedge: managed futures (trend-following, uncorrelated
@@ -136,14 +133,14 @@ TREND_ASSETS = {
 # rather than delete them we cap their allocation to THROTTLE_FACTOR x the
 # optimizer's weight; the freed capital simply falls to cash. EWY is left at full
 # weight (Samsung = semiconductor supply chain, on-thesis, not display-only).
-THROTTLED_ASSETS = {"EWZ", "EWJ", "IEV", "TLT"}
+THROTTLED_ASSETS = {"EWZ", "EWJ", "IEV"}
 THROTTLE_FACTOR = 0.30
 
 # Names NOT zeroed by the risk-off equity gate (backtest_gss_eqgate 2007-26:
 # gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's
 # best positions while equities collapsed). They still need their own >200DMA
 # trend to be bought; the gate only spares them from the SPY-based shutoff.
-DEFENSIVE_ASSETS = {"GLD", "DBC", "TLT", "DBMF"}
+DEFENSIVE_ASSETS = {"GLD", "DBC", "DBMF"}
 
 # --- ML Macro Tickers ---
 ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
