@@ -148,11 +148,15 @@ def _build(cur, wk, mo):
             if bt and bt != tag:
                 flags.append(flag(f"{k}: “{bt}” → “{tag}”", "neutral"))
     # current extreme flags (from the read tags we already compute)
+    # Credit extremes are MEAN-REVERTING watch-flags, not directional calls: tight
+    # = bullish-now / bearish-forward, wide = bearish-now / bullish-forward. Both
+    # are genuinely mixed -> yellow (caution), so they don't contradict the delta
+    # coloring (a tightening MOVE stays green = risk-on).
     hy = read.get("HY OAS (norm 4.5)", "")
     if "Tight" in hy:
-        flags.append(flag("Credit TIGHT vs norm — complacent, risk building (cheap tail-hedge window).", "bear"))
+        flags.append(flag("Credit TIGHT vs norm — complacent/stretched, mean-reverts wider (watch; cheap tail-hedge window).", "neutral"))
     elif "Wide" in hy or "Blown" in hy:
-        flags.append(flag("Credit WIDE — stress priced; equity historically cheap ahead (contrarian).", "bull"))
+        flags.append(flag("Credit WIDE — stress priced; mean-reverts tighter, equity historically cheap ahead (watch).", "neutral"))
     imp = sig.get("Implied fwd-12m HPA")
     if imp is not None and imp < 0:
         flags.append(flag(f"Housing: {read.get('Housing','elevated supply')} → implied {imp:+.1f}% forward HPA (softening).", "bear"))
