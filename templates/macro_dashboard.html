@@ -115,6 +115,12 @@
         <div class="text-xs space-y-1">
           <div class="flex justify-between"><span class="text-slate-400">Case-Shiller 12m momentum</span><span class="font-mono text-slate-200">{{ cy.realestate.momentum }}%</span></div>
           <div class="flex justify-between"><span class="text-slate-400">Months' supply (corr {{ cy.realestate.sup_corr }})</span><span class="font-mono {{ 'text-red-400' if cy.realestate.supply and cy.realestate.supply>6 else 'text-slate-200' }}">{{ cy.realestate.supply }}</span></div>
+          {% if cy.realestate.supply_implied_hpa is not none %}
+          <div class="flex justify-between" title="Months-supply is the strongest single housing predictor (rank IC -0.78). Current level's historical quintile implies this forward-12m home-price appreciation.">
+            <span class="text-slate-400">→ implied fwd-12m HPA <span class="text-[9px] text-slate-500">({{ cy.realestate.supply_regime }})</span></span>
+            <span class="font-mono font-bold {{ 'text-red-400' if cy.realestate.supply_implied_hpa < 0 else 'text-green-400' if cy.realestate.supply_implied_hpa > 3 else 'text-yellow-400' }}">{{ '%+.1f'|format(cy.realestate.supply_implied_hpa) }}%</span>
+          </div>
+          {% endif %}
           <div class="flex justify-between"><span class="text-slate-400">Building permits YoY</span><span class="font-mono text-slate-200">{{ cy.realestate.permit_yoy }}%</span></div>
           <div class="flex justify-between"><span class="text-slate-400">Momentum → fwd-12m corr</span><span class="font-mono text-green-400">+{{ cy.realestate.mom_corr }}</span></div>
         </div>

@@ -103,8 +103,24 @@ def get_cycles():
         pyoy = float(permit.pct_change(12).dropna().iloc[-1]) * 100 if len(permit.dropna()) > 12 else np.nan
         warn = int(sup == sup and sup > 6) + int(pyoy == pyoy and pyoy < 0)
         lean = "UP" if (m > 0 and warn == 0) else ("COOLING" if m > 0 else "DOWN")
+        # months-supply -> implied forward-12m HPA. Supply is the STRONGEST single
+        # housing predictor (rank IC -0.78, beats momentum's +0.66). Bucket the
+        # history into supply quintiles, take each bucket's mean forward HPA, and
+        # place the current level - a monotonic supply/demand read.
+        sup_implied, sup_regime = None, None
+        if len(d) > 60 and sup == sup:
+            try:
+                edges = d["s"].quantile([0, .2, .4, .6, .8, 1.0]).values
+                q = np.clip(np.searchsorted(edges[1:-1], sup), 0, 4)
+                d2 = d.assign(q=pd.qcut(d["s"], 5, labels=False, duplicates="drop"))
+                sup_implied = round(float(d2.groupby("q")["f"].mean().get(q, np.nan)) * 100, 1)
+                sup_regime = ["very tight (seller mkt)", "tight", "balanced",
+                              "loose", "glut (buyer mkt)"][int(q)]
+            except Exception:
+                pass
         out["realestate"] = {
             "momentum": round(m, 1), "supply": round(sup, 1) if sup == sup else None,
+            "supply_implied_hpa": sup_implied, "supply_regime": sup_regime,
             "permit_yoy": round(pyoy, 0) if pyoy == pyoy else None, "lean": lean, "warnings": warn,
             "mom_corr": mom_corr, "sup_corr": sup_corr,
             "asof": str(g["CSUSHPISA"].index[-1].date()),
