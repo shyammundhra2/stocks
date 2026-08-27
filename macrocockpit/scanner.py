@@ -71,7 +71,9 @@ def _trend_r2(logp):
 
 
 def _compute():
-    tickers = list(UNIVERSE)
+    # Always include every held name (TREND_ASSETS) so the user can see how their
+    # holdings stand - even ones that have fallen below trend (demote candidates).
+    tickers = sorted(set(UNIVERSE) | set(TREND_ASSETS))
     raw = yf.download(tickers, start=(pd.Timestamp.today() - pd.DateOffset(days=700)),
                       end=pd.Timestamp.today() + pd.Timedelta(days=1),
                       progress=False, auto_adjust=True, group_by="column")
@@ -96,7 +98,7 @@ def _compute():
         hi52 = float(px / c.tail(252).max())                       # 52w-high proximity
         vol63 = float(c.pct_change().tail(63).std() * np.sqrt(252)) * 100
         dvol = float((c * vol[t]).tail(60).mean()) / 1e6 if vol is not None and t in vol else np.nan
-        rows.append({"etf": t, "cat": UNIVERSE[t], "px": round(px, 2),
+        rows.append({"etf": t, "cat": UNIVERSE.get(t, TREND_ASSETS.get(t, "—")), "px": round(px, 2),
                      "mom": round(mom, 1), "r2": round(r2, 2), "hi52": round(hi52, 2),
                      "pct200": round(pct_above, 0), "above": above, "vol": round(vol63, 0),
                      "dvol": round(dvol, 0) if dvol == dvol else None, "held": t in held})
@@ -111,8 +113,16 @@ def _compute():
     elig = elig.sort_values("score", ascending=False)
     ranking = [{k: r[k] for k in ["etf", "cat", "mom", "r2", "hi52", "pct200", "vol", "held"]}
                for _, r in elig.iterrows()]
+    # Holdings status: EVERY held name, weakest-momentum first, with its rank in
+    # the trending list (or None if below trend) and a demote flag (below 200DMA).
+    rank_map = {r["etf"]: i + 1 for i, r in enumerate(ranking)}
+    held_status = [{"etf": r["etf"], "cat": r["cat"], "mom": r["mom"], "r2": r["r2"],
+                    "pct200": r["pct200"], "above": bool(r["above"]),
+                    "rank": rank_map.get(r["etf"]), "demote": not bool(r["above"])}
+                   for _, r in df[df["held"]].sort_values("mom").iterrows()]
     return {"asof": str(close.index[-1].date()), "n_scanned": len(df),
-            "n_trending": int(df["above"].sum()), "ranking": ranking}
+            "n_trending": int(df["above"].sum()), "n_ranked": len(ranking),
+            "ranking": ranking, "held_status": held_status}
 
 
 def _refresh():
@@ -132,11 +142,11 @@ def _refresh():
 
 
 def get_scan():
-    out = {"ranking": [], "asof": "?", "refreshing": _lock.locked(), "stale": True}
+    out = {"ranking": [], "held_status": [], "asof": "?", "refreshing": _lock.locked(), "stale": True}
     try:
         with open(_CACHE) as f:
             c = json.load(f)
-        out.update({k: c.get(k) for k in ["ranking", "asof", "n_scanned", "n_trending"]})
+        out.update({k: c.get(k) for k in ["ranking", "held_status", "asof", "n_scanned", "n_trending", "n_ranked"]})
         out["stale"] = (time.time() - c.get("ts", 0)) > _TTL
     except Exception:
         out["stale"] = True
@@ -153,3 +163,8 @@ if __name__ == "__main__":
     for i, r in enumerate(d["ranking"][:30], 1):
         print(f"{i:>2} {r['etf']:5s} {r['cat']:12s} {r['mom']:>+6.1f} {r['r2']:>5.2f} "
               f"{r['hi52']:>5.2f} {r['pct200']:>5.0f}% {r['vol']:>4.0f}%  {'HELD' if r['held'] else ''}")
+    print(f"\n=== YOUR HOLDINGS (weakest first; DEMOTE = below 200DMA) ===")
+    for r in d["held_status"]:
+        rk = f"#{r['rank']}/{d['n_ranked']}" if r["rank"] else "not trending"
+        print(f"  {r['etf']:5s} {r['cat']:16s} mom {r['mom']:>+6.1f}  R2 {r['r2']:>4.2f}  "
+              f"{rk:>14s}  {'<< DEMOTE (below 200DMA)' if r['demote'] else ''}")

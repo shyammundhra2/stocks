@@ -52,6 +52,39 @@
   </div>
   {% endif %}
 
+  {% if sc.held_status %}
+  <div class="mt-8">
+    <h2 class="text-sm font-black text-teal-400 uppercase tracking-widest mb-1">Your Holdings — Trend Status</h2>
+    <p class="text-[10px] text-slate-600 mb-3">Every held name, weakest momentum first. <span class="text-red-400">Below 200DMA = demote candidate</span> (broken trend — the engine already parks it in cash; consider pruning from the universe). Rank = position among the {{ sc.n_ranked }} trending names.</p>
+    <div class="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+      <table class="w-full text-xs">
+        <thead class="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+          <tr>
+            <th class="text-left px-3 py-2">ETF</th>
+            <th class="text-left px-3 py-2">Category</th>
+            <th class="text-right px-3 py-2">12-1 mom</th>
+            <th class="text-right px-3 py-2">R²</th>
+            <th class="text-right px-3 py-2">Rank</th>
+            <th class="text-center px-3 py-2">status</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono">
+          {% for r in sc.held_status %}
+          <tr class="border-b border-slate-800/40 {{ 'bg-red-900/15' if r.demote }} hover:bg-slate-800/40">
+            <td class="px-3 py-1.5 font-bold text-white">{{ r.etf }}</td>
+            <td class="px-3 py-1.5 text-slate-400">{{ r.cat }}</td>
+            <td class="px-3 py-1.5 text-right {{ 'text-green-400' if r.mom > 0 else 'text-red-400' }}">{{ '%+.1f'|format(r.mom) }}%</td>
+            <td class="px-3 py-1.5 text-right text-slate-400">{{ '%.2f'|format(r.r2) }}</td>
+            <td class="px-3 py-1.5 text-right {{ 'text-slate-500' if r.rank else 'text-red-400' }}">{% if r.rank %}#{{ r.rank }}/{{ sc.n_ranked }}{% else %}below trend{% endif %}</td>
+            <td class="px-3 py-1.5 text-center">{% if r.demote %}<span class="text-red-400 text-[10px] font-bold">DEMOTE</span>{% else %}<span class="text-green-400 text-[10px]">OK</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
   <p class="text-[10px] text-slate-600 mt-4">12-1 skips the last month (short-horizon reverses). Leveraged/inverse ETFs excluded. Cached 12h; refreshes in background. As of {{ rendered_at }}.</p>
 
 </div>
