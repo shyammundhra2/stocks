@@ -18,6 +18,9 @@ def index():
         get_currency_rotation,
         get_trends,
         get_portfolio_summary,
+        get_ml_sector_prediction,
+        get_ml_country_prediction,
+        get_ml_commodity_prediction,
     )
     from macro.indicators import _get_shared_market_data
 
@@ -43,6 +46,11 @@ def index():
         "currencies": get_currency_rotation(),
         "trends": trends,
         "portfolio_summary": get_portfolio_summary(),
+        # Validated rule-based rotation tiles (NOT ML: sector = adaptive MOM/REV
+        # allocation, country = 6mo momentum, commodity = 6mo mean-reversion).
+        "ml_sector": get_ml_sector_prediction(),
+        "ml_country": get_ml_country_prediction(),
+        "ml_commodity": get_ml_commodity_prediction(),
     }
 
     def convert_to_serializable(obj):
@@ -75,6 +83,9 @@ def index():
         currencies=all_data["currencies"],
         trends=all_data["trends"],
         portfolio_summary=all_data["portfolio_summary"],
+        ml_sector=all_data["ml_sector"],
+        ml_country=all_data["ml_country"],
+        ml_commodity=all_data["ml_commodity"],
         all_data_json=json.dumps(serializable_data),
         data_asof=data_asof,
         rendered_at=rendered_at,
