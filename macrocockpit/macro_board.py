@@ -232,6 +232,19 @@ def get_macro_dashboard():
     elif mspread < 1.60:     _mtag = "Tight (rich)"
     else:                    _mtag = "Near normal"
 
+    # ---- credit spread (HY OAS) forward read ----
+    # HY OAS mean-reverts strongly around a ~4.5 long-run median, and the LEVEL is
+    # a contrarian equity signal: tight = complacent / risk building (spreads have
+    # room to widen); wide = stress already priced, equity historically cheap
+    # ahead. (Live FRED series row-caps to 3yr, so 4.5 is a fixed reference.)
+    HYOAS_NORM = 4.5
+    _oas = fv("BAMLH0A0HYM2")
+    if   _oas != _oas: _oastag = ""
+    elif _oas < 3.2:   _oastag = "Tight vs 4.5 norm - complacent, room to widen (risk building)"
+    elif _oas < 5.5:   _oastag = "Near 4.5 norm"
+    elif _oas < 8.0:   _oastag = "Wide - stress priced; equity historically cheap ahead"
+    else:              _oastag = "Blown out - crisis (contrarian equity buy)"
+
     # ---- detail table ----
     curve = fv("T10Y2Y")
     out["categories"] = [
@@ -264,7 +277,7 @@ def get_macro_dashboard():
             ("Fin Conditions (NFCI)", fmt(nfci, "", 2), "Loose" if nfci < 0 else "Tight"),
             ("VIX", fmt(mv("^VIX")), "Calm" if mv("^VIX") < 18 else "Stressed"),
             ("MOVE (bond vol)", fmt(mv("^MOVE")), "Elevated" if mv("^MOVE") > 110 else "Contained"),
-            ("HY OAS", fmt(fv("BAMLH0A0HYM2"), "%", 2), "Tight" if fv("BAMLH0A0HYM2") < 3.5 else "Widening"),
+            ("HY OAS (norm 4.5)", fmt(_oas, "%", 2), _oastag),
             ("USD Index (broad)", fmt(fv("DTWEXBGS")), ""),
         ]),
         ("VI. Liquidity", [
@@ -310,6 +323,10 @@ def get_macro_dashboard():
         out["analysis"].append(f"USD/JPY realized vol {jpy_vol:.0f}% - carry-unwind risk (2024-08 style).")
     if mspread == mspread and mspread > 2.20:
         out["analysis"].append(f"Mortgage spread {mspread:.2f}% vs ~{MORT_NORM:.2f}% norm - elevated; room to compress = easing tailwind for mortgage rates independent of the 10yr (origination-relevant).")
+    if _oas == _oas and _oas < 3.2:
+        out["analysis"].append(f"Credit spread (HY OAS {_oas:.2f}%) is TIGHT vs its ~{HYOAS_NORM:.1f}% norm - credit priced for perfection. Mean-reverts wider = risk building; the cheap time to buy tail protection.")
+    elif _oas == _oas and _oas > 6.0:
+        out["analysis"].append(f"Credit spread (HY OAS {_oas:.2f}%) is WIDE vs ~{HYOAS_NORM:.1f}% norm - stress priced in; historically equity is cheap 12m forward from here.")
     if conf == conf and conf < 70:
         out["analysis"].append(f"Consumer confidence weak ({conf:.0f}) - demand headwind.")
     if pmi == pmi and pmi < 0:
