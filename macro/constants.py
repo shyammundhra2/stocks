@@ -115,6 +115,12 @@ TREND_ASSETS = {
     "IEV": "Europe",
 
     # Fixed Income & Crypto
+    # TLT: kept as a DEFLATIONARY-crash hedge (long bonds spike in a flight-to-
+    # safety), NOT a momentum bet. In DEFENSIVE_ASSETS (below) so the risk-off
+    # gate doesn't zero it; NOT throttled (a hedge shouldn't be capped). The
+    # engine still only holds it when it's actually trending up (i.e. in a
+    # deflationary shock), so it sits in cash in a reflation regime like now.
+    "TLT": "30yr Bond",
     "IBIT": "Bitcoin",
 
     # Diversifier / crisis hedge: managed futures (trend-following, uncorrelated
@@ -144,7 +150,7 @@ THROTTLE_FACTOR = 0.30
 # gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's
 # best positions while equities collapsed). They still need their own >200DMA
 # trend to be bought; the gate only spares them from the SPY-based shutoff.
-DEFENSIVE_ASSETS = {"GLD", "DBC", "DBMF"}
+DEFENSIVE_ASSETS = {"GLD", "DBC", "DBMF", "TLT"}
 
 # --- ML Macro Tickers ---
 ML_MACRO_TICKERS = ['DX-Y.NYB', '^VIX', '^TNX', '^MOVE', '^TYX', 'HYG', 'LQD']
