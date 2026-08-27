@@ -17,8 +17,10 @@ SECTORS = {
 # --- Country Mapping ---
 COUNTRIES = {
     "SPY":"USA","EFA":"Dev ex-US","EEM":"Emerging","EWJ":"Japan",
-    "EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany", "EWY":  "South Korea"
-
+    "EWZ":"Brazil","INDA":"India","FXI":"China","EWU":"UK","EWG":"Germany","EWY":"South Korea",
+    # added from the trend scanner (2026-08) - broaden the rotation universe;
+    # several were top scanner trenders (Taiwan/Greece/Poland).
+    "EWT":"Taiwan","EWW":"Mexico","ARGT":"Argentina","GREK":"Greece","EPOL":"Poland","VNM":"Vietnam",
 }
 
 # --- Updated Commodity Mapping ---
