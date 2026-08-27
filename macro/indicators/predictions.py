@@ -68,8 +68,24 @@ def get_ml_sector_prediction():
                 state = "CHOP"
                 if above200 and rsi2 < 15:
                     sig = "REV"
+
+            # Why is this sector in cash? Surface the reason so a FLAT sector
+            # reads as deliberate per-sector defense, not a silent gap. Sectors
+            # exit INDIVIDUALLY on their own weakness (which controls drawdown
+            # better than one market-wide bear gate - backtested).
+            reason = ""
+            if sig == "FLAT":
+                if not above200:
+                    reason = "< 200DMA"                 # below long-term trend: defensive exit
+                elif state == "TREND":
+                    reason = "trend fading"             # >200DMA but lost 50DMA / slope turned down
+                elif state == "CHOP":
+                    reason = "choppy · not oversold"    # waiting for an RSI2 dip to buy
+                else:
+                    reason = "choppy / no trend"        # MID efficiency: no clean signal
+
             rec = {"ticker": t, "name": name, "state": state, "signal": sig,
-                   "eff_ratio": round(eff, 2),
+                   "reason": reason, "eff_ratio": round(eff, 2),
                    "invvol": (1.0 / vol63) if (vol63 and vol63 > 0) else 0.0}
             (held if sig in ("MOM", "REV") else flat).append(rec)
 
@@ -89,16 +105,16 @@ def get_ml_sector_prediction():
         ranked = held + flat
         if not ranked:
             _na = {"name": "N/A", "ticker": "N/A", "confidence": 0, "state": "-", "signal": "FLAT"}
-            return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0}
+            return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0, "n_flat": 0}
         top = ranked[0]
         bottom = ranked[-1]
         return {"top": top, "bottom": bottom,
                 "spread": round(top["confidence"] - bottom["confidence"], 1),
-                "all": ranked, "n_held": len(held)}
+                "all": ranked, "n_held": len(held), "n_flat": len(flat)}
     except Exception as e:
         print(f"Sector Prediction Error: {e}")
         _na = {"name": "N/A", "ticker": "N/A", "confidence": 0, "state": "-", "signal": "FLAT"}
-        return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0}
+        return {"top": _na, "bottom": _na, "spread": 0, "all": [], "n_held": 0, "n_flat": 0}
 
 
 def _ranker_to_prediction(rotation_list):

@@ -25,18 +25,22 @@
     <div class="my-5 px-4">
         <div class="flex justify-between text-[9px] uppercase font-bold text-slate-500 mb-1.5">
             <span>Sleeve Allocation</span>
-            <span>{{ ml_sector.n_held }} held · rest cash</span>
+            <span>{{ ml_sector.n_held }} held · {{ ml_sector.n_flat }} cash</span>
         </div>
         <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-indigo-500/20 p-[1px]">
             <div class="bg-gradient-to-r from-indigo-600 to-blue-400 h-full rounded-full shadow-[0_0_12px_rgba(99,102,241,0.4)]" style="width: {{ ml_sector.top.confidence }}%"></div>
         </div>
+        <p class="text-[9px] text-slate-500 text-center mt-2 leading-snug px-1">
+            Each sector exits on its <span class="text-slate-400">own</span> weakness (below 200DMA / no clean trend) —
+            which controls drawdown better than waiting for a market-wide bear signal. Cash here is deliberate defense, not a gap.
+        </p>
     </div>
 
     <div class="text-center py-3 mt-2 border-t border-slate-700/40">
         <p class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Not Held (→ Cash)</p>
         <h3 class="text-2xl font-black text-slate-400">{{ ml_sector.bottom.name }}</h3>
         <p class="text-slate-500 font-mono text-xs">{{ ml_sector.bottom.ticker }}
-            <span class="opacity-60">({{ ml_sector.bottom.state }} · FLAT)</span></p>
+            <span class="opacity-60">({{ ml_sector.bottom.reason or ml_sector.bottom.state }})</span></p>
     </div>
 
     <div class="mt-4 pt-3 border-t border-slate-800 grid grid-cols-2 gap-4">
@@ -54,14 +58,14 @@
             </ul>
         </div>
         <div>
-            <h3 class="text-[10px] font-bold text-slate-500 uppercase mb-2">Nearest to Signal</h3>
-            <ul class="space-y-1 font-mono text-sm">
-                {% for s in ml_sector.all if s.confidence == 0 %}{% if loop.index <= 3 %}
-                <li class="flex justify-between text-slate-500">
-                    <span>{{ s.name }}</span>
-                    <span>ER {{ s.eff_ratio }}</span>
+            <h3 class="text-[10px] font-bold text-slate-500 uppercase mb-2">In Cash — Why</h3>
+            <ul class="space-y-1 font-mono text-xs">
+                {% for s in ml_sector.all if s.confidence == 0 %}
+                <li class="flex justify-between text-slate-500 gap-2">
+                    <span class="truncate">{{ s.name }}</span>
+                    <span class="text-[10px] text-slate-600 whitespace-nowrap">{{ s.reason }}</span>
                 </li>
-                {% endif %}{% endfor %}
+                {% endfor %}
             </ul>
         </div>
     </div>
@@ -75,9 +79,25 @@
         </div>
     </div>
     {% else %}
-    <div class="text-center py-8">
+    <div class="text-center py-6">
         <h3 class="text-3xl font-black text-slate-400">All Cash</h3>
-        <p class="text-slate-500 font-mono text-xs mt-2">No sector meets a trend or mean-reversion signal</p>
+        <p class="text-slate-500 font-mono text-xs mt-2 px-4 leading-snug">
+            Every sector exited on its own weakness — no clean trend or oversold-reversion signal.
+            Defensive by design, not a market-bear call.
+        </p>
     </div>
+    {% if ml_sector.all %}
+    <div class="mt-2 pt-3 border-t border-slate-800 px-2">
+        <h3 class="text-[10px] font-bold text-slate-500 uppercase mb-2 text-center">In Cash — Why</h3>
+        <ul class="space-y-1 font-mono text-xs max-w-xs mx-auto">
+            {% for s in ml_sector.all %}
+            <li class="flex justify-between text-slate-500 gap-2">
+                <span class="truncate">{{ s.name }}</span>
+                <span class="text-[10px] text-slate-600 whitespace-nowrap">{{ s.reason }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
     {% endif %}
 </div>
