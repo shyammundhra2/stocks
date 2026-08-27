@@ -44,6 +44,7 @@ def ttl_cache(ttl_seconds=3600):
 FRED = ["GDPC1", "BUSLOANS", "TTLCONS", "UNRATE", "ICSA", "JTSJOL", "RSAFS", "UMCSENT",
         "CPIAUCSL", "PCEPILFE", "T5YIE", "FEDFUNDS", "T10Y2Y", "BAMLH0A0HYM2", "NFCI",
         "M2SL", "WALCL", "RRPONTSYD", "WTREGEN", "DTWEXBGS", "USINFO",
+        "DGS10", "MORTGAGE30US",
         "GACDISA066MSFRBNY", "GACDFSA066MSFRBPHI", "BACTSAMFRBDAL"]   # regional Fed mfg
 REG_FED = ["GACDISA066MSFRBNY", "GACDFSA066MSFRBPHI", "BACTSAMFRBDAL"]
 SECTORS = ["XLK", "XLF", "XLI", "XLY", "XLE", "XLV", "XLP", "XLU", "XLB", "XLRE", "XLC"]
@@ -217,6 +218,20 @@ def get_macro_dashboard():
         lead("Job openings (JOLTS)", fmt(jolts, "M", 1), _z(fr["JTSJOL"]) if "JTSJOL" in fr else 0),
     ]
 
+    # ---- mortgage spread: the one honestly-forecastable rate signal ----
+    # 30yr mortgage = 10yr Treasury + a mean-reverting spread. The spread reverts
+    # (level->fwd-change rank IC -0.54); it averages ~1.80%, blew out to 3.27% in
+    # 2022-23. So the forecastable part of mortgages is spread NORMALIZATION, not
+    # the (near-random-walk) 10yr. Relevant to origination/RKT.
+    mort30 = fv("MORTGAGE30US"); dgs10 = fv("DGS10")
+    mspread = (mort30 - dgs10) if (mort30 == mort30 and dgs10 == dgs10) else float("nan")
+    MORT_NORM = 1.80
+    if   mspread != mspread: _mtag = ""
+    elif mspread > 2.30:     _mtag = "Elevated - room to compress (easing tailwind)"
+    elif mspread > 1.95:     _mtag = "Mildly elevated - normalizing"
+    elif mspread < 1.60:     _mtag = "Tight (rich)"
+    else:                    _mtag = "Near normal"
+
     # ---- detail table ----
     curve = fv("T10Y2Y")
     out["categories"] = [
@@ -261,6 +276,11 @@ def get_macro_dashboard():
             ("USD/JPY Realized Vol", fmt(jpy_vol, "%"), "Crowded-short risk" if jpy_vol == jpy_vol and jpy_vol > 12 else ""),
         ]),
         ("VIII. Breadth", [("% Sectors > 200DMA", fmt(breadth, "%", 0), "Broad" if breadth == breadth and breadth > 60 else "Narrow")]),
+        ("IX. Mortgage & Housing Rates", [
+            ("30yr Mortgage", fmt(mort30, "%", 2), ""),
+            ("10yr Treasury", fmt(dgs10, "%", 2), ""),
+            (f"Mortgage Spread (norm {MORT_NORM:.2f}%)", fmt(mspread, "%", 2), _mtag),
+        ]),
     ]
 
     if have_sec:
@@ -279,12 +299,17 @@ def get_macro_dashboard():
     if len(netliq_ser):      out["charts"]["netliq"] = _ser(netliq_ser / 1e6, 60)
     if "^VIX" in mk:         out["charts"]["vix"] = _ser(mk["^VIX"], 36)
     if "^MOVE" in mk:        out["charts"]["move"] = _ser(mk["^MOVE"], 36)
+    if "MORTGAGE30US" in fr and "DGS10" in fr:
+        _msp = (fr["MORTGAGE30US"].resample("W").last() - fr["DGS10"].resample("W").last()).dropna()
+        out["charts"]["mortspread"] = _ser(_msp, 156, "W")
 
     # analysis
     if mv("^MOVE") == mv("^MOVE") and mv("^MOVE") > 110:
         out["analysis"].append(f"Bond volatility elevated (MOVE {mv('^MOVE'):.0f}) - rate-driven risk.")
     if jpy_vol == jpy_vol and jpy_vol > 12:
         out["analysis"].append(f"USD/JPY realized vol {jpy_vol:.0f}% - carry-unwind risk (2024-08 style).")
+    if mspread == mspread and mspread > 2.20:
+        out["analysis"].append(f"Mortgage spread {mspread:.2f}% vs ~{MORT_NORM:.2f}% norm - elevated; room to compress = easing tailwind for mortgage rates independent of the 10yr (origination-relevant).")
     if conf == conf and conf < 70:
         out["analysis"].append(f"Consumer confidence weak ({conf:.0f}) - demand headwind.")
     if pmi == pmi and pmi < 0:

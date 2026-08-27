@@ -61,6 +61,7 @@
     <div id="ch_risk"      class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_netliq"    class="bg-slate-900 rounded p-2 h-64"></div>
     <div id="ch_sectors"   class="bg-slate-900 rounded p-2 h-64"></div>
+    <div id="ch_mortspread" class="bg-slate-900 rounded p-2 h-64"></div>
   </div>
 
   <!-- Metric table -->
@@ -193,6 +194,7 @@
   line('ch_pmi', C.pmi, 'Mfg survey composite (PMI proxy)', 'rgb(34,197,94)', true);
   line('ch_claims', C.claims, 'Jobless claims (4wk, k) — leading labor', 'rgb(239,68,68)', false);
   line('ch_nfci', C.nfci, 'Financial conditions (NFCI, + = tight)', 'rgb(168,85,247)', true);
+  line('ch_mortspread', C.mortspread, 'Mortgage spread over 10yr % (norm ~1.80)', 'rgb(217,119,6)', false);
   // validated cycles
   if (C.cycles && C.cycles.recession && C.cycles.recession.chart)
     line('ch_reccurve', C.cycles.recession.chart, '10y-3m curve (recession lead)', 'rgb(13,148,136)', true);
