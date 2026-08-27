@@ -85,6 +85,7 @@ TREND_ASSETS = {
     "DBC": "Commodities",
     "MOO": "Agri",
     "FCG": "FCG Natural Gas Stocks",
+    # (throttle config for the names below is at THROTTLED_ASSETS, end of file)
     # MLPX: midstream energy / MLPs - fills the pipeline/infrastructure gap
     # (book had upstream XOP/FCG but no midstream). Low corr (~0.4 to semis, ~0.35
     # to broad market) = genuine diversification for the concentrated commodity+
@@ -113,6 +114,16 @@ TREND_ASSETS = {
     # Single Stocks
     "RKT": "Rocket",
 }
+
+# Market-structure names: kept in the universe for the trend map's regional /
+# rates read (they show full slope/R²/signal), but THROTTLED in live sizing so
+# their whipsaw can't damage the book. Backtests flagged countries as whipsaw-
+# prone (Sharpe 0.84->0.67) and long bonds as return-dilutive (defense only), so
+# rather than delete them we cap their allocation to THROTTLE_FACTOR x the
+# optimizer's weight; the freed capital simply falls to cash. EWY is left at full
+# weight (Samsung = semiconductor supply chain, on-thesis, not display-only).
+THROTTLED_ASSETS = {"EWZ", "INDA", "EWJ", "IEV", "TLT"}
+THROTTLE_FACTOR = 0.30
 
 # Names NOT zeroed by the risk-off equity gate (backtest_gss_eqgate 2007-26:
 # gating these too destroyed the 2008 crisis alpha - TLT/GLD were the book's

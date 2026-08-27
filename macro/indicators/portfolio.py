@@ -19,7 +19,8 @@ except ImportError:  # numpy < 1.20
 from macro.helpers import compute_RSI, compute_ATR
 from macro.constants import (
     SECTOR_NAMES, SECTORS, COUNTRIES, COMMODITIES,
-    CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS, DEFENSIVE_ASSETS
+    CURRENCIES, TREND_ASSETS, ML_MACRO_TICKERS, DEFENSIVE_ASSETS,
+    THROTTLED_ASSETS, THROTTLE_FACTOR
 )
 from predict import predict_assets, predict_commodities
 from macro.paths import model_path
@@ -906,6 +907,24 @@ def get_trends():
         regime=regime,              # pass regime for dynamic vol cap
         deploy_throttle=vix_throttle,
     )
+
+    # --- Throttle market-structure names (countries / long bond) ---
+    # They keep their full slope/R²/signal on the map (market-structure read),
+    # but their LIVE allocation is capped to THROTTLE_FACTOR x the optimizer's
+    # weight so their whipsaw can't damage the book. Freed weight -> cash
+    # (deployment simply drops). Applied AFTER the optimizer so covariance/risk
+    # were computed on full info. EWY excluded (on-thesis semi proxy).
+    if THROTTLE_FACTOR < 1.0:
+        for r in optimized_results:
+            if r["sym"] in THROTTLED_ASSETS and r.get("weight_pct", 0) > 0:
+                r["weight_pct"] = round(r["weight_pct"] * THROTTLE_FACTOR, 2)
+                da = round(r.get("dollar_amount", 0.0) * THROTTLE_FACTOR, 2)
+                r["dollar_amount"] = da
+                r["pos_size"] = f"${da:,.0f}"
+                r["throttled"] = True
+        # keep the reported deployment honest after the throttle
+        summary["total_allocated"] = round(
+            sum(r.get("weight_pct", 0) for r in optimized_results), 1)
 
     summary["risk_gate"] = "RISK-OFF" if gate_riskoff else "RISK-ON"
     summary["vix_throttle"] = round(vix_throttle, 2)
