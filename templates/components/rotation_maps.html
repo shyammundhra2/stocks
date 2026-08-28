@@ -49,6 +49,20 @@
         var xs = data.map(function (d) { return d.x; });
         var xabs = Math.max.apply(null, xs.map(Math.abs).concat([3]));
 
+        // Fixed x-span covering markers, the iso-curves (they reach +/-xabs) AND
+        // every hover ghost path (historical slopes can exceed today's xabs).
+        // Pinning the range below (autorange:false) stops a hover restyle - or a
+        // resize - from re-fitting the axis, which was the flicker: ghost/curve
+        // beyond the auto-range -> relayout -> point shifts under the cursor ->
+        // unhover/hover churn -> flicker.
+        var xspan = xabs;
+        data.forEach(function (d) {
+            (d.slope_r2_path || []).forEach(function (q) {
+                var ax = Math.abs(q[0]); if (ax > xspan) xspan = ax;
+            });
+        });
+        xspan *= 1.06;   // small padding so edge markers/curves aren't clipped
+
         // 3 iso-conviction curves |slope|·R² = k, each drawn on both the
         // positive (leading) and negative (weakening/lagging) sides.
         var kvals = [0.18, 0.36, 0.6].map(function (f) { return f * xabs; });
@@ -97,9 +111,9 @@
         Plotly.newPlot(id, contours.concat([ghost, markers]), {
             paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
             font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
-            hovermode: 'closest',
-            xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
-            yaxis: { title: 'R²', range: [0, 1], gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+            hovermode: 'closest', uirevision: 'keep',
+            xaxis: { title: 'Slope (%)', range: [-xspan, xspan], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+            yaxis: { title: 'R²', range: [0, 1], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
             annotations: baseAnnotations, showlegend: false
         }, { responsive: true, displayModeBar: false });
 
