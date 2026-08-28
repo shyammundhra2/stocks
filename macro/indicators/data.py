@@ -252,6 +252,42 @@ def _risk_history_save(base, cache):
 # =========================
 # SHARED DATA MANAGER
 # =========================
+_CORE_CHECK = ("^VIX", "SPY", "^MOVE")
+
+
+def _core_history_ok(data, min_frac=0.5):
+    """False if a CORE ticker came back suspiciously sparse vs SPY - i.e. a bad
+    batch fetch (yfinance sometimes returns a partial ^-index column) that the
+    incremental cache would otherwise FREEZE forever (e.g. ^VIX at 7 points,
+    breaking the VIX 50d z-score). Only judges against SPY when SPY itself is
+    full, so a genuinely short market history isn't mistaken for the bug."""
+    try:
+        cols = getattr(data, "columns", None)
+        close = data["Close"] if (cols is not None and hasattr(cols, "get_level_values")
+                                   and "Close" in cols.get_level_values(0)) else data
+        if "SPY" not in close.columns:
+            return True
+        ref = int(close["SPY"].notna().sum())
+        if ref < 60:
+            return True
+        for t in _CORE_CHECK:
+            if t in close.columns and int(close[t].notna().sum()) < max(60, min_frac * ref):
+                return False
+        return True
+    except Exception:
+        return True
+
+
+def _invalidate_store(label, tickers):
+    try:
+        base = _store_base(label, tickers)
+        for p in (base + ".parquet", base + ".meta"):
+            if os.path.exists(p):
+                os.remove(p)
+    except Exception:
+        pass
+
+
 @ttl_cache(30)
 def _get_shared_market_data():
     all_tickers = list(set(
@@ -264,7 +300,14 @@ def _get_shared_market_data():
         ['SPY', 'RSP', '^VIX', '^MOVE', 'HYG', 'IEF', '^TNX', '^IRX',
          'JPY=X', 'HG=F', 'GC=F', 'QQQ']
     ))
-    return _persistent_fetch("shared", all_tickers, "1y", group_by="column")
+    data = _persistent_fetch("shared", all_tickers, "1y", group_by="column")
+    # Self-heal: if a core ticker is sparse (a transient bad fetch the incremental
+    # cache would otherwise freeze), drop the store and re-fetch once.
+    if not _core_history_ok(data):
+        print("shared-data self-heal: core ticker sparse -> invalidating cache + re-fetch")
+        _invalidate_store("shared", all_tickers)
+        data = _persistent_fetch("shared", all_tickers, "1y", group_by="column")
+    return data
 
 
 @ttl_cache(30)
