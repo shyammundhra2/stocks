@@ -131,6 +131,39 @@
     </div>
   </div>
 
+  <!-- SFR rents + 1yr forward forecast (US / Raleigh / Milpitas) -->
+  {% if rents.metros %}
+  <div class="mt-5">
+    <div class="flex justify-between items-center mb-2">
+      <p class="text-[10px] uppercase tracking-widest text-teal-400">Rents — Single-Family (3BR proxy) + 1yr forecast</p>
+      {% if rents.refreshing %}<span class="text-[9px] text-yellow-400 animate-pulse">↻ refreshing</span>{% endif %}
+    </div>
+    <div class="bg-slate-900 rounded p-3">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {% for m in rents.metros %}
+        <div class="bg-slate-800/50 rounded p-3">
+          <p class="text-xs font-bold text-white mb-1">{{ m.metro }}</p>
+          <p class="text-2xl font-black text-white">${{ "{:,}".format(m.rent) }}<span class="text-xs text-slate-500 font-normal">/mo</span></p>
+          <div class="flex justify-between text-[10px] mt-2">
+            <span class="text-slate-400">trailing 12m</span>
+            <span class="font-mono {{ 'text-green-400' if m.rent_yoy > 0 else 'text-red-400' }}">{{ '%+.1f'|format(m.rent_yoy) }}%</span>
+          </div>
+          <div class="flex justify-between text-[10px] mt-1">
+            <span class="text-slate-400">home-price YoY (leads)</span>
+            <span class="font-mono {{ 'text-green-400' if m.hp_yoy > 0 else 'text-red-400' }}">{{ '%+.1f'|format(m.hp_yoy) }}%</span>
+          </div>
+          <div class="flex justify-between text-xs mt-2 pt-2 border-t border-slate-700/40">
+            <span class="text-slate-300 font-bold">→ 1yr forecast</span>
+            <span class="font-mono font-bold {{ 'text-green-400' if m.fwd > 3 else 'text-red-400' if m.fwd < 0 else 'text-yellow-400' }}">{{ '%+.1f'|format(m.fwd) }}% (${{ "{:,}".format(m.rent_1yr) }})</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="text-[9px] text-slate-600 mt-2">Zillow SFR rent (ZORI, ~3BR proxy). Forecast = {{ rents.coefs[0] }} + {{ rents.coefs[1] }}·rent-momentum + {{ rents.coefs[2] }}·home-price-momentum (fit on CPI-rent + Case-Shiller; rents validated forecastable — persistence +0.55, housing-lead +0.56). As of {{ rents.asof }}.</p>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Metro housing ranking (validated, cached) -->
   {% if hz.ranking %}
   <div class="mt-5">
