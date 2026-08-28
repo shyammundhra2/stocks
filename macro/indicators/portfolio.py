@@ -637,10 +637,21 @@ def get_trends():
 
             rsi14 = float(compute_RSI(c, 14).iloc[-1])
             rsi2 = float(compute_RSI(c, 2).iloc[-1])
+            # 20-day vol-adjusted drawdown - the REV oversold trigger, matched to
+            # the ~monthly (turn-of-month) hold. Replaces RSI2<15, which is a 1-5d
+            # signal mis-matched to a 20d hold: pooled MR IC +0.052 vs RSI2 +0.022
+            # at fwd-20d, and the month-end 20y A/B (rsi2 vs z20) is a wash that
+            # leans z20 - maxDD -11.9%->-11.4%, Sharpe .79->.81, turnover -12%.
+            if len(c) >= 21:
+                _ret20 = last / float(c.iloc[-21]) - 1.0
+                _vol20 = float(c.pct_change().rolling(20).std().iloc[-1]) * np.sqrt(20)
+                z20 = _ret20 / _vol20 if (np.isfinite(_vol20) and _vol20 > 0) else 0.0
+            else:
+                z20 = 0.0
 
             # Adaptive MR-vs-trend router (backtest 2020-26: beats either rule
-            # alone). Efficiency ratio detects state; route momentum vs RSI2
-            # reversion, both gated on price > 200SMA.
+            # alone). Efficiency ratio detects state; route momentum vs a 20d
+            # vol-adjusted-dip reversion, both gated on price > 200SMA.
             eff_ratio = _efficiency_ratio(c, 20)
             above200 = last > s200
             # TREND gate widened 0.50 -> 0.40 (backtest 2020-26: Sharpe 1.03 ->
@@ -650,10 +661,11 @@ def get_trends():
                 adaptive_signal = "MOM" if (above200 and last > s50 and slope > 0) else "FLAT"
             elif eff_ratio <= 0.35:
                 adaptive_state = "CHOP"
-                # REV requires all three: ER<=0.35 (choppy) AND rsi2<15 (oversold)
-                # AND outside the 3 iso-conviction curves (genuinely directionless).
+                # REV requires all three: ER<=0.35 (choppy) AND z20<-1.0 (a real
+                # 20d vol-adjusted dip) AND outside the 3 iso-conviction curves
+                # (genuinely directionless).
                 _outside_curves = _map_conv.get(sym, float("inf")) < _rev_curve_k1
-                adaptive_signal = ("REV" if (above200 and rsi2 < 15 and _outside_curves)
+                adaptive_signal = ("REV" if (above200 and z20 < -1.0 and _outside_curves)
                                    else "FLAT")
             else:
                 adaptive_state, adaptive_signal = "MID", "FLAT"

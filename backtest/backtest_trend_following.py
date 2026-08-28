@@ -55,6 +55,12 @@ try:
 except ImportError:
     sliding_window_view = None
 
+# REV oversold trigger mode: "z20" (production, horizon-matched 20d vol-adjusted
+# dip) or "rsi2" (legacy RSI2<15). Module-level so an A/B runner can toggle it.
+# Switched to z20 2026-08 after the month-end 20y A/B came out a wash leaning z20
+# (maxDD -11.9%->-11.4%, Sharpe .79->.81, turnover -12%).
+REV_MODE = "z20"
+
 END = pd.Timestamp("2026-07-10")
 TEST_START = END - pd.DateOffset(years=2)
 DATA_START = TEST_START - pd.DateOffset(years=2)  # burn-in for 200MA, hurst, etc.
@@ -157,12 +163,23 @@ def compute_asset_row(sym, df):
     # lower-bound estimate of the defense - production gates equities to cash in
     # risk-off, which this doesn't).
     rsi2 = float(compute_RSI(c, 2).iloc[-1])
+    # 20-day vol-adjusted drawdown - the horizon-matched MR trigger (hold ~= 20d).
+    # NaN-safe; 0.0 when there isn't enough history or vol is degenerate.
+    if len(c) >= 21:
+        ret20 = last / float(c.iloc[-21]) - 1.0
+        vol20 = float(c.pct_change().rolling(20).std().iloc[-1]) * np.sqrt(20)
+        z20 = ret20 / vol20 if (np.isfinite(vol20) and vol20 > 0) else 0.0
+    else:
+        z20 = 0.0
     eff_ratio = _efficiency_ratio(c, 20)
     _above200 = last > s200
+    # REV oversold trigger: "rsi2" = production (1-5d RSI2<15); "z20" = the
+    # horizon-matched 20d vol-adjusted dip (z20<-1.0). A/B-tested before adopting.
+    _oversold = (z20 < -1.0) if REV_MODE == "z20" else (rsi2 < 15)
     if eff_ratio >= 0.40:
         adaptive_signal = "MOM" if (_above200 and last > s50 and slope > 0) else "FLAT"
     elif eff_ratio <= 0.35:
-        adaptive_signal = "REV" if (_above200 and rsi2 < 15) else "FLAT"
+        adaptive_signal = "REV" if (_above200 and _oversold) else "FLAT"
     else:
         adaptive_signal = "FLAT"
     slope_z = slope_z_for(c, slope)
