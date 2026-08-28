@@ -117,6 +117,17 @@
             annotations: baseAnnotations, showlegend: false
         }, { responsive: true, displayModeBar: false });
 
+        // Make every non-marker trace (iso-curves + the hover ghost) ignore the
+        // pointer. Otherwise a ghost drawn under the cursor - e.g. SIL, whose
+        // tight trend cluster sits right on its own marker - emits mouseout on
+        // the marker -> unhover -> clear -> re-hover -> redraw = flicker. The
+        // markers trace is drawn last, so harden every trace group but the last.
+        function harden() {
+            var tr = el.querySelectorAll('.scatterlayer .trace');
+            for (var i = 0; i < tr.length - 1; i++) tr[i].style.pointerEvents = 'none';
+        }
+        harden();
+
         // Per-hover ghost path (rAF-deferred + debounced unhover, same safeguards
         // as the trends map to avoid the hover "sticking"/flicker).
         var gd = el, shown = -1, rafPending = false, clearTimer = null;
@@ -126,7 +137,7 @@
             Plotly.restyle(id, {
                 x: [pth.map(function (q) { return q[0]; })],
                 y: [pth.map(function (q) { return q[1]; })]
-            }, [ghostIdx]);
+            }, [ghostIdx]).then(harden);   // restyle rebuilds the ghost group -> re-harden
         }
         function showGhost(i) {
             if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
