@@ -393,6 +393,19 @@
             // left) sides, so downtrends get the same conviction reference lines.
             var xmax = Math.max.apply(null, trendData.map(function (d) { return d.x; }).concat([6]));
             var xmin = Math.min.apply(null, trendData.map(function (d) { return d.x; }).concat([-6]));
+            // Pin the x-range to cover markers, iso-curves AND every hover ghost
+            // path (historical slopes can exceed today's), so a hover restyle or
+            // a resize never re-fits the axis - that autorange loop was one
+            // flicker source (fixed with autorange:false + uirevision below).
+            var xlo = xmin, xhi = xmax;
+            trendData.forEach(function (d) {
+                (d.path || []).forEach(function (q) {
+                    if (q[0] < xlo) xlo = q[0];
+                    if (q[0] > xhi) xhi = q[0];
+                });
+            });
+            var _xpad = (xhi - xlo) * 0.03 || 1;
+            xlo -= _xpad; xhi += _xpad;
             var isoLine = function (xa, ya) {
                 return { x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
                          line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false };
@@ -434,11 +447,22 @@
             Plotly.newPlot('trendMap', contours.concat([ghost, markers]), {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
-                hovermode: 'closest',
-                xaxis: { title: 'Slope (%)', gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
-                yaxis: { title: 'R²', range: [0, 1], gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+                hovermode: 'closest', uirevision: 'keep',
+                xaxis: { title: 'Slope (%)', range: [xlo, xhi], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
+                yaxis: { title: 'R²', range: [0, 1], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
                 annotations: ann, showlegend: false
             }, { responsive: true, displayModeBar: false });
+
+            // Make every non-marker trace (iso-curves + the hover ghost) ignore
+            // the pointer. Otherwise a ghost drawn under the cursor - e.g. SIL,
+            // whose tight trend cluster sits right on its own marker - emits
+            // mouseout on the marker -> unhover -> clear -> re-hover -> redraw =
+            // flicker. Markers are drawn last, so harden every group but the last.
+            function harden() {
+                var tr = document.querySelectorAll('#trendMap .scatterlayer .trace');
+                for (var i = 0; i < tr.length - 1; i++) tr[i].style.pointerEvents = 'none';
+            }
+            harden();
 
             // On hover of a live marker, reveal only THAT ETF's daily path as the
             // faded ghost. Two safeguards against the hover "sticking" after many
@@ -454,7 +478,7 @@
                 Plotly.restyle('trendMap', {
                     x: [pth.map(function (q) { return q[0]; })],
                     y: [pth.map(function (q) { return q[1]; })]
-                }, [ghostIdx]);
+                }, [ghostIdx]).then(harden);   // restyle rebuilds the ghost group -> re-harden
             }
             function showGhost(i) {
                 if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
