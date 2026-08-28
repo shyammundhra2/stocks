@@ -160,6 +160,7 @@
         {% endfor %}
       </div>
       <p class="text-[9px] text-slate-600 mt-2">Zillow SFR rent (ZORI, ~3BR proxy). Forecast = {{ rents.coefs[0] }} + {{ rents.coefs[1] }}·rent-momentum + {{ rents.coefs[2] }}·home-price-momentum (fit on CPI-rent + Case-Shiller; rents validated forecastable — persistence +0.55, housing-lead +0.56). As of {{ rents.asof }}.</p>
+      <p class="text-[9px] text-yellow-600 mt-1">⚠ National model applied per-metro — it does NOT capture metro-specific apartment supply. <span class="text-yellow-500">Raleigh</span> is one of the most over-built multifamily markets in the US, so its forecast is likely <span class="text-yellow-500">optimistic</span> (rents may soften below shown). <span class="text-slate-400">Milpitas/Bay Area</span> is supply-constrained → the forecast more likely holds or is conservative.</p>
     </div>
   </div>
   {% endif %}
