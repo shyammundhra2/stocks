@@ -156,9 +156,18 @@ def get_currency_rotation():
             slope, r2 = _trend_stats(c, 60, 60)
             gradient = _compute_gradient(c.tail(20), window=5, slice_len=10, scale=60)
             slope_change = _compute_slope_change(c)
+            ret126 = _ret_126(c_full)                    # 6mo momentum (currency strength)
             results.append({"sym": s, "name": n, "slope": round(slope, 4), "r2": r2,
                             "gradient": gradient, "slope_change": slope_change,
-                            "slope_r2_path": _slope_r2_path(c_full, window=60, scale=60)})
+                            "ret_126": round(ret126 * 100, 1) if ret126 == ret126 else None,
+                            "slope_r2_path": _slope_r2_path(c_full, window=60, scale=60),
+                            "rank_score": ret126})       # + 6mo momentum: strongest first
+        # Ranked by 6-month MOMENTUM - the only FX signal with any edge (test 2010-26:
+        # 6mo mom cross-sectional IC +0.093 vs fwd-3m; 3mo ~0, reversal ~0). Weak
+        # (5-pair cross-section, FX is near-random-walk) but beats the un-validated
+        # slope this used to sort by. Carry (rate differential) untested - no rate feed.
+        results.sort(key=lambda x: (x["rank_score"] if x["rank_score"] == x["rank_score"]
+                                    else float("-inf")), reverse=True)
         return results
     except Exception as e:
         print(f"Currency Rotation Error: {e}")
