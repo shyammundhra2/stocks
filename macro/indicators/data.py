@@ -256,23 +256,31 @@ _CORE_CHECK = ("^VIX", "SPY", "^MOVE")
 
 
 def _core_history_ok(data, min_frac=0.5):
-    """False if a CORE ticker came back suspiciously sparse vs SPY - i.e. a bad
-    batch fetch (yfinance sometimes returns a partial ^-index column) that the
-    incremental cache would otherwise FREEZE forever (e.g. ^VIX at 7 points,
-    breaking the VIX 50d z-score). Only judges against SPY when SPY itself is
-    full, so a genuinely short market history isn't mistaken for the bug."""
+    """False if a CORE ticker came back suspiciously sparse - i.e. a bad batch
+    fetch (yfinance intermittently truncates a column, or drops a ^-index ticker
+    entirely) that the incremental cache would otherwise FREEZE forever (e.g.
+    ^VIX at 7 points, breaking the VIX 50d z-score).
+
+    The reference length is the FULLEST column in the batch, NOT SPY - because
+    SPY itself can be the poisoned one. (Old bug: SPY froze at 6 points -> the
+    `ref<60` short-history escape hatch fired on SPY's own count -> the guard
+    passed the poison and the whole book fell back.) A core ticker MISSING
+    entirely, or under min_frac of the fullest column, now trips the self-heal;
+    only a batch where NOTHING has history is treated as genuinely short."""
     try:
         cols = getattr(data, "columns", None)
         close = data["Close"] if (cols is not None and hasattr(cols, "get_level_values")
                                    and "Close" in cols.get_level_values(0)) else data
-        if "SPY" not in close.columns:
-            return True
-        ref = int(close["SPY"].notna().sum())
+        counts = close.notna().sum()
+        ref = int(counts.max()) if len(counts) else 0
         if ref < 60:
-            return True
-        for t in _CORE_CHECK:
-            if t in close.columns and int(close[t].notna().sum()) < max(60, min_frac * ref):
-                return False
+            return True                       # nothing in the batch has history - genuinely short
+        need = max(60, min_frac * ref)
+        for t in _CORE_CHECK:                  # includes SPY, ^VIX, ^MOVE
+            if t not in close.columns:
+                return False                   # core ticker dropped from the batch entirely
+            if int(close[t].notna().sum()) < need:
+                return False                   # core ticker sparse vs the fullest column
         return True
     except Exception:
         return True
