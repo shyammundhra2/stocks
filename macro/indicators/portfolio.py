@@ -762,65 +762,40 @@ def get_trends():
             )) if slope > 0 else 0.0
 
             # =============================================
-            # Decision Logic - ML-free (2026-06-11)
-            # Per-asset ML branches removed; price/MA/slope/RSI/geometry
-            # conditions were what actually drove statuses for 32 of 33
-            # tickers anyway. Status vocabulary unchanged so the optimizer
-            # filter and dashboard need no changes.
+            # Iso-conviction BUY/HOLD/SELL - DISPLAY ONLY (2026-08-28)
+            # Reads the status straight off the momentum map's own geometry:
+            # conviction = |slope|*R2 vs the map's iso-conviction curves (levels
+            # k = 1/2/4, the same slope*R2 units the map draws), plus slope sign
+            # and the 200DMA master gate. slope*R2 is the ONE validated signal in
+            # the book, so the tag now matches exactly what you see on the map.
+            # Does NOT drive positions - the optimizer selects on adaptive_signal
+            # (see line ~178); this string is purely for the dashboard/Copy Report.
+            # Replaces the old ad-hoc slope_z/rsi/p_stop/hurst ladder (never
+            # backtested, could contradict the book). Colors stay compatible:
+            # STRONG->purple, BUY->green, TRIM->orange, SELL->red, HOLD->default.
             # =============================================
-            # sell
-            if last < position['stop']:
-                status = "SELL (STOP)"
-
-            elif last < s50 and slope < 0:
-                # Price below MA50 AND slope negative -> confirmed downtrend
-                status = "SELL (MA50)"
-
-            elif slope_z > 2.0 and r2 > 0.7 and rsi14 < 70 and slope > 0:
-                # Momentum breakout - slope extension with strong fit, not overbought
-                status = "BUY (BREAKOUT)"
-
-            elif slope_z > 2.0 and r2 > 0.8 and rsi14 > 70:
-                # Slope very extended AND overbought -> trim
-                status = "TRIM (EXTENDED)"
-
-            elif slope_z > 1.5 and delta_slope < -3:
-
-                status = "TRIM (FADING MOMENTUM)"
-
-                # Mean-reversion swing: oversold dip inside an intact uptrend.
-                # MUST sit above the geometry / negative-slope / position-size
-                # trims below — each would otherwise shadow it. A down-leg sharp
-                # enough to print rsi<30 also tends to push p_stop>0.55 and
-                # slope<-2, and because _compute_kelly_size rejects slope<=0 it
-                # forces pos_size==0. Naturally exclusive with SELL(MA50) via
-                # last>s50 and with the slope_z>0 branches above.
-
-            elif (hurst < 0.45 and last > s50 and rsi14 < 30
-                and slope_z < -1.5 and slope < 0):
-                status = "BUY (MR SWING)"
-            elif p_stop > 0.55 and last > s50:
-                status = "TRIM (GEOMETRY)"
-            elif slope < -2:
-                # Slope significantly negative
-                status = "TRIM (NEGATIVE SLOPE)"
-
-            elif pos_size == 0:
-                status = "TRIM (POSITION SIZE)"
-
-            # buy/hold zone
-            elif (last > s200) and (last > s50) and (slope > 0) and (r2 > 0.6):
-                # Strong uptrend - entry quality from momentum position
-                if slope_z < 0 and rsi14 < 60:
-                    # Slope below its own recent mean - pullback within uptrend
-                    status = "BUY (PULLBACK)"
-                elif slope_z > 1.0:
-                    status = "BUY (BULL)"
+            conv = abs(slope) * r2                    # which iso-curve the marker sits on
+            _oversold = (z20 < -1.0) or (rsi14 < 30)  # inside-the-curves REV zone
+            if last < s200:
+                status = "SELL (200DMA)"              # below long-term trend = risk-off
+            elif slope > 0:                           # uptrend - right of the map
+                if conv >= 4:
+                    status = "BUY (STRONG)"           # beyond the outer curve - clean leader
+                elif conv >= 2:
+                    status = "BUY (TREND)"            # clean trend
+                elif conv >= 1:
+                    status = "BUY"                    # moderate conviction
+                elif _oversold:
+                    status = "BUY (MR SWING)"         # near origin + oversold = reversion setup
                 else:
-                    status = "BUY"
-
-            else:
-                status = "HOLD"
+                    status = "HOLD (CHOP)"            # near origin, no conviction
+            else:                                     # slope < 0: weakening, still > 200DMA
+                if conv >= 2:
+                    status = "SELL (BREAKDOWN)"       # clean downtrend, high conviction
+                elif conv >= 1:
+                    status = "TRIM (FADING)"          # rolling over
+                else:
+                    status = "HOLD (CHOP)"            # choppy, no conviction
 
             results.append({
                 "sym": sym,
