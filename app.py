@@ -107,10 +107,12 @@ def macro():
     from macrocockpit.cycles import get_cycles
     from macrocockpit.housing import get_metro_ranking
     from macrocockpit.rents import get_rents
+    from macrocockpit.buy_scorecard import get_buy_scorecard
     md = get_macro_dashboard()
     cy = get_cycles()
     hz = get_metro_ranking()      # cached; refreshes in background if >1 day old
     rents = get_rents()           # cached SFR rent + 1yr forecast (US/Raleigh/Milpitas)
+    scorecard = get_buy_scorecard()   # cached 30d; net cap rate vs mortgage BUY gate
     charts = dict(md.get("charts", {}))
     charts["cycles"] = cy      # cycle chart series bundled for the client
     resp = make_response(render_template(
@@ -119,6 +121,7 @@ def macro():
         cy=cy,
         hz=hz,
         rents=rents,
+        scorecard=scorecard,
         charts_json=json.dumps(charts),
         rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         active_tab="macro",

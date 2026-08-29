@@ -196,6 +196,50 @@
   </div>
   {% endif %}
 
+  <!-- Rental buy scorecard: net cap rate vs mortgage rate (positive-leverage gate) -->
+  {% if scorecard.metros %}
+  <div class="mt-5">
+    <div class="flex justify-between items-center mb-2">
+      <p class="text-[10px] uppercase tracking-widest text-teal-400">Rental Buy Scorecard — net cap rate vs mortgage (BUY gate)</p>
+      {% if scorecard.refreshing %}<span class="text-[9px] text-yellow-400 animate-pulse">↻ refreshing</span>{% endif %}
+    </div>
+    <div class="bg-slate-900 rounded p-3">
+      <p class="text-[10px] text-slate-400 mb-2">
+        Rule: <span class="text-slate-200 font-bold">BUY only if net cap rate &gt; mortgage rate</span> (positive leverage).
+        30yr mortgage <span class="text-red-400 font-mono">{{ scorecard.mortgage_rate }}%</span> = the gate.
+        Ranked by expected levered return (cap spread + appreciation + rent growth).
+      </p>
+      <div class="grid grid-cols-1 text-xs">
+        <div class="flex justify-between text-[9px] uppercase tracking-wider text-slate-500 border-b border-slate-700/50 py-1">
+          <span class="w-2/5">metro</span>
+          <span class="w-1/5 text-right">net cap</span>
+          <span class="w-1/5 text-right">spread</span>
+          <span class="w-1/5 text-right">HP / rent fwd</span>
+          <span class="w-16 text-right">verdict</span>
+        </div>
+        {% for m in scorecard.metros %}
+        <div class="flex justify-between items-center border-b border-slate-800/50 py-1 {{ 'bg-green-900/20' if m.verdict == 'BUY' }}">
+          <span class="w-2/5 text-slate-200">{{ m.metro }}
+            <span class="text-slate-600 text-[9px]">${{ "{:,}".format(m.rent) }}/mo · ${{ "{:,}".format((m.price/1000)|int) }}k · tax {{ m.tax_rate }}%</span>
+          </span>
+          <span class="w-1/5 text-right font-mono text-slate-300">{{ '%.2f'|format(m.net_cap) }}%</span>
+          <span class="w-1/5 text-right font-mono {{ 'text-green-400' if m.spread > 0 else 'text-red-400' }}">{{ '%+.2f'|format(m.spread) }}</span>
+          <span class="w-1/5 text-right font-mono text-slate-500">
+            <span class="{{ 'text-green-400' if m.hp_yoy > 0 else 'text-red-400' }}">{{ '%+.1f'|format(m.hp_yoy) }}%</span>
+            / <span class="{{ 'text-green-400' if m.rent_fwd > 2 else 'text-yellow-400' }}">{{ '%+.1f'|format(m.rent_fwd) }}%</span>
+          </span>
+          <span class="w-16 text-right">
+            <span class="text-[9px] font-black px-1.5 py-0.5 rounded {{ 'bg-green-500 text-slate-900' if m.verdict == 'BUY' else 'bg-slate-700 text-slate-400' }}">{{ m.verdict }}</span>
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="text-[9px] text-slate-600 mt-2">Net cap = (gross rent − ~{{ (scorecard.opex_of_rent*100)|int }}% opex − state property tax) / Zillow ZHVI price. Rent fwd = the validated rents model. As of {{ scorecard.asof }}; cached 30 days.</p>
+      <p class="text-[9px] text-yellow-600 mt-1">⚠ At a {{ scorecard.mortgage_rate }}% mortgage, expect ALL metros to PASS — SFR cap rates (~2–5%) sit below borrowing cost, so financed SFR is a negatively-carried <span class="text-yellow-500">appreciation bet</span>, not income. All-cash, the cap rate barely clears the ~5% T-bill floor. The gate flips GREEN only when rates fall or cap rates rise (price drops / rent gains) — it's a timing + relative-ranking tool.</p>
+    </div>
+  </div>
+  {% endif %}
+
   <p class="text-[10px] text-slate-600 mt-4">
     ISM PMI uses Industrial Production as a proxy (real ISM paywalled since 2016). All values are live
     from FRED + markets, computed deterministically. Information/context, not a trade signal.
