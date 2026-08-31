@@ -56,3 +56,6 @@ cover/
 # Project-specific: virtualenv + regenerable data caches
 venv/
 *.parquet
+
+# techjobs: panel is regenerable from keyless FRED (python -m techjobs.build_panel)
+techjobs/techjobs_panel_h*.csv
