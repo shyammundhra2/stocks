@@ -87,6 +87,11 @@ TREND_ASSETS = {
 
     # Commodities & Real Assets
     "GLD": "Gold",
+    # SLV: spot silver - re-added per the commodity-tilt call. A legit trending
+    # asset (unlike bleed-shaped tail/short ETFs), monetary+industrial hybrid,
+    # higher beta than gold (~2x vol) so the inverse-vol sizing down-weights it.
+    # NOT defensive (silver sells off in risk-off). Complements SIL (miners) / GLD.
+    "SLV": "Silver",
     "XME": "Metals",
     # PICK: broad global base-metals miners - scanner trender (+50% 12-1, at 52wk
     # high; note choppy R2 ~0.10, so a rougher trend than a clean uptrend).
@@ -113,7 +118,6 @@ TREND_ASSETS = {
     # International Equities
     "EWY": "Korea",
     "EWJ": "Japan",
-    "EWZ": "Brazil",
     "IEV": "Europe",
 
     # Fixed Income & Crypto
@@ -145,7 +149,7 @@ TREND_ASSETS = {
 # rather than delete them we cap their allocation to THROTTLE_FACTOR x the
 # optimizer's weight; the freed capital simply falls to cash. EWY is left at full
 # weight (Samsung = semiconductor supply chain, on-thesis, not display-only).
-THROTTLED_ASSETS = {"EWZ", "EWJ", "IEV"}
+THROTTLED_ASSETS = {"EWJ", "IEV"}
 THROTTLE_FACTOR = 0.30
 
 # Names NOT zeroed by the risk-off equity gate (backtest_gss_eqgate 2007-26:
