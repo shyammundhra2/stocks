@@ -1,9 +1,27 @@
 # app.py
-from flask import Flask, render_template, make_response
-from datetime import datetime
+import os
 import json
+import secrets
+from datetime import datetime
+
+from flask import Flask, render_template, make_response, request, Response
 
 app = Flask(__name__)
+
+
+@app.before_request
+def _require_basic_auth():
+    """HTTP basic auth, only ENABLED when APP_USER + APP_PASS are set (they are on
+    the public HF Space; unset locally so dev stays open). Constant-time compare."""
+    user = os.environ.get("APP_USER")
+    pw = os.environ.get("APP_PASS")
+    if not user or not pw:
+        return None                       # auth disabled (local dev)
+    a = request.authorization
+    if a and secrets.compare_digest(a.username, user) and secrets.compare_digest(a.password, pw):
+        return None
+    return Response("Authentication required.", 401,
+                    {"WWW-Authenticate": 'Basic realm="GSS MacroSystem"'})
 
 
 @app.route("/")

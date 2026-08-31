@@ -1,0 +1,29 @@
+name: Deploy to Hugging Face Space
+
+# Syncs this repo to a Hugging Face Docker Space on every push to main.
+# One-time setup (GitHub repo -> Settings -> Secrets and variables -> Actions):
+#   HF_TOKEN  = a Hugging Face WRITE token (huggingface.co/settings/tokens)
+#   HF_SPACE  = your space id, e.g.  yourname/gss-macrosystem
+# And on the Space (Settings -> Variables and secrets) add:
+#   APP_USER, APP_PASS  = basic-auth login for the dashboard (it's a public Space)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git push --force "https://github-actions:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}.git" HEAD:main

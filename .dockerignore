@@ -1,0 +1,9 @@
+venv/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+scratchpad/
+*.png
+calib_price_cache.parquet
+.DS_Store

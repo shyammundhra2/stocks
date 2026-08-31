@@ -1,3 +1,13 @@
+---
+title: GSS MacroSystem
+emoji: 📈
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # GSS — Quantitative Trend & Macro System
 
 A Flask dashboard for a **survival-first** multi-asset trend-following book, paired
