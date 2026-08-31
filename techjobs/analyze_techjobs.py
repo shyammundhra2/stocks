@@ -10,15 +10,23 @@ BEST of them, not a convenient one. That distinction turned out to decide the re
 tech employment growth mean-reverts, so naive momentum is a genuinely bad rule and beating
 it is easy and meaningless. No-change is the rule to beat, and the model does not beat it.
 
-WHAT THIS FOUND (see main() output):
-  * The LEVEL is not forecastable. At both 6m and 12m the model loses to a no-change
-    baseline, so ``forecast`` withholds every point estimate of employment growth.
+WHAT THIS FOUND (see main() output). The answer differs by what you ask, and the three
+results below are the whole point of the module:
+  * PER-INDUSTRY levels are not forecastable. The panel GBM loses to a no-change baseline
+    at both horizons (-15.6%, -14.7%), so ``forecast`` withholds every point estimate.
   * The RANKING is. Cross-sectional rank IC is +0.52 at 6m and +0.40 at 12m, positive in
     90%/82% of months out-of-sample. Which tech sub-industries do better than others is
     predictable even though how much any of them grows is not. Same shape as the finding
     in housing/predict_housing.py - trust the rank, not the number.
-  * Turning points are not forecastable at all. On months where the trend actually turned,
-    direction accuracy is 38% (6m) and 43% (12m) - worse than a coin flip.
+  * AGGREGATE tech employment IS forecastable, by a plain OLS on leading indicators -
+    see ``aggregate_model``. +10.1% skill at 6m and +7.3% at 12m against no-change, and
+    critically 86-87% direction accuracy on the months when the trend TURNED.
+
+That last point corrects the obvious reading of the panel result. Momentum extrapolation
+is blind at turns (38-43% direction, worse than a coin flip) - but that is a property of
+momentum models, NOT of the tech labour market. Leading indicators do see turns coming.
+Ask "can tech employment be predicted?" and the answer depends entirely on which of these
+three questions you meant.
 
 THE TEST THAT MATTERS. Averaged over all months, any persistence model looks good because
 most months are not turning points. ``turning_point_skill`` scores the model only on months
@@ -174,8 +182,95 @@ def forecast(horizon: int, sc: dict) -> dict:
     }
 
 
+# --------------------------------------------------- aggregate model on leading indicators
+AGG_COLS = ["nasdaq_12m", "temphelp_yoy", "hours_chg"]
+
+
+def aggregate_model(horizon: int = 12) -> dict:
+    """Total tech employment from LEADING indicators - a plain OLS, walk-forward validated.
+
+    This is the one thing in this module that forecasts a level and survives the test, and
+    it inverts the panel result in two ways worth stating:
+
+      * Simple beats complex. Three regressors and an intercept beat a no-change baseline
+        (+10.1% at 6m, +7.3% at 12m); the six-feature GBM on the industry panel lost to it.
+        The aggregate is smoother than any single industry, and OLS cannot overfit it.
+      * It works exactly where the momentum model failed. Its skill is concentrated in the
+        months when the trend TURNED (86-87% direction accuracy), and it is worse than
+        no-change when the trend merely continued. That is what a leading indicator is for:
+        it carries information about changes, and adds noise when nothing is changing.
+
+    So the panel GBM and this model are complements, not rivals - the GBM ranks industries,
+    this one calls the aggregate turn.
+    """
+    from .build_panel import fetch_macro
+    ind = fetch_industries()
+    tech = np.log(ind.sum(axis=1))
+    X = fetch_macro()[AGG_COLS].shift(1)              # publication lag
+    y = (tech.shift(-horizon) - tech) * 100
+    d = pd.concat([X, y.rename("y")], axis=1).dropna()
+
+    rows = []
+    for i in range(120, len(d) - horizon):
+        tr = d.iloc[:i - horizon]                     # matured targets only
+        if len(tr) < 80:
+            continue
+        A = np.c_[np.ones(len(tr)), tr[AGG_COLS].values]
+        b = np.linalg.lstsq(A, tr.y.values, rcond=None)[0]
+        trail = float((tech.iloc[i] - tech.iloc[i - horizon]) * 100)
+        rows.append((d.index[i], float(np.r_[1, d[AGG_COLS].iloc[i].values] @ b),
+                     float(d.y.iloc[i]), trail))
+    wf = pd.DataFrame(rows, columns=["date", "pred", "actual", "trail"])
+
+    rmse = lambda a, b_: float(np.sqrt(np.mean((a - b_) ** 2)))  # noqa: E731
+    zero = rmse(0 * wf.actual, wf.actual)
+    turn = np.sign(wf.actual) != np.sign(wf.trail)
+    regime = {}
+    for lbl, m in [("trend_continues", ~turn), ("trend_turns", turn)]:
+        s = wf[m]
+        if len(s) >= 20:
+            regime[lbl] = {"n": int(len(s)), "share": float(m.mean()),
+                           "skill": float(1 - rmse(s.pred, s.actual) / rmse(0 * s.actual, s.actual)),
+                           "dir_acc": float((np.sign(s.pred) == np.sign(s.actual)).mean())}
+
+    A = np.c_[np.ones(len(d)), d[AGG_COLS].values]
+    beta = np.linalg.lstsq(A, d.y.values, rcond=None)[0]
+    xn = X.dropna().iloc[-1]
+    pt = float(np.r_[1, xn.values] @ beta)
+    sd = float((wf.pred - wf.actual).std())
+    return {
+        "horizon": horizon, "n": int(len(wf)),
+        "skill_vs_nochange": float(1 - rmse(wf.pred, wf.actual) / zero),
+        "dir_acc": float((np.sign(wf.pred) == np.sign(wf.actual)).mean()),
+        "regime": regime,
+        "asof": str(xn.name.date()),
+        "point": pt, "lo80": pt - 1.28 * sd, "hi80": pt + 1.28 * sd,
+        "coefs": dict(zip(["intercept"] + AGG_COLS, [float(x) for x in beta])),
+        "current_level_k": float(ind.sum(axis=1).iloc[-1]),
+    }
+
+
+def composition() -> list[dict]:
+    """Each sub-industry against its own all-time peak.
+
+    Carried because the aggregate is genuinely misleading: total tech employment sits ~13%
+    below its 2001 peak, but that is a telecom and semiconductor story. Computer systems
+    design - the biggest component and the closest thing to "software jobs" - is at its
+    all-time high. Reporting one number for "tech jobs" averages two opposite regimes.
+    """
+    ind = fetch_industries()
+    out = []
+    for c in ind.columns:
+        s = ind[c].dropna()
+        out.append({"industry": c, "now_k": float(s.iloc[-1]), "peak_k": float(s.max()),
+                    "peak_date": str(s.idxmax().date()),
+                    "vs_peak": float(s.iloc[-1] / s.max() - 1)})
+    return sorted(out, key=lambda r: -r["now_k"])
+
+
 def compute_techjobs_outlook() -> dict:
-    out = {"lead_lag": lead_lag().to_dict("records"), "horizons": {}}
+    out = {"lead_lag": lead_lag().to_dict("records"), "composition": composition(),
+           "aggregate": {h: aggregate_model(h) for h in (6, 12)}, "horizons": {}}
     for h in (6, 12):
         wf = walk_forward(h)
         if wf.empty:
@@ -194,6 +289,21 @@ def main():
     print(f"{'indicator':>16} {'lead':>6} {'corr':>7} {'n':>6}")
     for r in d["lead_lag"]:
         print(f"{r['indicator']:>16} {r['best_lead_m']:>5}m {r['corr']:>+7.2f} {r['n']:>6}")
+
+    print("\n=== COMPOSITION: 'tech jobs' is two opposite stories ===")
+    for r in d["composition"]:
+        print(f"  {r['industry']:28s} now {r['now_k']:>7,.0f}k  peak {r['peak_k']:>7,.0f}k "
+              f"({r['peak_date']})  {r['vs_peak']:>+6.1%}")
+
+    print("\n=== AGGREGATE TECH EMPLOYMENT from leading indicators (OLS) ===")
+    for h, a in d["aggregate"].items():
+        print(f"  h={h:>2}m  n={a['n']}  skill vs no-change {a['skill_vs_nochange']:+.1%}  "
+              f"direction {a['dir_acc']:.0%}")
+        for lbl, r in a["regime"].items():
+            print(f"        {lbl:>15} n={r['n']:>3} ({r['share']:.0%})  "
+                  f"skill {r['skill']:>+6.1%}  direction {r['dir_acc']:.0%}")
+        print(f"     -> as of {a['asof']}: forward {h}m total tech employment "
+              f"{a['point']:+.1f}%  [80% {a['lo80']:+.1f}%, {a['hi80']:+.1f}%]")
 
     for h, blk in d["horizons"].items():
         sc, tp = blk["score"], blk["turning_points"]
