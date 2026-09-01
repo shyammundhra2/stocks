@@ -332,7 +332,7 @@
                 <span id="tmLabel" class="font-mono text-[10px] text-slate-300 w-20 text-right shrink-0">—</span>
             </div>
             <p id="tmNote" class="text-[10px] text-amber-400/80 mt-1" style="visibility:hidden;">
-                Historical frame — position is that day's slope/R², but colour and size stay TODAY's signal and allocation (not back-computed), so you can track a name as it moves. Hover trail pauses while scrubbing.
+                Historical frame — position is that day's slope/R², but colour and size stay TODAY's signal and allocation (not back-computed), so you can track a name as it moves. Hover a marker to trail just that one, ending on this date.
             </p>
         </div>
         <p class="text-[10px] text-slate-500 mt-2">
@@ -474,18 +474,10 @@
                 line: { color: 'rgba(148,163,184,0.45)', width: 1.5 },
                 marker: { size: 5, color: 'rgba(148,163,184,0.45)' }
             };
-            // Comet tails for the time machine, drawn under the markers and above
-            // the ghost. Markers MUST stay the last trace - harden() hardens every
-            // group but the last to keep the pointer off the non-marker traces.
-            var tail = {
-                x: [], y: [], mode: 'lines', type: 'scatter', hoverinfo: 'skip',
-                showlegend: false, line: { color: 'rgba(34,211,238,0.40)', width: 1.5 }
-            };
             var ghostIdx = contours.length;         // ghost drawn under the markers
-            var tailIdx = contours.length + 1;      // time-machine comet tails
-            var markerIdx = contours.length + 2;    // live markers on top
+            var markerIdx = contours.length + 1;    // live markers on top
 
-            Plotly.newPlot('trendMap', contours.concat([ghost, tail, markers]), {
+            Plotly.newPlot('trendMap', contours.concat([ghost, markers]), {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
                 hovermode: 'closest', uirevision: 'keep',
@@ -512,10 +504,24 @@
             // handler - restyling synchronously inside plotly_hover leaves
             // orphaned hover-label nodes accumulating and jams the event loop.
             var gd = document.getElementById('trendMap');
-            var shown = -1, rafPending = false, clearTimer = null, scrubbing = false;
+            var shown = -1, rafPending = false, clearTimer = null, scrubbing = false, frameIdx = -1;
+            // The ghost trails ONE asset's last ~month, ending on the date currently
+            // displayed - so it stays meaningful when the time machine is scrubbed
+            // back. (Always-on trails for all 41 were tried and removed: 41 lines at
+            // once read as noise, and the tail restyle was also the expensive half
+            // of each frame.)
+            function ghostPath(d) {
+                if (!d) return [];
+                if (!scrubbing) return d.path || [];
+                var h = d.hist || [];
+                if (!h.length) return [];
+                var end = frameIdx - (HIST_DATES.length - h.length);
+                if (end < 0) return [];
+                return h.slice(Math.max(0, end - 21), Math.min(end + 1, h.length));
+            }
             function paintGhost() {
                 rafPending = false;
-                var pth = (shown >= 0 && trendData[shown] && trendData[shown].path) ? trendData[shown].path : [];
+                var pth = shown >= 0 ? ghostPath(trendData[shown]) : [];
                 Plotly.restyle('trendMap', {
                     x: [pth.map(function (q) { return q[0]; })],
                     y: [pth.map(function (q) { return q[1]; })]
@@ -528,7 +534,6 @@
                 if (!rafPending) { rafPending = true; requestAnimationFrame(paintGhost); }
             }
             gd.on('plotly_hover', function (ev) {
-                if (scrubbing) return;      // the 1-month ghost is "today" data - meaningless on a past frame
                 var p = ev.points[0];
                 if (p && p.curveNumber === markerIdx) showGhost(p.pointNumber);
             });
@@ -551,7 +556,6 @@
             // Plotly frames/animate: the animation path re-runs layout per frame,
             // which would re-fit the axes and undo the pinned-range + uirevision
             // work above that killed the hover flicker. restyle touches data only.
-            var TAIL = 8;                                     // comet length, sessions
             var lastFrame = HIST_DATES.length - 1;
             var tmWrap = document.getElementById('trendTimeMachine');
             var tmSlider = document.getElementById('tmSlider');
@@ -576,24 +580,17 @@
             // measured ~85ms a call.
             function setFrame(i) {
                 var live = i >= lastFrame;           // newest frame == today's map, unchanged
-                var xs = [], ys = [], tx = [], ty = [];
+                frameIdx = i;
+                var xs = [], ys = [];
                 trendData.forEach(function (d) {
                     var p = histAt(d, i);
                     xs.push(p ? p[0] : d.x);
                     ys.push(p ? p[1] : d.y);
-                    if (!live) {
-                        for (var k = Math.max(0, i - TAIL); k <= i; k++) {
-                            var q = histAt(d, k);
-                            if (q) { tx.push(q[0]); ty.push(q[1]); }
-                        }
-                        tx.push(null); ty.push(null);          // break the line between assets
-                    }
                 });
                 scrubbing = !live;
-                if (scrubbing && shown !== -1) { shown = -1; paintGhost(); }
                 // Widen the axis only while scrubbing. Safe to relayout here (unlike
                 // during hover, where axis re-fitting was the flicker source) - the
-                // slider is a discrete user action and hover is disabled meanwhile.
+                // slider is a discrete user action, not a pointer-driven loop.
                 if (scrubbing !== rangeWide) {
                     rangeWide = scrubbing;
                     Plotly.relayout('trendMap', {
@@ -602,11 +599,10 @@
                 }
                 tmLabel.textContent = HIST_DATES[i] || '';
                 tmNote.style.visibility = live ? 'hidden' : 'visible';
-                // ONE restyle covering both traces. Firing two concurrent restyles
-                // on the same graph serialised badly - frames took seconds and froze
-                // the renderer during playback. Returned so playback can wait on it.
-                return Plotly.restyle('trendMap', { x: [tx, xs], y: [ty, ys] },
-                                      [tailIdx, markerIdx]).then(harden);
+                if (shown >= 0) paintGhost();        // keep a hovered trail on the displayed date
+                // Returned so playback can chain the next frame off it resolving.
+                return Plotly.restyle('trendMap', { x: [xs], y: [ys] },
+                                      [markerIdx]).then(harden);
             }
             function tmStop() {
                 tmPlaying = false;
