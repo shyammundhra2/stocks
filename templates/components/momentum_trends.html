@@ -323,6 +323,18 @@
     <div id="trendMapView">
         <p class="text-[10px] text-slate-500 mb-2">Hover a marker to trace its daily slope/R² path over the last month (faded trail).</p>
         <div id="trendMap" class="plot-container"></div>
+        <div id="trendTimeMachine" class="mt-2" style="display:none;">
+            <div class="flex items-center gap-3">
+                <button id="tmPlay" type="button"
+                        class="px-2 py-1 text-[10px] font-black rounded bg-slate-700 hover:bg-slate-600 text-slate-200 shrink-0">▶ PLAY</button>
+                <input id="tmSlider" type="range" min="0" max="0" value="0" step="1"
+                       class="flex-1 accent-cyan-400" aria-label="Trend map date">
+                <span id="tmLabel" class="font-mono text-[10px] text-slate-300 w-20 text-right shrink-0">—</span>
+            </div>
+            <p id="tmNote" class="text-[10px] text-amber-400/80 mt-1" style="visibility:hidden;">
+                Historical frame — position is that day's slope/R², but colour and size stay TODAY's signal and allocation (not back-computed), so you can track a name as it moves. Hover trail pauses while scrubbing.
+            </p>
+        </div>
         <p class="text-[10px] text-slate-500 mt-2">
             Slope (x) vs R² (y). Colour = signal, size = allocation, dotted lines = equal |slope|·R² conviction (uptrend right, downtrend left).
         </p>
@@ -354,9 +366,12 @@
             {% for item in trends %}
             { sym: "{{ item.sym }}", x: {{ item.slope }}, y: {{ item.r2 }},
               path: {{ item.slope_r2_path|default([[item.slope, item.r2]])|tojson }},
+              hist: {{ item.slope_r2_hist|default([])|tojson }},
               status: "{{ item.status }}", alloc: {{ item.dollar_amount|default(0) }} },
             {% endfor %}
         ];
+        // Shared slider labels; assets with fewer bars are right-aligned to this.
+        var HIST_DATES = {{ portfolio_summary.trend_hist_dates|default([])|tojson }};
 
         function colorFor(s) {
             if (s.indexOf('SELL') >= 0 || s.indexOf('LIQUIDATE') >= 0) return '#ef4444';
@@ -406,21 +421,39 @@
             });
             var _xpad = (xhi - xlo) * 0.03 || 1;
             xlo -= _xpad; xhi += _xpad;
+
+            // A full year of slopes runs ~1.8x wider than the last month (-21..25
+            // vs -9..17), so pinning to it permanently would squash the default
+            // view. Keep the resting range exactly as before and widen to this
+            // only while the time machine is scrubbed off the newest frame.
+            var xloFull = xlo, xhiFull = xhi;
+            trendData.forEach(function (d) {
+                (d.hist || []).forEach(function (q) {
+                    if (q[0] < xloFull) xloFull = q[0];
+                    if (q[0] > xhiFull) xhiFull = q[0];
+                });
+            });
+            var _xpadF = (xhiFull - xloFull) * 0.03 || 1;
+            xloFull -= _xpadF; xhiFull += _xpadF;
             var isoLine = function (xa, ya) {
                 return { x: xa, y: ya, mode: 'lines', type: 'scatter', hoverinfo: 'skip',
                          line: { color: '#475569', width: 1, dash: 'dot' }, showlegend: false };
             };
             var contours = [];
+            // Drawn out to the FULL-history span, not just today's, so the curves
+            // still reach the edge when the time machine widens the axis. At rest
+            // the axis range clips them, so the default view is unchanged.
+            var _cHi = Math.max(xmax, xhiFull), _cLo = Math.min(xmin, xloFull);
             [1, 2, 4].forEach(function (k) {
-                // right side (uptrend): y = k/x for x in [k, xmax]
+                // right side (uptrend): y = k/x for x in [k, _cHi]
                 var xa = [], ya = [];
-                for (var xv = k; xv <= xmax; xv += (xmax - k) / 40 || 1) {
+                for (var xv = k; xv <= _cHi; xv += (_cHi - k) / 80 || 1) {
                     var yv = k / xv; if (yv <= 1) { xa.push(xv); ya.push(yv); }
                 }
                 contours.push(isoLine(xa, ya));
                 // left side (downtrend): mirror to negative slope, y = k/|x|
                 var xb = [], yb = [];
-                for (var xw = -k; xw >= xmin; xw -= (Math.abs(xmin) - k) / 40 || 1) {
+                for (var xw = -k; xw >= _cLo; xw -= (Math.abs(_cLo) - k) / 80 || 1) {
                     var yw = k / (-xw); if (yw <= 1) { xb.push(xw); yb.push(yw); }
                 }
                 contours.push(isoLine(xb, yb));
@@ -441,10 +474,18 @@
                 line: { color: 'rgba(148,163,184,0.45)', width: 1.5 },
                 marker: { size: 5, color: 'rgba(148,163,184,0.45)' }
             };
+            // Comet tails for the time machine, drawn under the markers and above
+            // the ghost. Markers MUST stay the last trace - harden() hardens every
+            // group but the last to keep the pointer off the non-marker traces.
+            var tail = {
+                x: [], y: [], mode: 'lines', type: 'scatter', hoverinfo: 'skip',
+                showlegend: false, line: { color: 'rgba(34,211,238,0.40)', width: 1.5 }
+            };
             var ghostIdx = contours.length;         // ghost drawn under the markers
-            var markerIdx = contours.length + 1;    // live markers on top
+            var tailIdx = contours.length + 1;      // time-machine comet tails
+            var markerIdx = contours.length + 2;    // live markers on top
 
-            Plotly.newPlot('trendMap', contours.concat([ghost, markers]), {
+            Plotly.newPlot('trendMap', contours.concat([ghost, tail, markers]), {
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
                 font: { color: '#94a3b8', size: 10 }, margin: { t: 20, r: 20, b: 40, l: 40 },
                 hovermode: 'closest', uirevision: 'keep',
@@ -471,7 +512,7 @@
             // handler - restyling synchronously inside plotly_hover leaves
             // orphaned hover-label nodes accumulating and jams the event loop.
             var gd = document.getElementById('trendMap');
-            var shown = -1, rafPending = false, clearTimer = null;
+            var shown = -1, rafPending = false, clearTimer = null, scrubbing = false;
             function paintGhost() {
                 rafPending = false;
                 var pth = (shown >= 0 && trendData[shown] && trendData[shown].path) ? trendData[shown].path : [];
@@ -487,6 +528,7 @@
                 if (!rafPending) { rafPending = true; requestAnimationFrame(paintGhost); }
             }
             gd.on('plotly_hover', function (ev) {
+                if (scrubbing) return;      // the 1-month ghost is "today" data - meaningless on a past frame
                 var p = ev.points[0];
                 if (p && p.curveNumber === markerIdx) showGhost(p.pointNumber);
             });
@@ -503,6 +545,102 @@
                 clearTimer = null;
                 shown = -2; showGhost(-1);   // force a clear on real exit
             });
+
+            // ---- time machine -------------------------------------------------
+            // Driven by a plain range input + Plotly.restyle, deliberately NOT
+            // Plotly frames/animate: the animation path re-runs layout per frame,
+            // which would re-fit the axes and undo the pinned-range + uirevision
+            // work above that killed the hover flicker. restyle touches data only.
+            var TAIL = 8;                                     // comet length, sessions
+            var lastFrame = HIST_DATES.length - 1;
+            var tmWrap = document.getElementById('trendTimeMachine');
+            var tmSlider = document.getElementById('tmSlider');
+            var tmPlay = document.getElementById('tmPlay');
+            var tmLabel = document.getElementById('tmLabel');
+            var tmNote = document.getElementById('tmNote');
+            var tmTimer = null, rangeWide = false, tmPlaying = false;
+
+            // Assets with fewer bars are right-aligned to HIST_DATES, so index i
+            // always means the same calendar day across every asset.
+            function histAt(d, i) {
+                var h = d.hist || [];
+                if (!h.length) return null;
+                var j = i - (HIST_DATES.length - h.length);
+                return j < 0 ? null : h[Math.min(j, h.length - 1)];
+            }
+            // Marker colour stays each asset's TODAY status for every frame. Two
+            // reasons: quadrant colour would be redundant (position already shows
+            // the quadrant), and a constant colour is what makes a given asset
+            // trackable as it moves - recolouring per frame makes the movie
+            // unreadable. It also keeps 'marker.color' out of the hot path, which
+            // measured ~85ms a call.
+            function setFrame(i) {
+                var live = i >= lastFrame;           // newest frame == today's map, unchanged
+                var xs = [], ys = [], tx = [], ty = [];
+                trendData.forEach(function (d) {
+                    var p = histAt(d, i);
+                    xs.push(p ? p[0] : d.x);
+                    ys.push(p ? p[1] : d.y);
+                    if (!live) {
+                        for (var k = Math.max(0, i - TAIL); k <= i; k++) {
+                            var q = histAt(d, k);
+                            if (q) { tx.push(q[0]); ty.push(q[1]); }
+                        }
+                        tx.push(null); ty.push(null);          // break the line between assets
+                    }
+                });
+                scrubbing = !live;
+                if (scrubbing && shown !== -1) { shown = -1; paintGhost(); }
+                // Widen the axis only while scrubbing. Safe to relayout here (unlike
+                // during hover, where axis re-fitting was the flicker source) - the
+                // slider is a discrete user action and hover is disabled meanwhile.
+                if (scrubbing !== rangeWide) {
+                    rangeWide = scrubbing;
+                    Plotly.relayout('trendMap', {
+                        'xaxis.range': rangeWide ? [xloFull, xhiFull] : [xlo, xhi]
+                    });
+                }
+                tmLabel.textContent = HIST_DATES[i] || '';
+                tmNote.style.visibility = live ? 'hidden' : 'visible';
+                // ONE restyle covering both traces. Firing two concurrent restyles
+                // on the same graph serialised badly - frames took seconds and froze
+                // the renderer during playback. Returned so playback can wait on it.
+                return Plotly.restyle('trendMap', { x: [tx, xs], y: [ty, ys] },
+                                      [tailIdx, markerIdx]).then(harden);
+            }
+            function tmStop() {
+                tmPlaying = false;
+                if (tmTimer) { clearTimeout(tmTimer); tmTimer = null; }
+                tmPlay.textContent = '▶ PLAY';
+            }
+            // Self-pacing playback: chain the next frame off the PREVIOUS restyle
+            // resolving, rather than a fixed setInterval. A frame costs ~140ms of
+            // Plotly work on a 41-asset map, and any interval below that queues
+            // restyles until the renderer stalls (a 60ms interval froze the tab).
+            // Waiting on the promise adapts to whatever the machine actually does.
+            function tmTick() {
+                if (!tmPlaying) return;
+                if (+tmSlider.value >= lastFrame) { tmStop(); return; }
+                var n = Math.min(+tmSlider.value + 2, lastFrame);   // 2 sessions/frame
+                tmSlider.value = String(n);
+                Promise.resolve(setFrame(n)).then(function () {
+                    if (tmPlaying) tmTimer = setTimeout(tmTick, 20);
+                });
+            }
+            if (lastFrame > 0 && trendData.some(function (d) { return (d.hist || []).length; })) {
+                tmWrap.style.display = '';
+                tmSlider.max = String(lastFrame);
+                tmSlider.value = String(lastFrame);
+                tmLabel.textContent = HIST_DATES[lastFrame];
+                tmSlider.addEventListener('input', function () { tmStop(); setFrame(+tmSlider.value); });
+                tmPlay.addEventListener('click', function () {
+                    if (tmPlaying) { tmStop(); return; }
+                    if (+tmSlider.value >= lastFrame) { tmSlider.value = '0'; setFrame(0); }
+                    tmPlaying = true;
+                    tmPlay.textContent = '❚❚ PAUSE';
+                    tmTick();
+                });
+            }
         }
 
         // Map is the default view. Draw it NOW (self-invoking) rather than

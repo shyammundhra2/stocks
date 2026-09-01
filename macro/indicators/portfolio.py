@@ -607,6 +607,11 @@ def get_trends():
         _abs_slopes.append(abs(_sl))
     _rev_curve_k1 = 0.18 * max(max(_abs_slopes, default=0.0), 1.5)
 
+    # Shared date labels for the trend map's time-machine slider. Every asset is
+    # sliced from the same shared store, so the longest label list covers all of
+    # them; assets with fewer bars are right-aligned to it in the template.
+    _map_hist_dates = []
+
     for sym, name in TREND_ASSETS.items():
         try:
             df = _dfs.get(sym)
@@ -629,6 +634,15 @@ def get_trends():
                 if _nlen - k >= 25
             ] or [[slope, r2]]
             slope_prev, r2_prev = slope_r2_path[0]   # ~1 month ago (path start)
+
+            # Full daily slope/R2 history for the map's time-machine slider
+            # (2026-09-01). Same stats as slope_r2_path, but vectorised and over
+            # the whole store (~233 frames / 11mo) instead of 21 - the naive
+            # per-slice refit above costs ~3.2s across 41 assets at that depth,
+            # this is ~0.02s. Verified frame-for-frame against _trend_stats.
+            slope_r2_hist, _hist_dates = _rolling_slope_r2(c, 20, 10)
+            if len(_hist_dates) > len(_map_hist_dates):
+                _map_hist_dates = _hist_dates
 
             atr = float(compute_ATR(df, 14).iloc[-1])
             last = float(c.iloc[-1])
@@ -806,6 +820,7 @@ def get_trends():
                 "slope_prev": round(slope_prev, 2),   # slope ~1 month ago (path start)
                 "r2_prev": round(r2_prev, 2),         # R² ~1 month ago (path start)
                 "slope_r2_path": slope_r2_path,       # daily [slope,r2] over last ~1mo (map hover path)
+                "slope_r2_hist": slope_r2_hist,       # daily [slope,r2] over the full store (map time machine)
                 # ml_conf = trend-quality strength as a percent (not a model
                 # output). Per-asset dual-ML fields and u_fit were removed
                 # 2026-08-25 - dead (displayed nowhere, not in sizing).
@@ -942,6 +957,7 @@ def get_trends():
     except Exception as e:
         print(f"Full-universe correlation error: {e}")
 
+    summary["trend_hist_dates"] = _map_hist_dates   # slider labels for the map time machine
     _portfolio_summary = summary
     return optimized_results
 
