@@ -162,6 +162,28 @@ def _yf_dl(tickers, period=None, start=None, end=None, group_by="column"):
     return yf.download(tickers, start=start, end=end, **kw)
 
 
+def _period_min_bars(period, frac=0.6):
+    """Rough floor on how many sessions a period= request should return.
+
+    Used to recognise a truncated full fetch BEFORE it is stamped as the 30-day
+    full sync. Deliberately loose (60% of expected sessions) - it only needs to
+    separate "a year of data" from "six rows", not to be precise.
+    """
+    try:
+        p = str(period).strip().lower()
+        if p.endswith("y"):
+            days = float(p[:-1]) * 365.0
+        elif p.endswith("mo"):
+            days = float(p[:-2]) * 30.0
+        elif p.endswith("d"):
+            days = float(p[:-1])
+        else:
+            return 0
+    except Exception:
+        return 0
+    return int(days * (252.0 / 365.0) * frac)
+
+
 def _persistent_fetch(label, tickers, period, group_by="column",
                       download_fn=_yf_dl, now_fn=time.time):
     """Incremental period fetch. Returns the same bars a full period= call would."""
@@ -183,6 +205,19 @@ def _persistent_fetch(label, tickers, period, group_by="column",
     if need_full:
         raw = download_fn(tickers, period=period, group_by=group_by)
         if isinstance(raw, pd.DataFrame) and not raw.empty:
+            # A short full-period fetch is a truncated response, not a real sync.
+            # Stamping full_ts on it froze a 6-row store for the whole 30d resync
+            # window (2026-09-01). Prefer better stored data, and leave full_ts
+            # unset so the next call retries the full fetch instead of drifting
+            # forward on 7-day incremental refreshes.
+            floor_bars = _period_min_bars(period)
+            if floor_bars and len(raw) < floor_bars:
+                if stored is not None and len(stored) > len(raw):
+                    _store_write(base, stored, ts=now,
+                                 full_ts=float((spec or {}).get("full_ts", 0.0)))
+                    return _slice_period(stored, period)
+                _store_write(base, raw, ts=now, full_ts=0.0)
+                return raw
             _store_write(base, raw, ts=now, full_ts=now)
             return raw
         if stored is not None and not stored.empty:
@@ -255,7 +290,7 @@ def _risk_history_save(base, cache):
 _CORE_CHECK = ("^VIX", "SPY", "^MOVE")
 
 
-def _core_history_ok(data, min_frac=0.5):
+def _core_history_ok(data, min_frac=0.5, min_bars=60):
     """False if a CORE ticker came back suspiciously sparse - i.e. a bad batch
     fetch (yfinance intermittently truncates a column, or drops a ^-index ticker
     entirely) that the incremental cache would otherwise FREEZE forever (e.g.
@@ -265,17 +300,25 @@ def _core_history_ok(data, min_frac=0.5):
     SPY itself can be the poisoned one. (Old bug: SPY froze at 6 points -> the
     `ref<60` short-history escape hatch fired on SPY's own count -> the guard
     passed the poison and the whole book fell back.) A core ticker MISSING
-    entirely, or under min_frac of the fullest column, now trips the self-heal;
-    only a batch where NOTHING has history is treated as genuinely short."""
+    entirely, or under min_frac of the fullest column, trips the self-heal.
+
+    2026-09-01: the escape hatch had to go the rest of the way. Referencing the
+    fullest column still passed a WHOLLY truncated batch, because when every
+    column is poisoned the fullest one is poisoned too - a 6-row store returned
+    ref=6, fired the `ref<60` hatch, and froze for the full 30d resync window
+    (VIX + QQQ-RSI2 tiles read ERROR because the 50d z-score and SMA200 had no
+    bars). A batch whose FULLEST column is under min_bars is not a short batch,
+    it IS the poison, so it now trips the self-heal instead of bypassing it.
+    Callers requesting a genuinely short period must pass a smaller min_bars."""
     try:
         cols = getattr(data, "columns", None)
         close = data["Close"] if (cols is not None and hasattr(cols, "get_level_values")
                                    and "Close" in cols.get_level_values(0)) else data
         counts = close.notna().sum()
         ref = int(counts.max()) if len(counts) else 0
-        if ref < 60:
-            return True                       # nothing in the batch has history - genuinely short
-        need = max(60, min_frac * ref)
+        if ref < min_bars:
+            return False                      # whole batch truncated -> self-heal, don't wave it through
+        need = max(min_bars, min_frac * ref)
         for t in _CORE_CHECK:                  # includes SPY, ^VIX, ^MOVE
             if t not in close.columns:
                 return False                   # core ticker dropped from the batch entirely
