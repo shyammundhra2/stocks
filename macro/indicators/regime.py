@@ -51,14 +51,21 @@ from macro.indicators.mathstats import *
 # telemetry/qualifier only.
 #
 # Honest limitations:
-#   - Refit weekly (_HMM_REFIT_INTERVAL), not per-call. 252 obs and
-#     ~15-20 free params for 3 diagonal-covariance Gaussian states -
+#   - Refit weekly (_HMM_REFIT_INTERVAL), not per-call. ~1110 obs and
+#     ~30 free params for 3 diagonal-covariance Gaussian states -
 #     refitting on every 30-second cache tick would add fit-to-fit
-#     noise from `random_state` interacting with marginal data updates,
-#     without any real information gain.
-#   - State labels are NOT fixed across refits. _fit_regime_hmm always
-#     re-sorts by mean return (column 0) ascending after fitting -
-#     lowest mean return = "crisis", highest = "trending_calm".
+#     noise from marginal data updates without any real information gain.
+#     (2026-09-02: this said "252 obs". It was wrong twice over - the
+#     shared store holds ~252 bars, but vol_z's 20d-vol-through-126d-
+#     baseline warm-up consumed 146 of them, so the fit actually saw 108.
+#     It now reads a dedicated 5y window via _get_hmm_data.)
+#   - State labels are NOT fixed across refits. _fit_regime_hmm re-sorts
+#     after every fit by a scale-normalised composite score
+#     (ret - 0.5*vol_z - 0.5*vix_z, each divided by its own sd), ascending:
+#     lowest score = "crisis", highest = "trending_calm". (2026-09-02: this
+#     said "sorts by mean return (column 0)", which was never what the code
+#     did - and before the sd normalisation the return term carried only ~3%
+#     of the score's scale, so the ranking was essentially vol+VIX alone.)
 #   - Will not catch a single-day shock on day one - same structural
 #     limitation as the 6-condition composite (the pattern needs to
 #     accumulate across the observation window before posterior state
@@ -77,7 +84,7 @@ _hmm_cache = {"model": None, "labels": None, "fitted_at": None}
 _HMM_REFIT_INTERVAL = 7 * 24 * 3600  # 7 days
 
 
-def _fit_regime_hmm(X, n_states=3, n_iter=100):
+def _fit_regime_hmm(X, n_states=3, n_iter=100, n_restarts=5):
     from hmmlearn import hmm
 
     if len(X) < 60:
@@ -95,25 +102,51 @@ def _fit_regime_hmm(X, n_states=3, n_iter=100):
     transmat_prior = np.ones((n_states, n_states))
     np.fill_diagonal(transmat_prior, 10.0)
 
-    model = hmm.GaussianHMM(
-        n_components=n_states,
-        covariance_type="diag",
-        n_iter=n_iter,
-        random_state=42,
-        transmat_prior=transmat_prior,
-    )
+    # EM is a local optimiser and a single seed is a lottery, not a fit. On the
+    # old 108-observation window only 6 of 12 seeds produced a state that even
+    # LOOKED like a crisis (negative mean return AND elevated vol); the shipped
+    # random_state=42 was a coin flip on whether the labels meant anything. Fit
+    # n_restarts times and keep the highest-likelihood solution. At ~96ms a fit
+    # on 1100 obs, and a 7-day refit interval, the cost is nil.
+    best, best_ll = None, -np.inf
+    for seed in range(n_restarts):
+        m = hmm.GaussianHMM(
+            n_components=n_states,
+            covariance_type="diag",
+            n_iter=n_iter,
+            random_state=seed,
+            transmat_prior=transmat_prior,
+        )
+        try:
+            m.fit(X)
+            ll = m.score(X)
+        except Exception:
+            continue
+        if np.isfinite(ll) and ll > best_ll:
+            best, best_ll = m, ll
 
-    model.fit(X)
+    if best is None:
+        return None, None
+    model = best
 
     if n_states == 3:
         means = model.means_
 
+        # Rank states worst -> best. The features are on wildly different scales
+        # (sd(ret) ~0.044 in log-return units vs ~1.2 for both z-scores), so the
+        # original raw-units version of this score gave `ret` about 3% of the
+        # total scale - the label was decided ~97% by vol and VIX, and the 0.5
+        # weights meant nothing. Dividing each term by the feature's own sd makes
+        # the stated weighting the actual weighting.
+        sd = X.std(axis=0)
+        sd = np.where(sd > 0, sd, 1.0)
+
         scores = {}
 
         for i in range(n_states):
-            ret_3m = means[i, 0]
-            vol_z  = means[i, 1]
-            vix_z  = means[i, 2]
+            ret_3m = means[i, 0] / sd[0]
+            vol_z  = means[i, 1] / sd[1]
+            vix_z  = means[i, 2] / sd[2]
 
             # higher return good
             # higher vol/fear bad
@@ -133,6 +166,28 @@ def _fit_regime_hmm(X, n_states=3, n_iter=100):
         labels = {i: f"state_{i}" for i in range(n_states)}
 
     return model, labels
+
+_HMM_PERIOD = "5y"
+
+
+@ttl_cache(300)
+def _get_hmm_data():
+    """SPY/^VIX over _HMM_PERIOD - a LONGER window than the 1y shared store.
+
+    The HMM used to read the shared store, and the feature pipeline then burned
+    146 of its ~252 bars building vol_z (a 20-day vol run through a 126-day
+    baseline), leaving the fit just 108 observations for ~30 free parameters.
+    That is not enough to identify three states: on 108 obs the "crisis" state
+    came out with a POSITIVE mean 21-day return (+1.3%) and a NEGATIVE VIX
+    z-score - i.e. the labels were noise - and only 6 of 12 random seeds even
+    produced a sane one. At 5y (~1110 obs after the same warm-up) the crisis
+    state is negative-return / high-vol for 12 of 12 seeds.
+
+    Cached through the same on-disk store as everything else, so this is one
+    extra 2-ticker fetch, refreshed at most every 5 minutes.
+    """
+    return _persistent_fetch("hmm", ["SPY", "^VIX"], _HMM_PERIOD, group_by="column")
+
 
 @ttl_cache(30)
 def get_regime_hmm_state(n_states=3):
@@ -157,10 +212,17 @@ def get_regime_hmm_state(n_states=3):
         }
     """
     try:
-        shared_data = _get_shared_market_data()
+        hmm_data = _get_hmm_data()
 
-        spy = _get_close(shared_data, "SPY")
-        vix = _get_close(shared_data, "^VIX")
+        spy = _get_close(hmm_data, "SPY")
+        vix = _get_close(hmm_data, "^VIX")
+
+        # Fall back to the 1y shared store only if the longer fetch failed, so a
+        # network problem degrades to the old behaviour rather than to nothing.
+        if len(spy) < 200 or len(vix) < 200:
+            shared_data = _get_shared_market_data()
+            spy = _get_close(shared_data, "SPY")
+            vix = _get_close(shared_data, "^VIX")
 
         # --------------------------------------------------
         # Feature 1: trend (21-session log return)
