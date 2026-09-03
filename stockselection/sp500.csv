@@ -1,503 +1,504 @@
 Symbol,Company
-NVDA,Nvidia
+NVDA,Nvidia Corp
 AAPL,Apple Inc.
-MSFT,Microsoft
-AMZN,Amazon
-GOOGL,Alphabet Inc. (Class A)
-GOOG,Alphabet Inc. (Class C)
-AVGO,Broadcom
-META,Meta Platforms
-TSLA,"Tesla, Inc."
-BRK-B,Berkshire Hathaway
-WMT,Walmart
-LLY,Lilly (Eli)
-JPM,JPMorgan Chase
-V,Visa Inc.
-XOM,ExxonMobil
-JNJ,Johnson & Johnson
-ORCL,Oracle Corporation
-MA,Mastercard
-COST,Costco
-MU,Micron Technology
-PLTR,Palantir Technologies
-ABBV,AbbVie
+MSFT,Microsoft Corp
+AMZN,Amazon.Com Inc
+GOOGL,Alphabet Inc. Class A Common Stock
+GOOG,Alphabet Inc. Class C Capital Stock
+AVGO,Broadcom Inc. Common Stock
+META,"Meta Platforms, Inc. Class A Common Stock"
+TSLA,"Tesla, Inc. Common Stock"
+BRK-B,BERKSHIRE HATHAWAY Class B
+MU,"Micron Technology, Inc."
+LLY,Eli Lilly & Co.
+JPM,JPMorgan Chase & Co.
+WMT,Walmart Inc. Common Stock
 AMD,Advanced Micro Devices
-BAC,Bank of America
-HD,Home Depot (The)
-NFLX,Netflix
-PG,Procter & Gamble
+V,VISA Inc.
+XOM,ExxonMobil Holdings Corporation
+JNJ,Johnson & Johnson
+MA,Mastercard Incorporated
+INTC,Intel Corp
+ABBV,ABBVIE INC.
+ORCL,Oracle Corp
+BAC,Bank of America Corporation
+PLTR,Palantir Technologies Inc. Class A Common Stock
+CSCO,"Cisco Systems, Inc. Common Stock (DE)"
 CVX,Chevron Corporation
-GE,GE Aerospace
-KO,Coca-Cola Company (The)
-UNH,UnitedHealth Group
+COST,Costco Wholesale Corp
+KO,Coca-Cola Company
+MRK,"Merck & Co., Inc."
 CAT,Caterpillar Inc.
-CSCO,Cisco
+UNH,UNITEDHEALTH GROUP INCORPORATED (Delaware)
+LRCX,Lam Research Corp
+NFLX,NetFlix Inc
+AMAT,Applied Materials Inc
+GE,GE Aerospace
+PG,Procter & Gamble Company
 MS,Morgan Stanley
-GS,Goldman Sachs
-LRCX,Lam Research
-IBM,IBM
-MRK,Merck & Co.
-WFC,Wells Fargo
+DELL,Dell Technologies Inc.
+HD,"Home Depot, Inc."
+GS,Goldman Sachs Group Inc.
+PM,Philip Morris International Inc.
 RTX,RTX Corporation
-PM,Philip Morris International
-AMAT,Applied Materials
-AXP,American Express
-TMO,Thermo Fisher Scientific
-INTC,Intel
-MCD,McDonald's
-ABT,Abbott Laboratories
-CRM,Salesforce
-TMUS,T-Mobile US
-LIN,Linde plc
-PEP,PepsiCo
-C,Citigroup
-DIS,Walt Disney Company (The)
-KLAC,KLA Corporation
-BA,Boeing
-APP,AppLovin Corporation
-ISRG,Intuitive Surgical
-APH,Amphenol
-GEV,GE Vernova
-SCHW,Charles Schwab Corporation
-AMGN,Amgen
-UBER,Uber
-NEE,NextEra Energy
-TJX,TJX Companies
-TXN,Texas Instruments
-BLK,BlackRock
-ACN,Accenture
-T,AT&T
-DHR,Danaher Corporation
-QCOM,Qualcomm
-VZ,Verizon
-BKNG,Booking Holdings
+WFC,Wells Fargo & Co.
+PANW,"Palo Alto Networks, Inc. Common Stock"
+GEV,GE Vernova Inc.
 ANET,Arista Networks
-SPGI,S&P Global
-GILD,Gilead Sciences
-LOW,Lowe's
-INTU,Intuit
-COF,Capital One
-PFE,Pfizer
-ADI,Analog Devices
+AMGN,Amgen Inc
+TXN,Texas Instruments Incorporated
+C,Citigroup Inc.
+SNDK,Sandisk Corporation Common Stock
+TMO,"Thermo Fisher Scientific, Inc."
+KLAC,KLA Corporation Common Stock
+AXP,American Express Company
+LIN,Linde plc Ordinary Share
+IBM,International Business Machines Corporation
+CRM,"Salesforce, Inc."
+CRWD,"CrowdStrike Holdings, Inc. Class A Common Stock"
+VZ,Verizon Communications
+TMUS,"T-Mobile US, Inc."
+APH,Amphenol Corporation
+PEP,"PepsiCo, Inc."
+SCHW,The Charles Schwab Corporation
+MRVL,"Marvell Technology, Inc. Common Stock"
+ABT,Abbott Laboratories
 DE,Deere & Company
-SYK,Stryker Corporation
-HON,Honeywell
-BSX,Boston Scientific
-LMT,Lockheed Martin
-NOW,ServiceNow
-UNP,Union Pacific Corporation
-ETN,Eaton Corporation
-NEM,Newmont
-WELL,Welltower
-PANW,Palo Alto Networks
-MDT,Medtronic
-PLD,Prologis
-PGR,Progressive Corporation
-ADBE,Adobe Inc.
-BX,Blackstone Inc.
-CB,Chubb Limited
+GILD,Gilead Sciences Inc
+DIS,The Walt Disney Company
+MCD,McDonald's Corporation
+STX,Seagate Technology Holdings PLC Ordinary Shares (Ireland)
+QCOM,Qualcomm Inc
+T,AT&T Inc.
+NEE,"NextEra Energy, Inc."
+WELL,Welltower Inc.
+UNP,Union Pacific Corp.
+BLK,"Blackrock, Inc."
+ADI,"Analog Devices, Inc."
+BA,Boeing Company
+PFE,Pfizer Inc.
 COP,ConocoPhillips
-PH,Parker Hannifin
-VRTX,Vertex Pharmaceuticals
-CRWD,CrowdStrike
-BMY,Bristol Myers Squibb
-KKR,KKR
-CEG,Constellation Energy
-SBUX,Starbucks
-HCA,HCA Healthcare
+WDC,Western Digital Corp.
+UBER,"Uber Technologies, Inc."
+ETN,"Eaton Corporation, plc Ordinary Shares"
+NOW,"SERVICENOW, INC."
+BKNG,Booking Holdings Inc. Common Stock
+DHR,Danaher Corporation
+TJX,"TJX Companies, Inc. (The)"
+VRTX,Vertex Pharmaceuticals Inc
+BMY,Bristol-Myers Squibb Co.
+NEM,Newmont Corporation
+COF,Capital One Financial
+CB,Chubb Limited
+SPGI,S&P Global Inc.
+ISRG,Intuitive Surgical Inc.
+PLD,"PROLOGIS, INC."
+PGR,Progressive Corporation
+CVS,CVS HEALTH CORPORATION
+GLW,Corning Incorporated
+LMT,Lockheed Martin Corp.
+PH,Parker-Hannifin Corporation
+SBUX,Starbucks Corp
+ACN,Accenture PLC
+MDT,Medtronic plc
+SYK,Stryker Corporation
+MO,"Altria Group, Inc."
+FTNT,"Fortinet, Inc."
+LOW,Lowe's Companies Inc.
+ADBE,Adobe Inc.
 ADP,Automatic Data Processing
-MO,Altria
-CMCSA,Comcast
-CVS,CVS Health
+HOOD,"Robinhood Markets, Inc. Class A Common Stock"
+BNY,Bank of New York Mellon Corporation
+ABNB,"Airbnb, Inc. Class A Common Stock"
+MPC,MARATHON PETROLEUM CORPORATION
 MCK,McKesson Corporation
-CME,CME Group
-SO,Southern Company
-SNPS,Synopsys
-ICE,Intercontinental Exchange
-GD,General Dynamics
-HOOD,"Robinhood Markets, Inc."
-NKE,"Nike, Inc."
-NOC,Northrop Grumman
-DUK,Duke Energy
-MCO,Moody's Corporation
-UPS,United Parcel Service
-PNC,PNC Financial Services
-WM,Waste Management
-HWM,Howmet Aerospace
-MRSH,"Marsh & McLennan Companies, Inc."
-DASH,DoorDash
-FCX,Freeport-McMoRan
-SHW,Sherwin-Williams
-TT,Trane Technologies
+VLO,Valero Energy Corporation
+APP,Applovin Corporation Class A Common Stock
+FCX,Freeport-McMoran Inc.
+VRT,Vertiv Holdings Co Class A Common Stock
+HWM,Howmet Aerospace Inc.
+BX,Blackstone Inc.
+PSX,PHILLIPS 66
+SO,The Southern Company
+EQIX,"Equinix, Inc. Common Stock REIT"
+CME,CME Group Inc.
+CEG,Constellation Energy Corporation Common Stock
 USB,U.S. Bancorp
-MAR,Marriott International
-CDNS,Cadence Design Systems
-AMT,American Tower
-BK,BNY Mellon
-MMM,3M
-EMR,Emerson Electric
-TDG,TransDigm Group
-ELV,Elevance Health
-CRH,CRH plc
-APO,Apollo Global Management
-ORLY,O'Reilly Auto Parts
-MNST,Monster Beverage
-GLW,Corning Inc.
-ABNB,Airbnb
-CMI,Cummins
-CTAS,Cintas
-ECL,Ecolab
-REGN,Regeneron Pharmaceuticals
-EQIX,Equinix
-WDC,Western Digital
-WMB,Williams Companies
-MDLZ,Mondelez International
-ITW,Illinois Tool Works
-RCL,Royal Caribbean Group
-DELL,Dell Technologies
-AON,Aon
-GM,General Motors
-CI,Cigna
-STX,Seagate Technology
-FDX,FedEx
-WBD,Warner Bros. Discovery
-JCI,Johnson Controls
-SLB,Schlumberger
-PWR,Quanta Services
-CL,Colgate-Palmolive
-TEL,TE Connectivity
-COR,Cencora
-HLT,Hilton Worldwide
-SNDK,Sandisk Corporation
+GD,General Dynamics Corporation
+KKR,KKR & Co. Inc.
+TT,Trane Technologies plc
+PNC,PNC Financial Services Group
+DASH,"DoorDash, Inc. Class A Common Stock"
+INTU,Intuit Inc
+DUK,Duke Energy Corporation
+CMCSA,Comcast Corp
+PWR,"Quanta Services, Inc."
+WMB,Williams Companies Inc.
+ICE,Intercontinental Exchange Inc.
 CSX,CSX Corporation
-AJG,Arthur J. Gallagher & Co.
-RSG,Republic Services
-MSI,Motorola Solutions
-LHX,L3Harris
-AEP,American Electric Power
-NSC,Norfolk Southern Railway
-TFC,Truist Financial
-PCAR,Paccar
-CVNA,Carvana Co.
-KMI,Kinder Morgan
-COIN,Coinbase Global
-ROST,Ross Stores
-SPG,Simon Property Group
-TRV,Travelers Companies (The)
-AZO,AutoZone
-NXPI,NXP Semiconductors
-BDX,Becton Dickinson
-URI,United Rentals
-SRE,Sempra
-EOG,EOG Resources
-APD,Air Products
-AFL,Aflac
-O,Realty Income
-VLO,Valero Energy
-FTNT,Fortinet
-PSX,Phillips 66
-NDAQ,"Nasdaq, Inc."
-DLR,Digital Realty
-IDXX,Idexx Laboratories
-ZTS,Zoetis
-ADSK,Autodesk
-VST,Vistra Corp.
-F,Ford Motor Company
-MPC,Marathon Petroleum
-D,Dominion Energy
-CMG,Chipotle Mexican Grill
-PYPL,PayPal
-EA,Electronic Arts
-ALL,Allstate
-BKR,Baker Hughes
-PSA,Public Storage
-CAH,Cardinal Health
-MET,MetLife
-MPWR,Monolithic Power Systems
+MRSH,Marsh
+ELV,"Elevance Health, Inc."
+HCA,"HCA Healthcare, Inc."
+WM,"Waste Management, Inc."
+MAR,Marriott International Class A Common Stock
+UPS,"United Parcel Service, Inc. Class B"
+REGN,Regeneron Pharmaceuticals Inc
+MCO,Moody's Corporation
+MMM,3M Company
+MNST,Monster Beverage Corporation
+SLB,SLB Limited
+JCI,Johnson Controls International plc
+CDNS,Cadence Design Systems
+EMR,Emerson Electric Co.
+AMT,American Tower Corporation
+SHW,The Sherwin-Williams Company
+CTAS,Cintas Corp
+SNPS,Synopsys Inc
+MSI,"Motorola Solutions, Inc. New"
+APO,"Apollo Global Management, Inc."
+ECL,"Ecolab, Inc."
+TRV,"The Travelers Companies, Inc."
+MDLZ,"Mondelez International, Inc. Class A"
+EOG,"EOG Resources, Inc."
+ITW,Illinois Tool Works Inc.
+DDOG,"Datadog, Inc. Class A Common Stock"
+GM,General Motors Company
+LITE,Lumentum Holdings Inc. Common Stock
+FDX,FedEx Corporation
+CMI,Cummins Inc.
+CI,The Cigna Group
+NOC,Northrop Grumman Corp.
 TGT,Target Corporation
-AXON,Axon Enterprise
-CBRE,CBRE Group
-GWW,W. W. Grainger
-AME,Ametek
-FAST,Fastenal
-EW,Edwards Lifesciences
-WDAY,"Workday, Inc."
-OKE,ONEOK
-CTVA,Corteva
-CARR,Carrier Global
-AMP,Ameriprise Financial
-ROK,Rockwell Automation
-EXC,Exelon
-XEL,Xcel Energy
-DHI,D. R. Horton
-TTWO,Take-Two Interactive
-DAL,Delta Air Lines
-MSCI,MSCI
-ROP,Roper Technologies
-FANG,Diamondback Energy
-YUM,Yum! Brands
-ETR,Entergy
-OXY,Occidental Petroleum
-EL,EstÃ©e Lauder Companies (The)
-DDOG,Datadog
-EBAY,eBay
-HSY,Hershey Company (The)
+NSC,Norfolk Southern Corp.
+ROST,Ross Stores Inc
+CL,Colgate-Palmolive Company
+KMI,"Kinder Morgan, Inc."
+WBD,"Warner Bros. Discovery, Inc. Series A Common Stock"
+ORLY,"O'Reilly Automotive, Inc."
+RCL,Royal Caribbean Group
+HLT,Hilton Worldwide Holdings Inc.
+AON,Aon plc Class A
+DLR,"Digital Realty Trust, Inc."
+RSG,Republic Services Inc.
+AJG,Arthur J. Gallagher & Co.
+BSX,Boston Scientific Corp.
+SPG,"Simon Property Group, Inc."
+AEP,"American Electric Power Company, Inc."
+APD,"Air Products & Chemicals, Inc."
+ALL,The Allstate Corporation
+HPE,Hewlett Packard Enterprise Company
+HON,"Honeywell International, Inc."
+PCAR,Paccar Inc
+COR,"Cencora, Inc."
+BKR,Baker Hughes Company
+TDG,TransDigm Group Incorporated
+TRGP,Targa Resources Corp.
+TFC,Truist Financial Corporation
+MET,"MetLife, Inc."
+URI,"United Rentals, Inc."
+GWW,"W.W. Grainger, Inc."
+CRH,CRH Public Limited Company
+OKE,"Oneok, Inc."
+OXY,Occidental Petroleum Corporation
+NUE,Nucor Corporation
+TEL,TE Connectivity plc
+MPWR,"Monolithic Power Systems, Inc."
+AFL,Aflac Inc.
+CTVA,"Corteva, Inc. Common Stock"
+D,"Dominion Energy, Inc Common Stock"
+O,Realty Income Corporation
+CAH,"Cardinal Health, Inc."
+MRNA,"Moderna, Inc. Common Stock"
+F,Ford Motor Company
+NKE,"Nike, Inc."
+NXPI,NXP Semiconductors N.V.
+FANG,"Diamondback Energy, Inc."
+FAST,Fastenal Co
 FIX,"Comfort Systems USA, Inc."
-KR,Kroger
-NUE,Nucor
-IQV,IQVIA
-TRGP,Targa Resources
-CTSH,Cognizant
-PEG,Public Service Enterprise Group
-LVS,Las Vegas Sands
-MCHP,Microchip Technology
-CPRT,Copart
-VMC,Vulcan Materials Company
-AIG,American International Group
-WAB,Wabtec
-GRMN,Garmin
-PAYX,Paychex
-A,Agilent Technologies
-XYZ,"Block, Inc."
-MLM,Martin Marietta Materials
-KDP,Keurig Dr Pepper
-ED,Consolidated Edison
-PRU,Prudential Financial
-CCI,Crown Castle
-RMD,ResMed
-CCL,Carnival
-VTR,Ventas
-SYY,Sysco
-KEYS,Keysight Technologies
-ARES,Ares Management Corporation
-HIG,Hartford (The)
-GEHC,GE HealthCare
-ODFL,Old Dominion
-WEC,WEC Energy Group
-FICO,Fair Isaac
-UAL,United Airlines Holdings
-TER,Teradyne
+PSA,Public Storage
+SRE,Sempra
+KEYS,"Keysight Technologies, Inc."
+NDAQ,"Nasdaq, Inc. Common Stock"
+DVN,Devon Energy Corporation
+AME,"Ametek, Inc."
+CVNA,Carvana Co.
+GRMN,Garmin Ltd
 STT,State Street Corporation
-FISV,"Fiserv, Inc."
-OTIS,Otis Worldwide
-XYL,Xylem Inc.
-KVUE,Kenvue
-KMB,Kimberly-Clark
-IR,Ingersoll Rand
-PCG,PG&E Corporation
-EXPE,Expedia Group
-ACGL,Arch Capital Group
-RJF,Raymond James Financial
+TER,"Teradyne, Inc. Common Stock"
+COHR,Coherent Corp.
+EW,Edwards Lifesciences Corp
+DAL,"Delta Air Lines, Inc."
+COIN,"Coinbase Global, Inc. Class A Common Stock"
+BDX,"Becton, Dickinson and Co."
+ADSK,Autodesk Inc
+ETR,Entergy Corporation
+WDAY,"Workday, Inc. Class A Common Stock"
+VMRK,Vivmark Residential
 FITB,Fifth Third Bancorp
-LYV,Live Nation Entertainment
-MTB,M&T Bank
-DG,Dollar General
-HUM,Humana
-EQT,EQT Corporation
-IBKR,Interactive Brokers Group
-ADM,Archer Daniels Midland
-FIS,Fidelity National Information Services
-EXR,Extra Space Storage
-WTW,Willis Towers Watson
-VICI,Vici Properties
-EME,"EMCOR Group, Inc."
-VRSK,Verisk Analytics
-ROL,"Rollins, Inc."
-ULTA,Ulta Beauty
-MTD,Mettler Toledo
-NRG,NRG Energy
-CBOE,Cboe Global Markets
-LEN,Lennar
-STZ,Constellation Brands
-HBAN,Huntington Bancshares
-DTE,DTE Energy
-KHC,Kraft Heinz
-AEE,Ameren
-DOV,Dover Corporation
-DXCM,Dexcom
-SYF,Synchrony Financial
-PPL,PPL Corporation
-FE,FirstEnergy
-IRM,Iron Mountain
-HPE,Hewlett Packard Enterprise
-ATO,Atmos Energy
-NTRS,Northern Trust
-CSGP,CoStar Group
-BRO,Brown & Brown
-HAL,Halliburton
-TSCO,Tractor Supply
-DLTR,Dollar Tree
-TDY,Teledyne Technologies
-ES,Eversource Energy
-TPR,"Tapestry, Inc."
-JBL,Jabil
-FSLR,First Solar
-WRB,W. R. Berkley Corporation
-CFG,Citizens Financial Group
-CNP,CenterPoint Energy
-AWK,American Water Works
-EFX,Equifax
-STE,Steris
-AVB,AvalonBay Communities
-HUBB,Hubbell Incorporated
-VLTO,Veralto
-STLD,Steel Dynamics
-CINF,Cincinnati Financial
-EXE,Expand Energy
-PHM,PulteGroup
-WSM,Williams-Sonoma
-OMC,Omnicom Group
-PPG,PPG Industries
-BR,Broadridge Financial Solutions
-LDOS,Leidos
-BIIB,Biogen
-ON,ON Semiconductor
-DRI,Darden Restaurants
-RF,Regions Financial Corporation
-CHTR,Charter Communications
-GIS,General Mills
-EQR,Equity Residential
-EIX,Edison International
-VRSN,Verisign
-KEY,KeyCorp
-WAT,Waters Corporation
-DVN,Devon Energy
-TROW,T. Rowe Price
-TPL,Texas Pacific Land Corporation
+XYZ,"Block, Inc."
+AMP,"Ameriprise Financial, Inc."
+HUM,Humana Inc.
+HONA,Honeywell Aerospace Inc. Common Stock
+CARR,Carrier Global Corporation
+LHX,"L3Harris Technologies, Inc."
+AZO,"AutoZone, Inc."
+VST,Vistra Corp.
+PYPL,"PayPal Holdings, Inc. Common Stock"
+CMG,"Chipotle Mexican Grill, Inc."
+XEL,"Xcel Energy, Inc."
+ROK,"Rockwell Automation, Inc."
+VTR,"Ventas, Inc."
+EBAY,eBay Inc
+WAB,Wabtec Inc.
+EXC,Exelon Corporation
+VEEV,Veeva Systems Inc.
+CIEN,Ciena Corporation
+KDP,Keurig Dr Pepper Inc.
+PAYX,Paychex Inc
+IQV,IQVIA Holdings Inc.
+AXON,"Axon Enterprise, Inc. Common Stock"
+FERG,Ferguson Enterprises Inc.
+CBRE,"CBRE GROUP, INC."
+PRU,"Prudential Financial, Inc."
+A,Agilent Technologies Inc.
+IBKR,"Interactive Brokers Group, Inc. Class A Common Stock"
+IDXX,Idexx Laboratories Inc
+ROP,"Roper Technologies, Inc. Common Stock"
+MSCI,"MSCI, Inc."
+YUM,"Yum! Brands, Inc."
+LYV,Live Nation Entertainment Inc.
+TTWO,Take-Two Interactive Software Inc
+ADM,Archer Daniels Midland Company
+AIG,"American International Group, Inc."
+WAT,Waters Corp
+DHI,D.R. Horton Inc.
+ED,"Consolidated Edison, Inc."
+FLEX,Flex Ltd. Ordinary Shares
+MCHP,Microchip Technology Inc
+SYY,Sysco Corporation
+ODFL,Old Dominion Freight Line
+HIG,"The Hartford Insurance Group, Inc."
+PEG,Public Service Enterprise Group Incorporated
+EXPE,"Expedia Group, Inc. Common Stock"
+KVUE,Kenvue Inc.
+MLM,Martin Marietta Materials
+KMB,Kimberly-Clark Corp.
+EL,The Estee Lauder Companies Inc. Class A
+KR,The Kroger Co.
+NTAP,"NetApp, Inc"
+STLD,Steel Dynamics Inc
+UAL,"United Airlines Holdings, Inc. Common Stock"
+EQT,EQT CORP
+HSY,The Hershey Company
+WEC,"WEC Energy Group, Inc."
+RJF,"Raymond James Financial, Inc."
+MTB,M&T Bank Corp.
+HBAN,Huntington Bancshares Inc
+ACGL,Arch Capital Group Ltd
+NTRS,Northern Trust Corp
+IRM,Iron Mountain Inc.
+VMC,Vulcan Materials Company(Holding Company)
+DXCM,"DexCom, Inc."
 CNC,Centene Corporation
-LH,LabCorp
-LULU,Lululemon Athletica
-CHD,Church & Dwight
-IP,International Paper
-LUV,Southwest Airlines
-RL,Ralph Lauren Corporation
-CMS,CMS Energy
-TSN,Tyson Foods
-SW,Smurfit WestRock
-CPAY,Corpay
-EXPD,Expeditors International
-BG,Bunge Global
-L,Loews Corporation
-DGX,Quest Diagnostics
-CHRW,C.H. Robinson
-NVR,"NVR, Inc."
-NI,NiSource
-ALB,Albemarle Corporation
-INCY,Incyte
-GPN,Global Payments
-PODD,Insulet Corporation
-CTRA,Coterra
-Q,Qnity Electronics
-SBAC,SBA Communications
-PKG,Packaging Corporation of America
-PFG,Principal Financial Group
-WY,Weyerhaeuser
-JBHT,J.B. Hunt
-PTC,PTC Inc.
-AMCR,Amcor
-SNA,Snap-on
-DOW,Dow Inc.
-SMCI,Supermicro
-NTAP,NetApp
-TYL,Tyler Technologies
-GPC,Genuine Parts Company
-MKC,McCormick & Company
+RMD,ResMed Inc.
+BIIB,Biogen Inc. Common Stock
+EME,"EMCOR Group, Inc."
+CCI,Crown Castle Inc.
+CCL,Carnival Corporation Ltd.
+ARES,Ares Management Corporation Class A Common Stock
+JBL,Jabil Inc.
+WTW,Willis Towers Watson Public Limited Company Ordinary Shares
+ZTS,ZOETIS INC.
+GEHC,GE HealthCare Technologies Inc. Common Stock
+HAL,Halliburton Company
+CBOE,"Cboe Global Markets, Inc."
+CPRT,Copart Inc
+PCG,PG&E Corporation
+RDDT,"Reddit, Inc."
+KHC,The Kraft Heinz Company Common Stock
+CFG,"Citizens Financial Group, Inc."
+EXR,"Extra Space Storage, Inc."
+AEE,Ameren Corporation
+CTSH,Cognizant Technology Solutions
+IR,Ingersoll Rand Inc. Common Stock
 HPQ,HP Inc.
-IFF,International Flavors & Fragrances
-WST,West Pharmaceutical Services
-LII,Lennox International
-DD,DuPont
-EVRG,Evergy
-LNT,Alliant Energy
-ZBH,Zimmer Biomet
-PNR,Pentair
-MRNA,Moderna
-HOLX,Hologic
-FTV,Fortive
-INVH,Invitation Homes
-APTV,Aptiv
-TRMB,Trimble Inc.
-TTD,"The Trade Desk, Inc."
-ESS,Essex Property Trust
-TXT,Textron
-HII,Huntington Ingalls Industries
-CDW,CDW
-J,Jacobs Solutions
-TKO,TKO Group Holdings
-IT,Gartner
-COO,Cooper Companies (The)
-MAA,Mid-America Apartment Communities
-LYB,LyondellBasell
-GEN,Gen Digital
-FOX,Fox Corporation (Class B)
-FFIV,"F5, Inc."
-ERIE,Erie Indemnity
-FOXA,Fox Corporation (Class A)
-NDSN,Nordson Corporation
+DG,Dollar General Corp.
+LVS,Las Vegas Sands Corp.
+ON,ON Semiconductor Corp
+ATO,Atmos Energy Corporation
+DTE,DTE Energy Company
+CASY,Casey's General Stores Inc
+VICI,VICI Properties Inc. Common Stock
+TDY,Teledyne Technologies Incorporated
+AWK,"American Water Works Company, Inc"
+FISV,"Fiserv, Inc. Common Stock"
+CPAY,"Corpay, Inc."
+FE,FirstEnergy Corp.
+OTIS,Otis Worldwide Corporation
+MTD,Mettler-Toledo International
+LH,Labcorp Holdings Inc.
+ES,Eversource Energy
+CINF,Cincinnati Financial Corp
+DGX,Quest Diagnostics Inc.
+PPL,PPL Corporation
+CNP,"CenterPoint Energy, Inc."
+VRSN,VeriSign Inc
+WSM,"Williams-Sonoma, Inc."
+INCY,Incyte Genomics Inc
+SYF,SYNCHRONY FINANCIAL
+ECHO,EchoStar Corporation
+RF,Regions Financial Corp.
+WRB,W.R. Berkley Corporation
+DOV,Dover Corporation
+PFG,"Principal Financial Group, Inc."
+TPL,Texas Pacific Land Corporation
+XYL,Xylem Inc
+DRI,"Darden Restaurants, Inc."
+JBHT,JB Hunt Transport Services Inc
+SMCI,"Super Micro Computer, Inc. Common Stock"
+PPG,"PPG Industries, Inc."
+VRSK,"Verisk Analytics, Inc. Common Stock"
+Q,"Qnity Electronics, Inc."
+DLTR,Dollar Tree Inc.
+GPN,"Global Payments, Inc."
+TPR,"Tapestry, Inc. Common Stock"
+BRO,"Brown & Brown, Inc."
+EXPD,"Expeditors International of Washington, Inc."
+HUBB,Hubbell Incorporated
+FICO,Fair Isaac Corporation
+WST,"West Pharmaceutical Services, Inc."
+VLTO,Veralto Corporation
+SW,Smurfit Westrock plc
+ULTA,"Ulta Beauty, Inc. Common Stock"
+PHM,"Pultegroup, Inc."
+KEY,KeyCorp
+NRG,"NRG Energy, Inc."
+TROW,T Rowe Price Group Inc
+CHD,"Church & Dwight Co., Inc."
+EXE,Expand Energy Corporation Common Stock
+BG,Bunge Global SA
+OMC,Omnicom Group Inc.
+L,Loews Corporation
+STE,STERIS plc
+IFF,International Flavors & Fragrances Inc.
+DOW,Dow Inc.
+FSLR,"First Solar, Inc."
+EFX,"Equifax, Incorporated"
+FFIV,"F5, Inc. Common Stock"
+STZ,"Constellation Brands, Inc."
+EIX,Edison International
+FIS,"Fidelity National Information Services, Inc."
+CMS,CMS Energy Corporation
+AMCR,Amcor plc Ordinary Shares
+LYB,LyondellBasell Industries N.V. Class A
+CF,"CF Industries Holding, Inc."
+PKG,Packaging Corp of America
+GIS,"General Mills, Inc."
+LEN,Lennar Corporation Class A
+SBAC,SBA Communications Corp
+BR,Broadridge Financial Solutions Inc
+RL,Ralph Lauren Corporation
+NI,NiSource Inc.
+SNA,Snap-on Incorporated
+CDW,CDW Corporation
+VTRS,Viatris Inc. Common Stock
+IP,International Paper Co.
+FDXF,"FedEx Freight Holding Company, Inc."
+EVRG,"Evergy, Inc."
+ZBH,"Zimmer Biomet Holdings, Inc."
+LUV,Southwest Airlines Co.
+GPC,Genuine Parts Company
+GEN,Gen Digital Inc. Common Stock
+BBY,"Best Buy Company, Inc."
+TSN,"Tyson Foods, Inc."
+TSCO,Tractor Supply Co
+CHTR,Charter Comm Inc Del CL A New
+ESS,"Essex Property Trust, Inc"
+LNT,Alliant Energy Corporation Common Stock
+DD,"DuPont de Nemours, Inc. Common Stock"
+NDSN,Nordson Corp
+FTV,Fortive Corporation
+J,Jacobs Solutions Inc.
+CHRW,"C.H. Robinson Worldwide, Inc."
+ROL,"Rollins, Inc."
+INVH,Invitation Homes Inc. Common Stock
+NVR,"NVR, Inc."
+BEN,"Franklin Templeton, Inc."
+ZBRA,Zebra Technologies Corporation
 BALL,Ball Corporation
-VTRS,Viatris
+WY,Weyerhaeuser Company
+LDOS,"Leidos Holdings, Inc."
 IEX,IDEX Corporation
-DECK,Deckers Brands
-KIM,Kimco Realty
-MAS,Masco
-AVY,Avery Dennison
-ALLE,Allegion
-GDDY,GoDaddy
-BBY,Best Buy
-CF,CF Industries
-SOLV,Solventum
-BLDR,Builders FirstSource
-JKHY,Jack Henry & Associates
-HRL,Hormel Foods
-EG,Everest Group
-CLX,Clorox
-DPZ,Domino's
-BEN,Franklin Resources
-REG,Regency Centers
-AKAM,Akamai Technologies
-PSKY,Paramount Skydance Corp
-RVTY,Revvity
-BF-B,BrownâForman
-HST,Host Hotels & Resorts
-SWK,Stanley Black & Decker
-UHS,Universal Health Services
-IVZ,Invesco
-DOC,Healthpeak Properties
-UDR,"UDR, Inc."
-ZBRA,Zebra Technologies
-HAS,Hasbro
-ALGN,Align Technology
-AIZ,Assurant
-WYNN,Wynn Resorts
+PTC,"PTC, INC"
+KIM,Kimco Realty Corp.
+ALB,Albemarle Corporation
+SOLV,Solventum Corporation
+APA,APA Corporation Common Stock
+TYL,"Tyler Technologies, Inc."
+HST,"Host Hotels & Resorts, Inc."
+AKAM,Akamai Technologies Inc
+MAA,"Mid-America Apartment Communities, Inc."
+EG,"Everest Group, Ltd."
+SWK,"Stanley Black & Decker, Inc."
+DOC,"Healthpeak Properties, Inc."
+RVTY,"Revvity, Inc."
+IVZ,Invesco LTD
+AIZ,"Assurant, Inc."
+MKC,"McCormick & Company, Incorporated Non-VTG CS"
+MAS,Masco Corporation
+TRMB,Trimble Inc. Common Stock
+REG,Regency Centers Corporation
+CRL,"Charles River Laboratories International, Inc."
+TKO,"TKO Group Holdings, Inc."
+SJM,The J.M. Smucker Company
+COO,"The Cooper Companies, Inc. Common Stock"
+LULU,lululemon athletica inc.
+TXT,"Textron, Inc."
+GL,Globe Life Inc.
+ERIE,Erie Indemnity Co
+FOXA,Fox Corporation Class A Common Stock
+LII,Lennox International Inc.
+FOX,Fox Corporation Class B Common Stock
+ALLE,Allegion Public Limited Company
+AVY,Avery Dennison Corp.
+BAX,Baxter International Inc.
+HAS,"Hasbro, Inc."
+CSGP,CoStar Group Inc
+GDDY,GoDaddy Inc
+BF-B,Brown-Forman Corporation Class B
 CPT,Camden Property Trust
-EPAM,EPAM Systems
-PNW,Pinnacle West
-SJM,J.M. Smucker Company (The)
-GL,Globe Life
-TECH,Bio-Techne
-CRL,Charles River Laboratories
+IT,"Gartner, Inc."
+PSKY,Paramount Skydance Corporation Class B Common Stock
+HRL,Hormel Foods Corporation
+PNW,Pinnacle West Capital Corporation
+JKHY,Henry (Jack) & Associates
+UDR,"UDR, Inc."
+DVA,DaVita Inc.
+DECK,Deckers Outdoor Corp
+HII,"Huntington Ingalls Industries, Inc."
+DPZ,Domino's Pizza Inc.
+CLX,Clorox Company
+TECH,Bio-Techne Corp.
+ALGN,Align Technology Inc
+FDS,Factset Research Systems
+NWSA,News Corporation Class A Common Stock
+SWKS,Skyworks Solutions Inc
 BXP,"BXP, Inc."
-FDS,FactSet
-BAX,Baxter International
-TAP,Molson Coors Beverage Company
-MOH,Molina Healthcare
-AOS,A. O. Smith
-ARE,Alexandria Real Estate Equities
+GNRC,GENERAC HOLDINGS INC
 AES,AES Corporation
-POOL,Pool Corporation
-NWSA,News Corp (Class A)
-GNRC,Generac
-NCLH,Norwegian Cruise Line Holdings
-MGM,MGM Resorts
-HSIC,Henry Schein
-APA,APA Corporation
+MGM,MGM RESORTS INTERNATIONAL
+PODD,Insulet Corporation
 FRT,Federal Realty Investment Trust
-SWKS,Skyworks Solutions
-MOS,Mosaic Company (The)
-CAG,Conagra Brands
-PAYC,Paycom
-CPB,Campbell Soup Company
-DVA,DaVita
-MTCH,Match Group
-LW,Lamb Weston
-NWS,News Corp (Class B)
+HSIC,Henry Schein Inc
+UHS,"Universal Health Services, Inc. Class B"
+APTV,Aptiv PLC
+PNR,Pentair plc
+WYNN,Wynn Resorts Ltd
+ARE,"Alexandria Real Estate Equities, Inc."
+AOS,A.O. Smith Corporation
+MOS,The Mosaic Company
+TAP,Molson Coors Beverage Company Class B
+NCLH,Norwegian Cruise Line Holdings Ltd. Ordinary Shares
+TTD,"The Trade Desk, Inc."
+BLDR,"Builders FirstSource, Inc."
+NWS,News Corporation Class B Common Stock
