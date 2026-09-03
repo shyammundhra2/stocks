@@ -28,6 +28,7 @@ to the current working directory.
 import io
 import os
 import sys
+import time
 
 import pandas as pd
 import requests
@@ -74,7 +75,53 @@ def fetch_sectors() -> pd.DataFrame:
     return out
 
 
-def main():
+MAX_AGE_DAYS = 60        # ~2 months; index membership changes quarterly-ish
+
+
+def age_days() -> float:
+    """Days since sp500.csv was last written. inf if it does not exist.
+
+    The refresher rewrites both files on every successful run even when nothing
+    changed, so mtime means "last CHECKED", not "last changed" - which is the
+    semantics an auto-refresh wants.
+    """
+    if not os.path.exists(SYMBOLS_CSV):
+        return float("inf")
+    return (time.time() - os.path.getmtime(SYMBOLS_CSV)) / 86400.0
+
+
+def refresh_if_stale(max_age_days: int = MAX_AGE_DAYS, verbose: bool = True) -> str:
+    """Refresh the universe if it is older than max_age_days. Never raises.
+
+    Returns one of: "fresh", "refreshed", "failed", "refused".
+
+    Deliberately swallows every failure. A ranker run must not die because
+    slickcharts is down or Wikipedia moved a column - it should fall back to the
+    universe already on disk, which is stale but valid. The caller is told which
+    happened so it can print an honest warning.
+    """
+    age = age_days()
+    if age <= max_age_days:
+        if verbose:
+            print(f"universe is {age:.0f}d old (<= {max_age_days}d) - not refreshing")
+        return "fresh"
+    if verbose:
+        print(f"universe is {age:.0f}d old (> {max_age_days}d) - refreshing ...")
+    try:
+        rc = main(verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"  refresh FAILED ({type(e).__name__}: {str(e)[:120]}) - "
+                  f"continuing on the existing universe")
+        return "failed"
+    if rc != 0:
+        if verbose:
+            print("  refresh REFUSED (see reason above) - continuing on the existing universe")
+        return "refused"
+    return "refreshed"
+
+
+def main(verbose=True):
     print("fetching symbols (slickcharts) ...")
     syms = fetch_symbols()
     print(f"  {len(syms)} symbols")

@@ -71,9 +71,9 @@ STX,Seagate Technology Holdings PLC Ordinary Shares (Ireland)
 QCOM,Qualcomm Inc
 T,AT&T Inc.
 NEE,"NextEra Energy, Inc."
+BLK,"Blackrock, Inc."
 WELL,Welltower Inc.
 UNP,Union Pacific Corp.
-BLK,"Blackrock, Inc."
 ADI,"Analog Devices, Inc."
 BA,Boeing Company
 PFE,Pfizer Inc.
@@ -120,14 +120,14 @@ HWM,Howmet Aerospace Inc.
 BX,Blackstone Inc.
 PSX,PHILLIPS 66
 SO,The Southern Company
-EQIX,"Equinix, Inc. Common Stock REIT"
 CME,CME Group Inc.
+EQIX,"Equinix, Inc. Common Stock REIT"
 CEG,Constellation Energy Corporation Common Stock
 USB,U.S. Bancorp
 GD,General Dynamics Corporation
 KKR,KKR & Co. Inc.
-TT,Trane Technologies plc
 PNC,PNC Financial Services Group
+TT,Trane Technologies plc
 DASH,"DoorDash, Inc. Class A Common Stock"
 INTU,Intuit Inc
 DUK,Duke Energy Corporation
@@ -136,18 +136,18 @@ PWR,"Quanta Services, Inc."
 WMB,Williams Companies Inc.
 ICE,Intercontinental Exchange Inc.
 CSX,CSX Corporation
-MRSH,Marsh
 ELV,"Elevance Health, Inc."
+MRSH,Marsh
 HCA,"HCA Healthcare, Inc."
 WM,"Waste Management, Inc."
 MAR,Marriott International Class A Common Stock
 UPS,"United Parcel Service, Inc. Class B"
 REGN,Regeneron Pharmaceuticals Inc
 MCO,Moody's Corporation
-MMM,3M Company
 MNST,Monster Beverage Corporation
-SLB,SLB Limited
+MMM,3M Company
 JCI,Johnson Controls International plc
+SLB,SLB Limited
 CDNS,Cadence Design Systems
 EMR,Emerson Electric Co.
 AMT,American Tower Corporation
@@ -159,8 +159,8 @@ APO,"Apollo Global Management, Inc."
 ECL,"Ecolab, Inc."
 TRV,"The Travelers Companies, Inc."
 MDLZ,"Mondelez International, Inc. Class A"
-EOG,"EOG Resources, Inc."
 ITW,Illinois Tool Works Inc.
+EOG,"EOG Resources, Inc."
 DDOG,"Datadog, Inc. Class A Common Stock"
 GM,General Motors Company
 LITE,Lumentum Holdings Inc. Common Stock
@@ -183,15 +183,15 @@ RSG,Republic Services Inc.
 AJG,Arthur J. Gallagher & Co.
 BSX,Boston Scientific Corp.
 SPG,"Simon Property Group, Inc."
-AEP,"American Electric Power Company, Inc."
 APD,"Air Products & Chemicals, Inc."
+AEP,"American Electric Power Company, Inc."
 ALL,The Allstate Corporation
 HPE,Hewlett Packard Enterprise Company
 HON,"Honeywell International, Inc."
 PCAR,Paccar Inc
 COR,"Cencora, Inc."
-BKR,Baker Hughes Company
 TDG,TransDigm Group Incorporated
+BKR,Baker Hughes Company
 TRGP,Targa Resources Corp.
 TFC,Truist Financial Corporation
 MET,"MetLife, Inc."
@@ -200,16 +200,16 @@ GWW,"W.W. Grainger, Inc."
 CRH,CRH Public Limited Company
 OKE,"Oneok, Inc."
 OXY,Occidental Petroleum Corporation
-NUE,Nucor Corporation
 TEL,TE Connectivity plc
+NUE,Nucor Corporation
 MPWR,"Monolithic Power Systems, Inc."
 AFL,Aflac Inc.
 CTVA,"Corteva, Inc. Common Stock"
 D,"Dominion Energy, Inc Common Stock"
 O,Realty Income Corporation
 CAH,"Cardinal Health, Inc."
-MRNA,"Moderna, Inc. Common Stock"
 F,Ford Motor Company
+MRNA,"Moderna, Inc. Common Stock"
 NKE,"Nike, Inc."
 NXPI,NXP Semiconductors N.V.
 FANG,"Diamondback Energy, Inc."
@@ -221,8 +221,8 @@ KEYS,"Keysight Technologies, Inc."
 NDAQ,"Nasdaq, Inc. Common Stock"
 DVN,Devon Energy Corporation
 AME,"Ametek, Inc."
-CVNA,Carvana Co.
 GRMN,Garmin Ltd
+CVNA,Carvana Co.
 STT,State Street Corporation
 TER,"Teradyne, Inc. Common Stock"
 COHR,Coherent Corp.
@@ -242,13 +242,13 @@ HONA,Honeywell Aerospace Inc. Common Stock
 CARR,Carrier Global Corporation
 LHX,"L3Harris Technologies, Inc."
 AZO,"AutoZone, Inc."
-VST,Vistra Corp.
 PYPL,"PayPal Holdings, Inc. Common Stock"
+VST,Vistra Corp.
 CMG,"Chipotle Mexican Grill, Inc."
 XEL,"Xcel Energy, Inc."
 ROK,"Rockwell Automation, Inc."
-VTR,"Ventas, Inc."
 EBAY,eBay Inc
+VTR,"Ventas, Inc."
 WAB,Wabtec Inc.
 EXC,Exelon Corporation
 VEEV,Veeva Systems Inc.
@@ -282,9 +282,9 @@ PEG,Public Service Enterprise Group Incorporated
 EXPE,"Expedia Group, Inc. Common Stock"
 KVUE,Kenvue Inc.
 MLM,Martin Marietta Materials
-KMB,Kimberly-Clark Corp.
 EL,The Estee Lauder Companies Inc. Class A
 KR,The Kroger Co.
+KMB,Kimberly-Clark Corp.
 NTAP,"NetApp, Inc"
 STLD,Steel Dynamics Inc
 UAL,"United Airlines Holdings, Inc. Common Stock"
@@ -298,12 +298,12 @@ ACGL,Arch Capital Group Ltd
 NTRS,Northern Trust Corp
 IRM,Iron Mountain Inc.
 VMC,Vulcan Materials Company(Holding Company)
-DXCM,"DexCom, Inc."
 CNC,Centene Corporation
-RMD,ResMed Inc.
+DXCM,"DexCom, Inc."
 BIIB,Biogen Inc. Common Stock
-EME,"EMCOR Group, Inc."
+RMD,ResMed Inc.
 CCI,Crown Castle Inc.
+EME,"EMCOR Group, Inc."
 CCL,Carnival Corporation Ltd.
 ARES,Ares Management Corporation Class A Common Stock
 JBL,Jabil Inc.
@@ -327,8 +327,8 @@ LVS,Las Vegas Sands Corp.
 ON,ON Semiconductor Corp
 ATO,Atmos Energy Corporation
 DTE,DTE Energy Company
-CASY,Casey's General Stores Inc
 VICI,VICI Properties Inc. Common Stock
+CASY,Casey's General Stores Inc
 TDY,Teledyne Technologies Incorporated
 AWK,"American Water Works Company, Inc"
 FISV,"Fiserv, Inc. Common Stock"
@@ -343,10 +343,10 @@ DGX,Quest Diagnostics Inc.
 PPL,PPL Corporation
 CNP,"CenterPoint Energy, Inc."
 VRSN,VeriSign Inc
-WSM,"Williams-Sonoma, Inc."
+ECHO,EchoStar Corporation
 INCY,Incyte Genomics Inc
 SYF,SYNCHRONY FINANCIAL
-ECHO,EchoStar Corporation
+WSM,"Williams-Sonoma, Inc."
 RF,Regions Financial Corp.
 WRB,W.R. Berkley Corporation
 DOV,Dover Corporation
@@ -355,9 +355,9 @@ TPL,Texas Pacific Land Corporation
 XYL,Xylem Inc
 DRI,"Darden Restaurants, Inc."
 JBHT,JB Hunt Transport Services Inc
+VRSK,"Verisk Analytics, Inc. Common Stock"
 SMCI,"Super Micro Computer, Inc. Common Stock"
 PPG,"PPG Industries, Inc."
-VRSK,"Verisk Analytics, Inc. Common Stock"
 Q,"Qnity Electronics, Inc."
 DLTR,Dollar Tree Inc.
 GPN,"Global Payments, Inc."
@@ -371,8 +371,8 @@ VLTO,Veralto Corporation
 SW,Smurfit Westrock plc
 ULTA,"Ulta Beauty, Inc. Common Stock"
 PHM,"Pultegroup, Inc."
-KEY,KeyCorp
 NRG,"NRG Energy, Inc."
+KEY,KeyCorp
 TROW,T Rowe Price Group Inc
 CHD,"Church & Dwight Co., Inc."
 EXE,Expand Energy Corporation Common Stock
@@ -414,20 +414,20 @@ TSN,"Tyson Foods, Inc."
 TSCO,Tractor Supply Co
 CHTR,Charter Comm Inc Del CL A New
 ESS,"Essex Property Trust, Inc"
-LNT,Alliant Energy Corporation Common Stock
 DD,"DuPont de Nemours, Inc. Common Stock"
+LNT,Alliant Energy Corporation Common Stock
 NDSN,Nordson Corp
 FTV,Fortive Corporation
 J,Jacobs Solutions Inc.
 CHRW,"C.H. Robinson Worldwide, Inc."
 ROL,"Rollins, Inc."
-INVH,Invitation Homes Inc. Common Stock
 NVR,"NVR, Inc."
+INVH,Invitation Homes Inc. Common Stock
 BEN,"Franklin Templeton, Inc."
 ZBRA,Zebra Technologies Corporation
+LDOS,"Leidos Holdings, Inc."
 BALL,Ball Corporation
 WY,Weyerhaeuser Company
-LDOS,"Leidos Holdings, Inc."
 IEX,IDEX Corporation
 PTC,"PTC, INC"
 KIM,Kimco Realty Corp.
@@ -440,8 +440,8 @@ AKAM,Akamai Technologies Inc
 MAA,"Mid-America Apartment Communities, Inc."
 EG,"Everest Group, Ltd."
 SWK,"Stanley Black & Decker, Inc."
-DOC,"Healthpeak Properties, Inc."
 RVTY,"Revvity, Inc."
+DOC,"Healthpeak Properties, Inc."
 IVZ,Invesco LTD
 AIZ,"Assurant, Inc."
 MKC,"McCormick & Company, Incorporated Non-VTG CS"
@@ -452,31 +452,31 @@ CRL,"Charles River Laboratories International, Inc."
 TKO,"TKO Group Holdings, Inc."
 SJM,The J.M. Smucker Company
 COO,"The Cooper Companies, Inc. Common Stock"
-LULU,lululemon athletica inc.
 TXT,"Textron, Inc."
+LULU,lululemon athletica inc.
 GL,Globe Life Inc.
-ERIE,Erie Indemnity Co
 FOXA,Fox Corporation Class A Common Stock
+ERIE,Erie Indemnity Co
 LII,Lennox International Inc.
 FOX,Fox Corporation Class B Common Stock
 ALLE,Allegion Public Limited Company
 AVY,Avery Dennison Corp.
 BAX,Baxter International Inc.
 HAS,"Hasbro, Inc."
-CSGP,CoStar Group Inc
 GDDY,GoDaddy Inc
+CSGP,CoStar Group Inc
 BF-B,Brown-Forman Corporation Class B
-CPT,Camden Property Trust
 IT,"Gartner, Inc."
+CPT,Camden Property Trust
 PSKY,Paramount Skydance Corporation Class B Common Stock
 HRL,Hormel Foods Corporation
 PNW,Pinnacle West Capital Corporation
 JKHY,Henry (Jack) & Associates
 UDR,"UDR, Inc."
 DVA,DaVita Inc.
-DECK,Deckers Outdoor Corp
 HII,"Huntington Ingalls Industries, Inc."
 DPZ,Domino's Pizza Inc.
+DECK,Deckers Outdoor Corp
 CLX,Clorox Company
 TECH,Bio-Techne Corp.
 ALGN,Align Technology Inc

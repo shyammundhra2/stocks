@@ -23,6 +23,7 @@ S&P 500 inflates absolute returns; the relative edge is the trustworthy part),
 momentum's tail is sharp crashes where a lagged exit/entry costs more than the
 whipsaw it saves.
 """
+import os
 import time
 import warnings
 from datetime import datetime, timedelta
@@ -34,9 +35,19 @@ import yfinance as yf
 warnings.filterwarnings('ignore')
 
 # ---------------- CONFIG ----------------
-LOCAL_FILE = "sp500.csv"
-SECTOR_FILE = "sp500_sectors.csv"
-OUTPUT_CSV = "macro_2027_ranking_enhanced.csv"
+# Paths are derived from __file__, not the cwd. They used to be bare filenames,
+# which meant the ranker only ran if you happened to be cd'd into this directory
+# - `python -m stockselection.predict_top_stocks` from the repo root crashed.
+_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_FILE = os.path.join(_DIR, "sp500.csv")
+SECTOR_FILE = os.path.join(_DIR, "sp500_sectors.csv")
+OUTPUT_CSV = os.path.join(_DIR, "macro_2027_ranking_enhanced.csv")
+
+# Auto-refresh the universe if it is older than this. Index membership changes
+# a few times a year; left alone, sp500.csv drifted ~3 months and 29 names, and
+# the drift is not random - it systematically excludes recent additions, which
+# are exactly the names with the momentum that gets you into a 12-1 book.
+UNIVERSE_MAX_AGE_DAYS = 60
 
 MOM_LOOKBACK = 252      # 12 months
 MOM_SKIP = 21           # skip last month (12-1 momentum)
@@ -158,8 +169,33 @@ def load_sectors():
 
 
 # ---------------- INFERENCE ----------------
+def _auto_refresh_universe():
+    """Refresh sp500.csv + sp500_sectors.csv if stale. Never fatal.
+
+    Imported lazily and defensively: a missing/broken refresher must not stop a
+    ranker run, and neither must a network failure - refresh_if_stale falls back
+    to the universe already on disk and reports which happened.
+    """
+    try:
+        try:
+            from .refresh_universe import refresh_if_stale      # package import
+        except ImportError:
+            from refresh_universe import refresh_if_stale       # script import
+        status = refresh_if_stale(UNIVERSE_MAX_AGE_DAYS)
+        if status in ("failed", "refused"):
+            print("⚠️  ranking on a STALE universe - recent index additions are missing\n")
+        elif status == "refreshed":
+            print("✅ universe refreshed\n")
+        else:
+            print()
+    except Exception as e:
+        print(f"⚠️  universe auto-refresh unavailable ({type(e).__name__}) - "
+              f"continuing on the existing files\n")
+
+
 def infer_today(top_n=25):
     print("🚀 Momentum(12-1) + SPY-200DMA gate ranker\n")
+    _auto_refresh_universe()
     end = datetime.now()
     start = end - timedelta(days=650)          # ~450 trading days > 273 needed
     print(f"📅 {start.date()} → {end.date()}")
