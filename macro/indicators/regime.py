@@ -50,6 +50,21 @@ from macro.indicators.mathstats import *
 # it is redundant with the already-validated signal and should remain
 # telemetry/qualifier only.
 #
+# MEASURED against that criterion (2026-09-02, backtest_hmm_regime.py,
+# walk-forward 2016-2026, 2439 daily reads, refit every 7d, no lookahead):
+#
+#   p_crisis vs SPY drawdown>15% : precision 0.162  recall 0.583  F1 0.253
+#   p_crisis vs VIX>30           : precision 0.160  recall 0.773  F1 0.265
+#   lead/lag cross-correlation   : peak 0.214 at lag +9 sessions (LEADS)
+#
+# Verdict: NOT promoted, and the lead is why it is tempting rather than why
+# it qualifies. It does lead by ~9 sessions, but at precision ~0.16 it fires
+# ~5 false alarms per real event (623 FP vs 120 TP on the drawdown proxy).
+# Wiring that into a vol-cap dampener would inject far more spurious risk-off
+# than the genuine leads are worth. High recall + low precision is a fine
+# descriptive badge and a bad trigger. Revisit only if precision materially
+# improves - the lead is already established and is not the binding constraint.
+#
 # Honest limitations:
 #   - Refit weekly (_HMM_REFIT_INTERVAL), not per-call. ~1110 obs and
 #     ~30 free params for 3 diagonal-covariance Gaussian states -
@@ -234,7 +249,13 @@ def get_regime_hmm_state(n_states=3):
         # switched almost every day (dwell ~1 obs). A 21-session return
         # (autocorr ~0.984, aligned with the 20-day vol window) carries real
         # trend information and yields materially more persistent regimes
-        # (state dwell ~4 obs) while still separating crises ~5:1.
+        # while still separating crises.
+        #
+        # Dwell is now MEASURED, not estimated. Walk-forward 2016-2026
+        # (backtest_hmm_regime.py, 2439 daily reads): mean consecutive days in
+        # a state = 16.5 crisis / 17.4 trending_calm / 9.4 choppy (medians
+        # 10 / 13 / 8). The "~4 obs" this comment used to claim was a guess and
+        # was roughly 3x too pessimistic.
         # --------------------------------------------------
 
         daily_ret = np.log(spy / spy.shift(1))

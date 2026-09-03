@@ -1,9 +1,17 @@
 """
-Walk-forward accuracy check for get_regime_hmm_state (macro/indicators.py).
+Walk-forward accuracy check for get_regime_hmm_state (macro/indicators/regime.py).
 
-Reuses the actual _fit_regime_hmm() from production so this tests the
-code exactly as it runs today (including the shift(63) vs shift(21) bug
-in ret_trend - see macro/indicators.py:738).
+Reuses the actual _fit_regime_hmm() from production so this tests the fitting
+code exactly as it runs today. (The stale shift(63)-vs-shift(21) bug this
+docstring used to warn about was fixed in the source on 2026-06-18.)
+
+IMPORTANT SCOPE LIMIT: this builds its OWN feature matrix over START..END
+(~2500 obs), so it exercises _fit_regime_hmm on abundant data and cannot
+reproduce production's data supply. Until 2026-09-02 production fed the same
+function only 108 observations (1y shared store minus vol_z's 146-bar warm-up),
+which is a materially different and much worse problem than anything measured
+here - see the _get_hmm_data docstring. This file validates the FIT; it does
+not validate what production hands the fit.
 
 Ground truth is *not* the internal ML composite (too expensive/leaky to
 reproduce walk-forward here) - instead we use two simple, hard-to-dispute
@@ -23,9 +31,18 @@ Then report:
       vs. each ground-truth proxy
     - cross-correlation of p_crisis against the drawdown proxy at lags
       -30..+30 trading days, to see whether p_crisis leads or lags
-    - average dwell time (consecutive days) per state, to check the
-      "state dwell ~4 obs" claim in the code comments
+    - average dwell time (consecutive days) per state
+
+Last run 2026-09-02 (2439 daily reads, 2016-08..2026-07):
+    drawdown>15% : precision 0.162  recall 0.583  F1 0.253  accuracy 0.709
+    VIX>30       : precision 0.160  recall 0.773  F1 0.265  accuracy 0.730
+    lead/lag     : peak corr 0.214 at lag +9 sessions (p_crisis leads)
+    dwell (mean) : 16.5 crisis / 17.4 trending_calm / 9.4 choppy
+The old "state dwell ~4 obs" claim this file was written to check turned out to
+be ~3x too pessimistic. High recall, low precision: it catches most real stress
+but fires ~5 false alarms per real event, so it stays telemetry.
 """
+import os
 import sys
 import time
 
@@ -177,8 +194,11 @@ def main():
     print(f"Best correlation {best_corr:.3f} at lag={best_lag} "
           f"({'p_crisis leads' if best_lag and best_lag > 0 else 'p_crisis lags/coincident'})")
 
-    wf.to_csv("/private/tmp/claude-501/-Users-riddhisiddhi-stocks/096ffffb-994f-4b51-9f6f-e316ab08d40f/scratchpad/hmm_backtest_output.csv")
-    print("\nSaved daily series to scratchpad/hmm_backtest_output.csv")
+    # Was hardcoded to a session scratchpad path that no longer exists, so this
+    # silently wrote nothing useful. Write next to the script instead.
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hmm_backtest_output.csv")
+    wf.to_csv(out)
+    print(f"\nSaved daily series to {out}")
 
 
 if __name__ == "__main__":
