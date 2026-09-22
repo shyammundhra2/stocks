@@ -83,6 +83,16 @@ TREND_ASSETS = {
     # on the throttled config the wider set was better - see 36_vs_51.)
     "FDN": "Internet",
     "SIL": "Silver Miners",
+    # GDX: gold miners (added 2026-09-22, user request). History to 2011, deeply
+    # liquid. On its own numbers it is the better miner than SIL - 10y CAGR 14.4%
+    # vs 8.8% at slightly LOWER vol (37.5% vs 39.9%) and the same ~-80% maxDD.
+    # HONEST CAVEAT: corr(GDX, SIL) = +0.94 on 3y daily, so this is close to a
+    # second unit of the same bet rather than diversification (corr to GLD +0.83,
+    # median corr to the rest of the universe only +0.31). The covariance
+    # optimizer's 30% max-risk-contribution will damp the pair somewhat, but when
+    # precious-metals miners trend, the book now holds two near-identical names.
+    # Worth revisiting as a REPLACEMENT for SIL rather than an addition.
+    "GDX": "Gold Miners",
     "XOP": "Oil & Gas E&P",
 
     # Commodities & Real Assets
