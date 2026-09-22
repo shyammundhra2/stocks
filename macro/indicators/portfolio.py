@@ -157,7 +157,29 @@ def _kelly_covariance_optimizer(
         "vol_cap": round(max_portfolio_vol * 100, 1),
         "max_rc": round(max_risk_contribution * 100, 1),
         "fallback_used": False,
+        # 2026-09-22: distinguishes "nothing to allocate" from "optimiser broke".
+        # Both used to surface as optimization_success=False, which the UI renders
+        # as "Optimizer FALLBACK" - alarming, and wrong, when an all-cash book is
+        # the strategy working as designed in a chop regime.
+        "no_candidates": True,
     }
+
+    def _flatten(items):
+        """Zero every position field before an all-cash early return.
+
+        get_trends() sizes each asset with _compute_kelly_size BEFORE the
+        optimizer runs, so `trends` arrives carrying per-asset dollar_amount /
+        pos_size. The empty-path returns below used to hand `trends` back
+        UNCHANGED, leaving those pre-optimizer sizes on the items: the summary
+        correctly said n_positions=0 / 0% allocated while the cards and map
+        rendered real dollar figures for names the router had routed FLAT
+        (observed 2026-09-22: $90,532 across DBC/DBMF/EWJ/CIBR against a summary
+        of 0 positions). The single-asset bypass path already zeroed non-selected
+        names; these paths did not. A book the optimizer did not ratify must not
+        display as held.
+        """
+        return [{**t, "pos_size": "$0", "dollar_amount": 0.0, "weight_pct": 0.0,
+                 "risk_contribution": 0.0, "top_correlations": {}} for t in items]
 
     if regime is not None:
         # Lever B: vol cap shares the same vol-target scalar as Lever A
@@ -178,7 +200,7 @@ def _kelly_covariance_optimizer(
     active_signals = [t for t in trends if t.get("adaptive_signal") in ("MOM", "REV")]
 
     if not active_signals:
-        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
+        return _flatten(trends), {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
 
     # Top-K blend cut on the MOMENTUM sleeve (2026-08-25, backtest_gss_topk_select
     # / _horserace / _hi52_robust). Rank routed MOM names by a blend of two weakly-
@@ -217,7 +239,7 @@ def _kelly_covariance_optimizer(
     available = [t for t in tickers if t in shared_data['Close'].columns]
 
     if not available:
-        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
+        return _flatten(trends), {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
 
     # Single asset bypass path
     if len(available) < 2:
@@ -235,7 +257,11 @@ def _kelly_covariance_optimizer(
                      "weight_pct": round(w * 100, 1), "risk_contribution": 100.0,
                      "top_correlations": {}}
             else:
-                t = {**t, "weight_pct": 0.0, "risk_contribution": 0.0, "top_correlations": {}}
+                # Same bug as the empty paths, milder: this zeroed weight_pct but
+                # left dollar_amount / pos_size intact, so the 40 unselected names
+                # still rendered pre-optimizer dollar figures on the cards.
+                t = {**t, "pos_size": "$0", "dollar_amount": 0.0,
+                     "weight_pct": 0.0, "risk_contribution": 0.0, "top_correlations": {}}
             updated_trends.append(t)
         return updated_trends, {
             "total_allocated": round(w * 100, 1), "portfolio_vol": 0.0,
@@ -245,6 +271,7 @@ def _kelly_covariance_optimizer(
             "vol_cap": round(effective_vol_cap * 100, 1),
             "max_rc": 100.0,
             "fallback_used": False,
+            "no_candidates": False,
             }
 
     cov_matrix, corr_matrix = _compute_covariance_matrix(shared_data, available)
@@ -304,7 +331,7 @@ def _kelly_covariance_optimizer(
 
     conviction_sum = conviction_raw.sum()
     if conviction_sum == 0:
-        return trends, {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
+        return _flatten(trends), {**empty_summary, "vol_cap": round(effective_vol_cap * 100, 1)}
 
     conviction = conviction_raw / conviction_sum
     n = len(available)
@@ -415,6 +442,7 @@ def _kelly_covariance_optimizer(
         "vol_cap": round(effective_vol_cap * 100, 1),
         "max_rc": round(effective_max_rc * 100, 1),
         "fallback_used": fallback_used,
+        "no_candidates": False,        # the optimiser actually ran on real candidates
     }
 
 

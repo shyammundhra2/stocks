@@ -62,10 +62,19 @@
             <p class="text-lg font-black text-orange-400">{{ portfolio_summary.max_risk_contributor }}</p>
         </div>
 
-        <div class="bg-slate-800 rounded p-3">
+        {# Three states, not two. "no candidates" is the router routing everything
+           FLAT in a chop regime - an all-cash book working as designed - and must
+           not render as a red FALLBACK, which means the optimiser actually broke. #}
+        <div class="bg-slate-800 rounded p-3"
+             title="OK = optimiser converged. ALL CASH = no name passed the ER router (MOM/REV), so there was nothing to optimise; this is the strategy holding cash, not an error. FALLBACK = SLSQP failed to converge and the clip-and-rescale fallback was used.">
             <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Optimizer</p>
-            <p class="text-lg font-black {{ 'text-green-400' if portfolio_summary.optimization_success else 'text-red-400' }}">
-                {{ 'OK' if portfolio_summary.optimization_success else 'FALLBACK' }}
+            <p class="text-lg font-black
+                {{ 'text-slate-300' if portfolio_summary.no_candidates
+                   else 'text-green-400' if portfolio_summary.optimization_success
+                   else 'text-red-400' }}">
+                {{ 'ALL CASH' if portfolio_summary.no_candidates
+                   else 'OK' if portfolio_summary.optimization_success
+                   else 'FALLBACK' }}
             </p>
         </div>
 
