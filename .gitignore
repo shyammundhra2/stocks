@@ -59,3 +59,6 @@ venv/
 
 # techjobs: panel is regenerable from keyless FRED (python -m techjobs.build_panel)
 techjobs/techjobs_panel_h*.csv
+
+# digest snapshot history: an append-only RECORD, not a cache - keep it
+!data/digest_history.json

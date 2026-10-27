@@ -109,6 +109,17 @@ def index():
         rendered_at=rendered_at,
         active_tab="trading",
     ))
+    # Record a digest snapshot on every dashboard load (2026-10-27). The /digest
+    # route is lazy by design so it never slows this tab, but that meant the
+    # rolling history only grew on days the digest tab was opened - and its whole
+    # purpose is week/month deltas, which need a snapshot from the comparison day.
+    # Best-effort and non-fatal: the digest is telemetry, never worth a 500 here.
+    try:
+        from macrocockpit.digest import snapshot
+        snapshot()
+    except Exception as e:
+        print(f"digest snapshot skipped: {e}")
+
     # Never let the browser serve a stale cached dashboard.
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"

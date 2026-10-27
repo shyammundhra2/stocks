@@ -19,7 +19,21 @@ import datetime
 
 from macrocockpit.macro_board import _STORE_DIR
 
-_HIST = os.path.join(_STORE_DIR, "digest_history.json")   # rolling ~daily snapshots
+# Snapshot history lives in the REPO, not the cache dir (2026-10-27).
+#
+# _STORE_DIR defaults to tempfile.gettempdir(), i.e. /var/folders/.../T on macOS,
+# which the OS purges periodically. Every other file under there is a derived
+# CACHE - delete it and the next call refetches. This file is the exact opposite:
+# it is an append-only RECORD of readings that can never be reconstructed, because
+# there is no API that returns what the cockpit said a week ago. A purge silently
+# reset it to zero, which is why the digest showed "building history - deltas
+# appear after a few days of snapshots" indefinitely rather than for a few days.
+#
+# GSS_DIGEST_HISTORY overrides for deployments with a writable data volume.
+_REPO_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_HIST = os.environ.get("GSS_DIGEST_HISTORY",
+                       os.path.join(_REPO_DATA, "digest_history.json"))
+_LEGACY_HIST = os.path.join(_STORE_DIR, "digest_history.json")   # pre-2026-10-27 location
 _DAY = 24 * 3600
 
 
@@ -72,11 +86,20 @@ def _gather():
 
 
 def _load_hist():
-    try:
-        with open(_HIST) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    """Snapshots from the repo store, falling back to the legacy temp location.
+
+    The one-time fallback means a move does not throw away whatever history
+    happens to have survived in the old cache dir.
+    """
+    for path in (_HIST, _LEGACY_HIST):
+        try:
+            with open(path) as f:
+                h = json.load(f)
+            if isinstance(h, list) and h:
+                return h
+        except Exception:
+            continue
+    return []
 
 
 def _closest(hist, target_ts, tol_days=4):
@@ -197,9 +220,19 @@ def _build(cur, wk, mo):
             "matters": matters[:6]}
 
 
-def get_digest():
+def snapshot(cur=None):
+    """Append today's reading to the rolling history and return (hist, cur).
+
+    Split out of get_digest (2026-10-27) so a snapshot can be taken WITHOUT
+    rendering the digest. The history only ever grew when someone opened the
+    /digest tab - a lazy route, deliberately, so it would not slow the trading
+    tab - which meant the week/month deltas needed you to have visited the tab on
+    the comparison day. Miss a week and the deltas it is built to show never
+    appear. Now the main dashboard calls this on every load, so the record
+    accrues from normal use of the app.
+    """
     hist = _load_hist()
-    cur = _gather()
+    cur = cur or _gather()
     # append at most ~daily, so week/month lookups are clean
     if not hist or (cur["ts"] - hist[-1].get("ts", 0) > 0.9 * _DAY):
         hist.append(cur)
@@ -207,11 +240,17 @@ def get_digest():
         hist[-1] = cur
     hist = [s for s in hist if cur["ts"] - s.get("ts", 0) <= 40 * _DAY]  # keep ~40d
     try:
+        os.makedirs(os.path.dirname(_HIST), exist_ok=True)
         with open(_HIST + ".tmp", "w") as f:
             json.dump(hist, f)
         os.replace(_HIST + ".tmp", _HIST)
     except Exception as e:
         print(f"digest persist error: {e}")
+    return hist, cur
+
+
+def get_digest():
+    hist, cur = snapshot()
 
     wk = _closest(hist, cur["ts"] - 7 * _DAY)
     mo = _closest(hist, cur["ts"] - 30 * _DAY, tol_days=7)
