@@ -145,9 +145,64 @@ def _slice_period(df, period):
     return df[df.index >= cutoff]
 
 
+def _splice_splits(stored, fresh, start, tol=0.02):
+    """Rescale stored history when a ticker has split since the last full sync.
+
+    THE BUG THIS FIXES (2026-11-09). The incremental refresh only re-downloads a
+    trailing _TRAILING_DAYS window, but a split retroactively rewrites a ticker's
+    ENTIRE price history at the source. So after a split the store holds
+    pre-split prices before the window and post-split prices inside it, leaving a
+    fake cliff mid-series. Observed: SOXX and ITA both split 3:1 on 2026-11-05,
+    and the store showed a -67% one-day "move" on 2026-10-23 with pre-split
+    prices (~$500) sitting next to post-split ones (~$159). _trend_stats read
+    slope -90.65 for SOXX against -11.35 on clean data - the router was sizing
+    off a corporate action, not a price move. Nothing downstream could catch it:
+    the artifact filters in the stock sleeve (JUMP_CAP) do not apply here.
+
+    Detection uses the OVERLAP, which is unambiguous: for dates present in both
+    stored and fresh, a split shows up as a constant ratio across every
+    overlapping bar. A real price revision would not be constant. When the ratio
+    is consistent (within `tol`) and materially different from 1, the stored
+    history before `start` is multiplied by it. Anything less clean is left
+    alone and caught by the >25% tripwire in _core_history_ok's sibling checks.
+    """
+    try:
+        ov = stored.index.intersection(fresh.index)
+        if len(ov) < 3:
+            return stored
+        cols = stored.columns.intersection(fresh.columns)
+        scale = {}
+        for c in cols:
+            if isinstance(c, tuple) and c[0] == "Volume":
+                continue                      # volume scales inversely; not used downstream
+            a = pd.to_numeric(stored.loc[ov, c], errors="coerce")
+            b = pd.to_numeric(fresh.loc[ov, c], errors="coerce")
+            m = a.notna() & b.notna() & (a != 0)
+            if m.sum() < 3:
+                continue
+            r = (b[m] / a[m]).astype(float)
+            med = float(r.median())
+            # constant ratio across the whole overlap, and not ~1
+            if abs(med - 1.0) > tol and float((r / med - 1.0).abs().max()) < tol:
+                scale[c] = med
+        if not scale:
+            return stored
+        out = stored.copy()
+        pre = out.index < start
+        for c, k in scale.items():
+            out.loc[pre, c] = pd.to_numeric(out.loc[pre, c], errors="coerce") * k
+        syms = sorted({c[1] for c in scale if isinstance(c, tuple) and len(c) > 1})
+        print(f"split-adjust: rescaled stored history for {syms or list(scale)[:4]}")
+        return out
+    except Exception as e:
+        print(f"split-adjust skipped: {e}")
+        return stored
+
+
 def _merge_trailing(stored, fresh, start):
     """Keep stored rows before `start`; overwrite [start..] with fresh bars."""
     fresh = fresh.reindex(columns=stored.columns)
+    stored = _splice_splits(stored, fresh, start)
     combined = pd.concat([stored[stored.index < start], fresh])
     combined = combined[~combined.index.duplicated(keep="last")].sort_index()
     if len(combined) > _STORE_MAX_ROWS:
@@ -370,6 +425,35 @@ def _get_extended_data():
     return raw, risk_tickers
 
 
+def split_artifact_scan(shared_data, tickers, thresh=0.25):
+    """Tickers whose stored series contains a split-shaped discontinuity.
+
+    Backstop to _splice_splits: if an unadjusted split ever slips through, this
+    names it instead of letting the router size off a corporate action. A 2:1 /
+    3:1 / 4:1 split leaves a near-exact ratio jump, which is what is matched;
+    genuine moves above `thresh` are reported separately as 'large'.
+    """
+    out = {}
+    for t in tickers:
+        s = _get_close(shared_data, t)
+        if len(s) < 50:
+            continue
+        r = s.pct_change().dropna()
+        if r.empty:
+            continue
+        i = r.abs().idxmax()
+        mv = float(r.loc[i])
+        if abs(mv) < thresh:
+            continue
+        ratio = 1.0 + mv
+        kind = "large"
+        for k in (2, 3, 4, 5, 10):
+            if abs(ratio - k) < 0.05 or abs(ratio - 1.0 / k) < 0.05:
+                kind = f"split-shaped x{ratio:.2f}"
+        out[t] = {"date": str(i.date()), "move": mv, "kind": kind}
+    return out
+
+
 def _get_close(shared_data, ticker):
     if shared_data.empty or 'Close' not in shared_data:
         return pd.Series(dtype=float)
@@ -493,6 +577,7 @@ __all__ = [
     "_get_shared_market_data",
     "_get_extended_data",
     "_get_close",
+    "split_artifact_scan",
     "get_vix_term_structure",
     "vix_ts_deploy_throttle",
 ]
