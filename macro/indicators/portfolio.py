@@ -720,11 +720,24 @@ def get_trends():
                 adaptive_signal = "MOM" if (above200 and last > s50 and slope > 0) else "FLAT"
             elif eff_ratio <= 0.35:
                 adaptive_state = "CHOP"
-                # REV requires all three: ER<=0.35 (choppy) AND z20<-1.0 (a real
+                # REV requires all four: ER<=0.35 (choppy) AND z20<-1.0 (a real
                 # 20d vol-adjusted dip) AND outside the 3 iso-conviction curves
-                # (genuinely directionless).
+                # (genuinely directionless) AND 12-1 momentum > 0.
+                #
+                # The 12-1 gate was added 2026-11-11 (backtest_rev_trend_context,
+                # 15y, 42 assets, fwd 20d): dip-buys WITHOUT 12-1 support earned
+                # +0.02%/event raw and -1.13% cross-sectionally - the toxic ~8%
+                # tail of REV entries - while dips WITH support earned +2.11% vs
+                # the unfiltered +1.87%. The same m12 split on the whole pool is
+                # flat, so this is dip-specific, not a momentum tilt: a dip with
+                # 12-1 support is a pullback; without it, a downtrend the 200DMA
+                # hasn't caught up to. Short history (<252 bars) fails open to
+                # the old behaviour rather than silently excluding new listings.
                 _outside_curves = _map_conv.get(sym, float("inf")) < _rev_curve_k1
-                adaptive_signal = ("REV" if (above200 and z20 < -1.0 and _outside_curves)
+                _m12_ok = (float(c.iloc[-22] / c.iloc[-252] - 1.0) > 0.0
+                           if len(c) >= 252 else True)
+                adaptive_signal = ("REV" if (above200 and z20 < -1.0
+                                             and _outside_curves and _m12_ok)
                                    else "FLAT")
             else:
                 adaptive_state, adaptive_signal = "MID", "FLAT"
