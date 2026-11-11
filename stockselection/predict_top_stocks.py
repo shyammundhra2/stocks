@@ -63,6 +63,19 @@ JUMP_CAP = 0.50
 # top-10 CAGR ~31% vs top-20 ~26% - concentration is the CAGR lever; top-10 at
 # 10% ($5k) per name is the return choice. Knob: 20 = smoother/lower CAGR.
 TOP_N = 10
+# Vol-managed exposure overlay (2026-11-10, backtest_volmanaged_sleeve.py - the
+# one result in this repo that cleared a pre-committed bar): scale the WHOLE
+# book by w = clip(TARGET_VOL / trailing realised sleeve vol, 0, 1), remainder
+# in cash. 2005-26: Calmar 1.06 -> 1.34, maxDD -28.6% -> -18.7%, Sharpe 1.32 ->
+# 1.44, passes BOTH halves, and beats an exposure-matched static mix in 20/20
+# parameter settings - the gain is timing, not de-risking. cap=1.0 only (the
+# levered variant failed its first half). 6m lookback: 3m scored best in-sample
+# but rests on a 3-observation vol estimate; 6-12m is the defensible choice.
+# Sleeve vol is computed by REPLAYING the last ~7 month-end selections with the
+# exact rules below (same filters, same sector cap, same gate) on the data this
+# run already downloaded - the sleeve has no live track record to measure.
+VOL_TARGET = 0.15
+VOL_LOOKBACK_M = 6
 # Sector cap: at most this many BUYs per GICS sector (backtest_stock_sectorcap.py).
 # CRITICAL at N=10: the naive top-10 is currently ~9/10 Information Technology - a
 # single-sector bet in disguise. The <=3/sector cap spreads it across ~5 sectors
@@ -193,6 +206,70 @@ def _auto_refresh_universe():
               f"continuing on the existing files\n")
 
 
+def _vol_managed_w(results, spy, sectors):
+    """Deploy fraction w = clip(VOL_TARGET / realised sleeve vol, 0, 1).
+
+    Replays the last ~7 month-end selections with the production rules (12-1
+    momentum, mom/jump filters, <=MAX_PER_SECTOR, top-N equal weight, SPY-200DMA
+    gate -> cash month) to recover the monthly sleeve returns the live book has
+    never recorded. Mirrors backtest_volmanaged_sleeve's B series; cash months
+    use 0.0 (the backtest used ~0.3%/mo T-bills - immaterial for a vol estimate).
+    Falls back to w=1.0 (today's behaviour) on short history or any error.
+    """
+    try:
+        closes = {r['ticker']: r['data']['Close'].dropna() for r in results
+                  if 'Close' in r['data']}
+        panel = pd.DataFrame(closes).sort_index()
+        spy200 = spy.rolling(DMA_200).mean()
+
+        me = panel.groupby(panel.index.to_period("M")).tail(1).index
+        me = [d for d in me if d.to_period("M") < panel.index[-1].to_period("M")]
+        me = me[-(VOL_LOOKBACK_M + 1):]
+        if len(me) < VOL_LOOKBACK_M + 1:
+            return 1.0, None, 0
+
+        rets = []
+        for d0, d1 in zip(me[:-1], me[1:]):
+            s2 = spy200.asof(d0)
+            if np.isfinite(s2) and spy.asof(d0) < s2:        # gate was risk-off
+                rets.append(0.0)
+                continue
+            win = panel.loc[:d0]
+            scores = {}
+            for t in win.columns:
+                c = win[t].dropna()
+                if len(c) < MOM_LOOKBACK + 1:
+                    continue
+                m = float(c.iloc[-1 - MOM_SKIP] / c.iloc[-MOM_LOOKBACK] - 1.0)
+                if not np.isfinite(m) or m <= 0 or m > MOM_CAP:
+                    continue
+                if float(c.pct_change().tail(MOM_LOOKBACK).abs().max()) > JUMP_CAP:
+                    continue
+                scores[t] = m
+            picked, cnt = [], {}
+            for t in sorted(scores, key=scores.get, reverse=True):
+                sct = sectors.get(t, t)
+                if cnt.get(sct, 0) < MAX_PER_SECTOR:
+                    picked.append(t); cnt[sct] = cnt.get(sct, 0) + 1
+                if len(picked) == TOP_N:
+                    break
+            if not picked:
+                rets.append(0.0)
+                continue
+            fwd = [float(panel[t].asof(d1) / panel[t].asof(d0) - 1.0) for t in picked
+                   if np.isfinite(panel[t].asof(d0)) and np.isfinite(panel[t].asof(d1))]
+            rets.append(float(np.mean(fwd)) if fwd else 0.0)
+
+        vol = float(np.std(rets, ddof=1)) * np.sqrt(12)
+        if not np.isfinite(vol) or vol <= 0:
+            return 1.0, None, len(rets)
+        return float(np.clip(VOL_TARGET / vol, 0.0, 1.0)), vol, len(rets)
+    except Exception as e:
+        print(f"⚠️  vol-managed overlay unavailable ({type(e).__name__}: {str(e)[:80]}) - "
+              f"deploying at 1.0x")
+        return 1.0, None, 0
+
+
 def infer_today(top_n=25):
     print("🚀 Momentum(12-1) + SPY-200DMA gate ranker\n")
     _auto_refresh_universe()
@@ -269,8 +346,19 @@ def infer_today(top_n=25):
     df['Signal'] = df.apply(signal, axis=1)
     n_buy = int((df['Signal'] == "BUY").sum())
     per_name = (1.0 / n_buy) if n_buy else 0.0       # equal-weight the top-N
+
+    # Vol-managed exposure: scale the whole book, remainder stays in cash.
+    deploy_w, sleeve_vol, n_rets = _vol_managed_w(results, spy, sectors)
+    if sleeve_vol is not None:
+        print(f"🌡️  Vol overlay: sleeve vol {sleeve_vol:.1%} ({n_rets}m replay) "
+              f"vs target {VOL_TARGET:.0%} → deploy {deploy_w:.0%}"
+              + ("" if deploy_w < 1.0 else " (uncapped)"))
+    else:
+        print(f"🌡️  Vol overlay: insufficient history → deploy 100%")
     df['Size_Allocation'] = np.where(df['Signal'] == "BUY",
-                                     round(per_name * BOOK_NOTIONAL, 2), 0.0)
+                                     round(per_name * BOOK_NOTIONAL * deploy_w, 2), 0.0)
+    df['Deploy_W'] = round(deploy_w, 3)
+    df['Sleeve_Vol'] = round(sleeve_vol, 4) if sleeve_vol is not None else np.nan
 
     df = df.sort_values('Prob', ascending=False)
     out_cols = ['Ticker', 'Name', 'Sector', 'Prob', 'Mom_12_1', 'Signal', 'Slope_1M',
@@ -282,7 +370,7 @@ def infer_today(top_n=25):
     print("=" * 120)
     print(df[out_cols].head(top_n).to_string(index=False))
 
-    df[out_cols + ['Gate']].to_csv(OUTPUT_CSV, index=False)
+    df[out_cols + ['Gate', 'Deploy_W', 'Sleeve_Vol']].to_csv(OUTPUT_CSV, index=False)
     print(f"\n✅ saved → {OUTPUT_CSV}")
 
     print(f"\n📊 {len(df)} ranked | BUY {n_buy} (top-{TOP_N}, <={MAX_PER_SECTOR}/sector) | "
@@ -290,7 +378,10 @@ def infer_today(top_n=25):
           f"{'ALL CASH (gate risk-off)' if gate_risk_off else 'gate risk-on'}")
     if n_buy:
         mix = df[df['Signal'] == 'BUY']['Sector'].value_counts().to_dict()
-        print(f"   equal-weight {per_name:.1%} each (${per_name*BOOK_NOTIONAL:,.0f} on ${BOOK_NOTIONAL:,})")
+        print(f"   equal-weight {per_name:.1%} × deploy {deploy_w:.0%} "
+              f"(${per_name*BOOK_NOTIONAL*deploy_w:,.0f}/name, "
+              f"${n_buy*per_name*BOOK_NOTIONAL*deploy_w:,.0f} deployed + "
+              f"${BOOK_NOTIONAL*(1-deploy_w):,.0f} cash of ${BOOK_NOTIONAL:,})")
         print(f"   sector mix: {mix}")
     return df
 
