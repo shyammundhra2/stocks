@@ -363,13 +363,30 @@ def _kelly_covariance_optimizer(
         constraints=constraints, options={"maxiter": 1000, "ftol": 1e-9}
     )
 
+    # w=0 is a DEGENERATE STATIONARY POINT of the homogeneous RC formulation:
+    # every degree-2 constraint holds with equality at the origin and all their
+    # gradients vanish, so KKT is trivially satisfied and SLSQP can slide there
+    # and report success. The 2026-06-10 homogeneity fix removed the attractor
+    # NEAR zero but not AT zero. Observed 2026-11-10: 3 candidates (RKT/XLV/
+    # DBMF), positive bounds (4.3%/3.4%/5%), positive conviction, feasible
+    # interior points - and SLSQP returned exactly [0,0,0] with success=True,
+    # leaving the book flat while the dashboard showed three live signals.
+    # Treat an all-zero "success" with room to deploy as a failure.
+    degenerate = (result.success and float(np.abs(result.x).sum()) < 1e-6
+                  and max(b[1] for b in bounds) > 0)
+
     fallback_used = False
-    if result.success:
+    if result.success and not degenerate:
         optimized_weights = result.x
     else:
         # Vol-capped fallback: clip per-name, rescale vector to vol cap.
+        # REV names have a structurally zero momentum kelly-size (slope<0), so
+        # seed them at their x0 (2%) rather than inheriting that zero - the
+        # old fallback silently excluded the whole REV sleeve.
         fallback_used = True
         fb = np.minimum(kelly_weights, max_single)
+        fb = np.where(np.array(sigs) == "REV",
+                      np.minimum(0.02, [b[1] for b in bounds]), fb)
         fb_vol = float(np.sqrt(_compute_portfolio_var(fb, cov_matrix)))
         if fb_vol > effective_vol_cap and fb_vol > 0:
             fb = fb * (effective_vol_cap / fb_vol)
@@ -437,7 +454,7 @@ def _kelly_covariance_optimizer(
         "portfolio_vol": round(port_vol * 100, 1),
         "n_positions": int((optimized_weights > 0.001).sum()),
         "max_risk_contributor": available[int(np.argmax(risk_contribs))],
-        "optimization_success": result.success,
+        "optimization_success": result.success and not degenerate,
         "regime_scalar": round(regime_scalar, 2),
         "vol_cap": round(effective_vol_cap * 100, 1),
         "max_rc": round(effective_max_rc * 100, 1),
