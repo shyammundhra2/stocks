@@ -342,7 +342,14 @@ def _risk_history_save(base, cache):
 # =========================
 # SHARED DATA MANAGER
 # =========================
-_CORE_CHECK = ("^VIX", "SPY", "^MOVE")
+# Tickers that DRIVE DASHBOARD TILES - a sparse column in any of these must trip
+# the self-heal. QQQ added 2026-11-12: yfinance dropped the QQQ column in a full
+# resync (7 bars against 252 for SPY in the same frame), the whole-frame row
+# floor passed because the BATCH was fine, and QQQ was never on this list - so
+# the Tactical RSI2 tile errored while the guard reported healthy. Per-column
+# dropout is the third distinct poisoning mode of this store, after the
+# truncated-batch mode (2026-09-01) and the stale-split mode (2026-11-09).
+_CORE_CHECK = ("^VIX", "SPY", "^MOVE", "QQQ")
 
 
 def _core_history_ok(data, min_frac=0.5, min_bars=60):
