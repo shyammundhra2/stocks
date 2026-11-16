@@ -335,8 +335,8 @@ def _risk_history_save(base, cache):
         with open(tmp, "w") as f:
             json.dump(cache, f)
         os.replace(tmp, base)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"data.py risk-history cache write error: {e}")
 
 
 # =========================
@@ -397,8 +397,8 @@ def _invalidate_store(label, tickers):
         for p in (base + ".parquet", base + ".meta"):
             if os.path.exists(p):
                 os.remove(p)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"data.py store invalidation error ({label}): {e}")
 
 
 @ttl_cache(30)
@@ -543,8 +543,10 @@ def get_vix_term_structure():
         v3 = yf.download("^VIX3M", period="5d", progress=False, auto_adjust=False)["Close"].dropna()
         if len(v) and len(v3):
             return pd.Series([float(v.iloc[-1]) / float(v3.iloc[-1])], index=[v.index[-1]])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"data.py VIX term structure: all sources failed, last resort also failed: {e}")
+        return pd.Series(dtype=float)
+    print("data.py VIX term structure: all sources failed (CBOE, disk cache, yfinance)")
     return pd.Series(dtype=float)
 
 

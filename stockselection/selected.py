@@ -28,8 +28,8 @@ def _bg_refresh():
         try:
             subprocess.run([sys.executable, "predict_top_stocks.py"], cwd=_DIR,
                            timeout=900, capture_output=True)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"selected.py background ranker refresh error (serving stale sleeve): {e}")
         finally:
             _lock.release()
     threading.Thread(target=run, daemon=True).start()

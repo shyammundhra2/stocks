@@ -75,14 +75,15 @@ def _load_fred():
     start = (old.index[-1] - pd.Timedelta(days=75)) if old is not None and len(old) else pd.Timestamp("2005-01-01")
     try:
         new = web.DataReader(FRED, "fred", start)
-    except Exception:
+    except Exception as e:
+        print(f"macro_board FRED fetch error (serving stale cache): {e}")
         return old if old is not None else pd.DataFrame()
     comb = pd.concat([old, new]) if old is not None else new
     comb = comb[~comb.index.duplicated(keep="last")].sort_index()
     try:
         comb.to_parquet(_FRED_CACHE)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"macro_board FRED cache write error: {e}")
     return comb
 
 
@@ -99,10 +100,12 @@ def _load_mkt():
                           period="3y", auto_adjust=True, progress=False)["Close"]
         raw.to_parquet(_MKT_CACHE)
         return raw
-    except Exception:
+    except Exception as e:
+        print(f"macro_board yfinance fetch error (serving stale cache): {e}")
         try:
             return pd.read_parquet(_MKT_CACHE)
-        except Exception:
+        except Exception as e2:
+            print(f"macro_board market cache read error (no fallback available): {e2}")
             return pd.DataFrame()
 
 
