@@ -1,8 +1,18 @@
 body {
     background-color: #0f172a;
     color: #f1f5f9;
-    font-family: sans-serif;
+    font-family: "Inter", -apple-system, "Helvetica Neue", Arial, sans-serif;
     padding: 1.5rem;
+}
+
+/* Numbers get a dedicated monospace face everywhere (tickers, %, prices,
+   scores) so digit columns actually line up - mixing proportional and mono
+   numerals across cards is why nothing scans as a clean column today. */
+.font-mono, .table-small, .details-row {
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace !important;
+}
+body, .font-mono, table, .table-small {
+    font-variant-numeric: tabular-nums;
 }
 
 .card {

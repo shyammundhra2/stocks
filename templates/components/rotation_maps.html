@@ -32,12 +32,19 @@
 
 <script>
 (function () {
-    var baseAnnotations = [
-        { x: 2, y: 0.9, text: 'LEADING', showarrow: false, font: { color: '#22c55e', size: 10 } },
-        { x: -2, y: 0.9, text: 'WEAKENING', showarrow: false, font: { color: '#eab308', size: 10 } },
-        { x: -2, y: 0.1, text: 'LAGGING', showarrow: false, font: { color: '#ef4444', size: 10 } },
-        { x: 2, y: 0.1, text: 'IMPROVING', showarrow: false, font: { color: '#3b82f6', size: 10 } }
-    ];
+    // Quadrant label x-offset is a FRACTION of each chart's own axis span
+    // (computed per chart below), not a fixed absolute value - a fixed ±2
+    // lands correctly on a ±3 chart but clusters uselessly near x=0 (and
+    // overlaps the opposite label) on a ±30 chart like country/commodity.
+    function quadrantAnnotations(xspan) {
+        var ox = xspan * 0.6;
+        return [
+            { x: ox, y: 0.9, text: 'LEADING', showarrow: false, font: { color: '#22c55e', size: 10 } },
+            { x: -ox, y: 0.9, text: 'WEAKENING', showarrow: false, font: { color: '#eab308', size: 10 } },
+            { x: -ox, y: 0.1, text: 'LAGGING', showarrow: false, font: { color: '#ef4444', size: 10 } },
+            { x: ox, y: 0.1, text: 'IMPROVING', showarrow: false, font: { color: '#3b82f6', size: 10 } }
+        ];
+    }
 
     // Build one rotation map with iso-conviction dotted curves + a per-hover
     // faded "ghost" trace tracing that marker's daily slope/R² path over the
@@ -92,12 +99,18 @@
         var ghostIdx = contours.length;
         var markerIdx = contours.length + 1;
 
+        // Cycling textposition (rather than a single fixed 'top center' for
+        // every point) spreads labels for points that sit close together in
+        // slope/R² space onto different sides, meaningfully cutting down on
+        // overlapping label text without needing real collision detection.
+        var TEXT_POS_CYCLE = ['top center', 'bottom center', 'middle right', 'middle left'];
         var markers = {
             x: xs,
             y: data.map(function (d) { return d.y; }),
             text: data.map(function (d) { return d.name; }),
             customdata: data.map(function (d) { return [d.ret_126 == null ? '' : d.ret_126]; }),
-            mode: 'markers+text', textposition: 'top center',
+            mode: 'markers+text',
+            textposition: data.map(function (d, i) { return TEXT_POS_CYCLE[i % TEXT_POS_CYCLE.length]; }),
             textfont: { size: 9, color: '#cbd5e1' },
             hovertemplate: '%{text}<br>slope %{x:.2f}, R² %{y:.2f}<extra></extra>',
             marker: {
@@ -114,7 +127,7 @@
             hovermode: 'closest', uirevision: 'keep',
             xaxis: { title: 'Slope (%)', range: [-xspan, xspan], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
             yaxis: { title: 'R²', range: [0, 1], autorange: false, gridcolor: '#334155', zerolinecolor: '#64748b', zerolinewidth: 2 },
-            annotations: baseAnnotations, showlegend: false
+            annotations: quadrantAnnotations(xspan), showlegend: false
         }, { responsive: true, displayModeBar: false });
 
         // Make every non-marker trace (iso-curves + the hover ghost) ignore the

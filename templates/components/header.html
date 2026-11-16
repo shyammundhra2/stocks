@@ -94,6 +94,7 @@
 
         <p class="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
             Current Regime
+            <span class="block text-[8px] tracking-normal text-gray-600 font-normal normal-case mt-0.5">primary signal · drives sizing</span>
         </p>
 
         <div class="text-7xl font-black italic tracking-tighter
@@ -116,7 +117,7 @@
         {% if regime.hmm %}
         <div class="mt-4 bg-gray-800/40 border border-gray-700 rounded-lg p-3 text-left">
 
-            <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center justify-between mb-1">
                 <span class="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">
                     Regime HMM
                 </span>
@@ -128,6 +129,9 @@
                     {{ label_txt.get(regime.hmm.most_likely, regime.hmm.most_likely) }}
                 </span>
             </div>
+            <p class="text-[8px] uppercase tracking-wider text-gray-600 font-bold mb-2">
+                Secondary signal · informational only, does not drive sizing
+            </p>
 
             <div class="space-y-1">
 

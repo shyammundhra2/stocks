@@ -46,7 +46,7 @@
 
   <!-- Strategic analysis -->
   <div class="bg-slate-900 border-l-4 border-amber-500 rounded p-3 mb-5">
-    <p class="text-[10px] uppercase tracking-widest text-amber-400 mb-1">Strategic Analysis — Bond Vol / Carry</p>
+    <p class="text-[10px] uppercase tracking-widest text-amber-400 mb-1">Strategic Analysis — What Matters Now</p>
     {% for a in md.analysis %}<p class="text-xs text-slate-300">• {{ a }}</p>{% endfor %}
   </div>
 
@@ -276,7 +276,7 @@
     const tr = [{ x: vals, y: names, type: 'bar', orientation: 'h', marker: { color: cols } }];
     const lay = Object.assign({}, DARK, { title: { text: title, font: { size: 12, color: '#cbd5e1' } },
                  margin: { l: 120, r: 15, t: 30, b: 25 }, xaxis: { gridcolor: '#1e293b', zerolinecolor: '#475569' },
-                 yaxis: { autorange: 'reversed' } });
+                 yaxis: { autorange: 'reversed', automargin: true } });
     Plotly.newPlot(id, tr, lay, CFG);
   }
   hbar('ch_breakdown', (C.breakdown||{}).names, (C.breakdown||{}).vals, 'RoRo drivers (risk-on z)');

@@ -396,12 +396,17 @@
             var sizes = trendData.map(function (d) {
                 return maxAlloc > 0 ? 9 + 21 * Math.sqrt((d.alloc || 0) / maxAlloc) : 12;
             });
+            // Cycling textposition spreads labels for nearby points onto
+            // different sides instead of stacking them all at the same
+            // offset, cutting down on overlapping ticker labels.
+            var TEXT_POS_CYCLE = ['top center', 'bottom center', 'middle right', 'middle left'];
             var markers = {
                 x: trendData.map(function (d) { return d.x; }),
                 y: trendData.map(function (d) { return d.y; }),
                 text: trendData.map(function (d) { return d.sym; }),
                 customdata: trendData.map(function (d) { return [d.status, d.alloc]; }),
-                mode: 'markers+text', textposition: 'top center',
+                mode: 'markers+text',
+                textposition: trendData.map(function (d, i) { return TEXT_POS_CYCLE[i % TEXT_POS_CYCLE.length]; }),
                 textfont: { size: 9, color: '#cbd5e1' },
                 hovertemplate: '%{text}<br>slope %{x}, R² %{y}<br>%{customdata[0]}<br>$%{customdata[1]:,.0f}<extra></extra>',
                 marker: {

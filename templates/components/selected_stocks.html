@@ -11,11 +11,10 @@
       <td class="py-1 font-bold text-white w-12">{{ s.ticker }}</td>
       <td class="py-1 text-slate-500 text-[10px]">{{ s.sector }}</td>
       <td class="py-1 text-right font-mono text-green-400">+{{ s.mom }}%</td>
-      <td class="py-1 text-right font-mono text-slate-300 w-16">${{ '{:,.0f}'.format(s.alloc) }}</td>
     </tr>
     {% endfor %}
   </table>
-  <p class="text-[9px] text-slate-600 mt-1.5">$50k sleeve · ≤3/sector · equal-weight · hold only when gate risk-on. Cached daily; refreshes in background.</p>
+  <p class="text-[9px] text-slate-600 mt-1.5">$50k sleeve · ≤3/sector · equal-weight (~${{ '{:,.0f}'.format(selected_stocks.stocks[0].alloc) }}/position) · hold only when gate risk-on. Cached daily; refreshes in background.</p>
   {% else %}
   <p class="text-xs text-slate-500 py-2">Computing… first run downloads the S&P 500 in the background — check back shortly.</p>
   {% endif %}
