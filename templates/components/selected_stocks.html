@@ -15,6 +15,11 @@
     {% endfor %}
   </table>
   <p class="text-[9px] text-slate-600 mt-1.5">$50k sleeve · ≤3/sector · equal-weight (~${{ '{:,.0f}'.format(selected_stocks.stocks[0].alloc) }}/position) · hold only when gate risk-on. Cached daily; refreshes in background.</p>
+  {% elif selected_stocks.gate %}
+  <p class="text-[10px] text-slate-500 mb-2">{{ selected_stocks.gate }} · {{ selected_stocks.asof }}</p>
+  <p class="text-xs text-slate-500 py-2">Sleeve is correctly empty, not stuck — the 200DMA gate is risk-off, so the
+    strategy books the whole sleeve to cash rather than holding any individual names. It'll repopulate once the
+    gate flips back to risk-on.</p>
   {% else %}
   <p class="text-xs text-slate-500 py-2">Computing… first run downloads the S&P 500 in the background — check back shortly.</p>
   {% endif %}
