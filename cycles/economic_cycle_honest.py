@@ -23,6 +23,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import pandas_datareader.data as web
 from sklearn.linear_model import LogisticRegression
 
 warnings.filterwarnings("ignore")
@@ -96,6 +97,100 @@ def main():
     print(f"   S&P cycle position: {last_cyc:+.1%} vs 10y trend  -> {pos}")
     print(f"   yield curve (10y-3m): {last_curve:+.2f}%  ({'INVERTED' if last_curve<0 else 'normal'})")
     print(f"   curve-implied P(recession within 12mo): {cur_risk:.0%}")
+    # -----------------------------------------------
+    # 4. SAHM RULE - a SEPARATE signal, deliberately not blended into the
+    # curve's logistic score above. Reused from economic_cycle_composite.py
+    # (already built, already validated there) - merged in here rather than
+    # duplicated, with one correction: that module's own validation framed
+    # Sahm as a LEADING indicator ("preceded within 6mo"), which its real
+    # track record doesn't support (checked below: only 1/7). Sahm's actual
+    # academic purpose is a real-time CONFIRMATION that a recession has
+    # already started, filling the ~12-18mo gap before NBER dates it
+    # officially - a coincident check is the honest test for what it's
+    # actually for, run alongside the leading-style check rather than
+    # instead of it, so neither framing is quietly cherry-picked.
+    # -----------------------------------------------
+    ur = web.DataReader("UNRATE", "fred", "1960-01-01").iloc[:, 0].resample("ME").last()
+    sahm = (ur.rolling(3).mean() - ur.rolling(12).min()).dropna()
+    sahm_trig = lambda w: w >= 0.5
+
+    print(f"\nSAHM RULE (FRED UNRATE) - separate signal, not blended with the curve:")
+    n_lead_sahm, n_coincident = 0, 0
+    for a, b in RECESSIONS:
+        d, e = pd.Timestamp(a), pd.Timestamp(b)
+        lead_win = sahm[(sahm.index >= d - pd.DateOffset(months=6)) & (sahm.index < d)]
+        if len(lead_win) and sahm_trig(lead_win).any():
+            n_lead_sahm += 1
+        coincident_win = sahm[(sahm.index >= d) & (sahm.index <= e + pd.DateOffset(months=3))]
+        if len(coincident_win) and sahm_trig(coincident_win).any():
+            n_coincident += 1
+    cov_sahm = len([1 for a, _ in RECESSIONS if pd.Timestamp(a) >= sahm.index.min()])
+    print(f"   as a LEADING signal (fires <6mo before start): {n_lead_sahm}/{cov_sahm} - weak, as expected")
+    print(f"   as a COINCIDENT/confirmation signal (fires during, or within 3mo after start): "
+          f"{n_coincident}/{cov_sahm} - this is what it's actually validated for")
+    cur_sahm = float(sahm.iloc[-1])
+    print(f"   CURRENT Sahm reading: {cur_sahm:+.2f}  (confirms recession already underway if >= 0.50: "
+          f"{'YES' if cur_sahm >= 0.5 else 'no'})")
+
+    # -----------------------------------------------
+    # 5. INTERNATIONAL YIELD-CURVE POOL - a SEPARATE signal from the US
+    # curve above, not merged into one number. The US-only curve's 7/7
+    # record is a sample of exactly 7 events - suggestive, not statistically
+    # strong. Pooling 10y-3m inversions and each country's OWN technical
+    # recessions (2 consecutive quarters of negative real GDP growth - a
+    # simplified, mechanically-computed definition, honestly NOT the same
+    # as an official NBER-style business-cycle dating committee call, but
+    # transparent and reproducible) across 5 more economies gives a larger,
+    # independent-ish sample to check whether the US lead-time finding
+    # generalizes, without re-testing the same 7 US events again.
+    # -----------------------------------------------
+    print(f"\nINTERNATIONAL YIELD-CURVE POOL (separate signal, OECD data via FRED, 1990-present):")
+    print(f"   technical recession = 2 consecutive quarters of negative real GDP growth (NOT an")
+    print(f"   official NBER-equivalent dating - a simplified, transparent proxy, flagged as such)")
+    countries = {
+        "UK": ("IRLTLT01GBM156N", "IR3TIB01GBM156N", "NGDPRSAXDCGBQ"),
+        "Germany": ("IRLTLT01DEM156N", "IR3TIB01DEM156N", "CLVMNACSCAB1GQDE"),
+        "Japan": ("IRLTLT01JPM156N", "IR3TIB01JPM156N", "JPNRGDPEXP"),
+        "Canada": ("IRLTLT01CAM156N", "IR3TIB01CAM156N", "NGDPRSAXDCCAQ"),
+        "Australia": ("IRLTLT01AUM156N", "IR3TIB01AUM156N", "NGDPRSAXDCAUQ"),
+    }
+    pool_n_lead, pool_cov, pool_leads = 0, 0, []
+    for name, (c10, c3m, cgdp) in countries.items():
+        try:
+            y10 = web.DataReader(c10, "fred", "1990-01-01").iloc[:, 0].resample("ME").last()
+            y3m = web.DataReader(c3m, "fred", "1990-01-01").iloc[:, 0].resample("ME").last()
+            curve_i = (y10 - y3m).dropna()
+            gdp = web.DataReader(cgdp, "fred", "1990-01-01").iloc[:, 0]
+            gdp_growth = gdp.pct_change()
+            contraction = (gdp_growth < 0) & (gdp_growth.shift(1) < 0)
+            rec_quarters = gdp.index[contraction]
+            # Each contraction-start quarter -> one technical-recession event
+            # (collapse consecutive flagged quarters into single episodes).
+            episodes = []
+            for q in rec_quarters:
+                if not episodes or (q - episodes[-1][-1]).days > 100:
+                    episodes.append([q])
+                else:
+                    episodes[-1].append(q)
+            for ep in episodes:
+                d = pd.Timestamp(ep[0]) - pd.DateOffset(months=3)  # contraction's first bad quarter
+                win = curve_i[(curve_i.index >= d - pd.DateOffset(months=24)) & (curve_i.index < d)]
+                pool_cov += 1
+                if len(win) and (win < 0).any():
+                    pool_n_lead += 1
+                    first_inv = win[win < 0].index[0]
+                    pool_leads.append((d - first_inv).days / 30.0)
+            print(f"   {name:10s}: {len(episodes)} technical-recession episode(s) found "
+                  f"since {curve_i.index.min().date()}")
+        except Exception as e:
+            print(f"   {name:10s}: skipped ({str(e)[:60]})")
+    if pool_cov:
+        print(f"\n   POOLED (5 countries): curve inversion preceded {pool_n_lead}/{pool_cov} technical "
+              f"recessions (<24mo)")
+        if pool_leads:
+            print(f"   pooled median lead: {np.median(pool_leads):.0f} months (range "
+                  f"{min(pool_leads):.0f}-{max(pool_leads):.0f}) - compare to the US-only 13mo (n=7) above")
+
     print(f"\n   [descriptive context only - NOT a forecast/trade signal. The live")
     print(f"    200DMA gate + VIX throttle react to downturns; they don't predict them.]")
     print(f"\nDone in {time.time()-t0:.0f}s")
