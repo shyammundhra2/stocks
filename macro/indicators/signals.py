@@ -76,8 +76,16 @@ def get_vix_signal():
         zs = (vix - vix.rolling(50).mean()) / vix.rolling(50).std()
         rsi14 = compute_RSI(spy, 14)
         dd = spy / spy.rolling(252, min_periods=60).max() - 1.0
+        # Exit-side comparison against the PRIOR day's trailing high, not
+        # today's - rolling().max() includes the current row, so "today's
+        # price > today's own high" is structurally impossible at a 0%/above
+        # threshold (confirmed the hard way in backtest_capitulation_exit_sweep.py:
+        # it silently degenerated to "never exits"). dd (inclusive) is kept
+        # separately for the "from_high" display metric, where inclusive is
+        # the semantically correct answer.
+        dd_exit = spy / spy.rolling(252, min_periods=60).max().shift(1) - 1.0
 
-        df = pd.concat({"z": zs, "rsi": rsi14, "dd": dd}, axis=1).dropna()
+        df = pd.concat({"z": zs, "rsi": rsi14, "dd": dd, "dd_exit": dd_exit}, axis=1).dropna()
         if df.empty:
             raise ValueError("insufficient history for VIX capitulation state")
 
@@ -90,12 +98,17 @@ def get_vix_signal():
         # the MAINTAIN level ratchets UP with the episode's high-water z
         # (deeper panic -> bigger target; a cooling z does NOT sell you down
         # mid-episode - the backtested exit is price recovery, not z decay);
-        # full exit (sell all) when SPY recovers to within 10% of its high.
+        # full exit (sell all) when SPY actually sets a new 252d high - best
+        # Sharpe/CAGR with zero whipsaws in the full-period sweep (2026-11-23,
+        # backtest_capitulation_exit_sweep.py); -10% is the better choice
+        # specifically in the 2020-26 regime window (best Sharpe AND best
+        # drawdown there) - flagged as a live, regime-dependent judgment call,
+        # not a settled one, if this needs revisiting.
         deployed = False
         exited_today = False
         hw_z = 0.0
-        for z_, r_, d_ in df[["z", "rsi", "dd"]].itertuples(index=False):
-            if deployed and d_ > -0.10:
+        for z_, r_, d_ in df[["z", "rsi", "dd_exit"]].itertuples(index=False):
+            if deployed and d_ > 0.0:
                 deployed = False
                 exited_today = True
                 hw_z = 0.0
