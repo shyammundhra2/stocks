@@ -89,9 +89,15 @@ def index():
     from stockselection.selected import get_selected_stocks
     selected_stocks = get_selected_stocks()
 
+    # Trend-asset sleeve (TREND_ASSETS universe, drawdown-phase tilt) - same
+    # stale-while-revalidate pattern, no market gate (unlike the stock sleeve).
+    from trendselection.selected import get_selected_trends
+    selected_trends = get_selected_trends()
+
     resp = make_response(render_template(
         "dashboard.html",
         selected_stocks=selected_stocks,
+        selected_trends=selected_trends,
         regime=all_data["regime"],
         vix_mr=all_data["vix_mr"],
         mr=all_data["mr"],
