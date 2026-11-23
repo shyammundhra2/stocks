@@ -22,6 +22,15 @@ S&P 500 inflates absolute returns; the relative edge is the trustworthy part),
 10bps costs assumed, exact (not buffered) gate - buffered LOST here because
 momentum's tail is sharp crashes where a lagged exit/entry costs more than the
 whipsaw it saves.
+
+DRAWDOWN-PHASE TILT added 2026-11-23 (backtest_trend_dd_tilt.py): ranking now
+runs on momentum x a 2.0x multiplier for names 5-15% off their own 252d high -
+backtest_trend_vs_mr_by_dd_phase.py found trend's forward-return IC peaks
+specifically in that "climbing out, not yet at highs" zone. A HARD gate to
+only that zone was tested first and rejected (backtest_trend_coming_out_of_correction.py:
+loses badly outside slow 2008-style grinds); the tilt version instead improves
+Sharpe/CAGR/maxDD together across 2008, the full 2007-26 period, and 2020-26,
+without excluding the rest of the universe.
 """
 import os
 import time
@@ -51,6 +60,20 @@ UNIVERSE_MAX_AGE_DAYS = 60
 
 MOM_LOOKBACK = 252      # 12 months
 MOM_SKIP = 21           # skip last month (12-1 momentum)
+# Drawdown-phase tilt (2026-11-23, backtest_trend_dd_tilt.py): names currently
+# 5-15% off their own 252d high get their ranking score multiplied by this
+# factor before selection. backtest_trend_vs_mr_by_dd_phase.py found trend's
+# forward-return IC peaks specifically in this "climbing out of a correction,
+# not yet at highs" zone (+0.046, clearly the strongest cell against any
+# other dd-phase/signal combination); backtest_trend_coming_out_of_correction.py
+# found a HARD gate to only this zone backfires outside slow 2008-style grinds
+# (misses fast V-recoveries, loses in choppy markets); the TILT version tested
+# here instead improves Sharpe/CAGR/maxDD together in 2008, the full 2007-26
+# period, and the 2020-26 regime window, with only a mild (not reversing)
+# preference for 1.5x over 2.0x specifically in 2022-style grinding bears.
+DD_TILT_LOOKBACK = 252
+DD_TILT_ZONE = (-0.15, -0.05)
+DD_TILT_FACTOR = 2.0
 # Artifact guards (match the research scripts): a spinoff/split backfill (e.g.
 # SNDK spun from WDC Feb-2025) fakes huge momentum. Drop names with >400% 12-1
 # momentum OR any >50% single-day move in the window - almost always a corporate
@@ -245,7 +268,13 @@ def _vol_managed_w(results, spy, sectors):
                     continue
                 if float(c.pct_change().tail(MOM_LOOKBACK).abs().max()) > JUMP_CAP:
                     continue
-                scores[t] = m
+                # Same dd-zone tilt as the live selection, so this replay
+                # estimates vol for the sleeve actually being held, not an
+                # untilted stand-in.
+                hi = c.rolling(DD_TILT_LOOKBACK, min_periods=60).max().iloc[-1]
+                dd_c = float(c.iloc[-1] / hi - 1.0) if np.isfinite(hi) and hi > 0 else np.nan
+                in_zone_c = np.isfinite(dd_c) and (DD_TILT_ZONE[0] < dd_c <= DD_TILT_ZONE[1])
+                scores[t] = m * (DD_TILT_FACTOR if in_zone_c else 1.0)
             picked, cnt = [], {}
             for t in sorted(scores, key=scores.get, reverse=True):
                 sct = sectors.get(t, t)
@@ -305,9 +334,16 @@ def infer_today(top_n=25):
             continue
         sma200 = close.rolling(DMA_200).mean().iloc[-1]
         slope1m, r2_1m = calculate_slope_r2(close, 21)
+        high_252 = close.rolling(DD_TILT_LOOKBACK, min_periods=60).max().iloc[-1]
+        dd_from_high = float(close.iloc[-1] / high_252 - 1.0) if np.isfinite(high_252) and high_252 > 0 else np.nan
+        in_tilt_zone = np.isfinite(dd_from_high) and (DD_TILT_ZONE[0] < dd_from_high <= DD_TILT_ZONE[1])
+        tilt_score = mom * (DD_TILT_FACTOR if in_tilt_zone else 1.0)
         rows.append({
             'Ticker': t, 'Name': names.get(t, t),
             'Mom_12_1': round(mom, 4),
+            'DD_From_High': round(dd_from_high, 4) if np.isfinite(dd_from_high) else np.nan,
+            'Tilt_Applied': in_tilt_zone,
+            'Tilt_Score': round(tilt_score, 4),
             'Current_Price': round(float(close.iloc[-1]), 2),
             'SMA_200': round(float(sma200), 2) if np.isfinite(sma200) else np.nan,
             'RSI': round(float(calculate_rsi(close, RSI_PERIOD).iloc[-1]), 1),
@@ -319,14 +355,16 @@ def infer_today(top_n=25):
     if df.empty:
         print("❌ no valid stocks"); return df
 
-    # Cross-sectional momentum rank (percentile) -> repurposes 'Prob' for
-    # downstream compatibility. BUY = the TOP_N momentum names (matches the
-    # validated top-N rule); the SPY-200DMA gate handles crash protection.
-    df['Prob'] = df['Mom_12_1'].rank(pct=True).round(3)
+    # Cross-sectional rank (percentile) of the TILTED score -> repurposes
+    # 'Prob' for downstream compatibility. Ranking/selection now runs on
+    # Tilt_Score (raw momentum x the dd-zone tilt), not raw Mom_12_1 - BUY =
+    # the TOP_N by that score (matches the validated top-N rule, now tilt-
+    # aware); the SPY-200DMA gate still handles crash protection.
+    df['Prob'] = df['Tilt_Score'].rank(pct=True).round(3)
     df['Sector'] = df['Ticker'].map(lambda t: sectors.get(t, t))
-    df = df.sort_values('Mom_12_1', ascending=False).reset_index(drop=True)
+    df = df.sort_values('Tilt_Score', ascending=False).reset_index(drop=True)
 
-    # Momentum-ranked walk, admitting a name only if its sector is under the cap.
+    # Tilt-score-ranked walk, admitting a name only if its sector is under the cap.
     buy_set, _sec_cnt = set(), {}
     if not gate_risk_off:
         for _, r in df.iterrows():
@@ -361,8 +399,9 @@ def infer_today(top_n=25):
     df['Sleeve_Vol'] = round(sleeve_vol, 4) if sleeve_vol is not None else np.nan
 
     df = df.sort_values('Prob', ascending=False)
-    out_cols = ['Ticker', 'Name', 'Sector', 'Prob', 'Mom_12_1', 'Signal', 'Slope_1M',
-                'R2_1M', 'RSI', 'Current_Price', 'Size_Allocation', 'ATR', 'SMA_200']
+    out_cols = ['Ticker', 'Name', 'Sector', 'Prob', 'Mom_12_1', 'DD_From_High', 'Tilt_Applied',
+                'Tilt_Score', 'Signal', 'Slope_1M', 'R2_1M', 'RSI', 'Current_Price',
+                'Size_Allocation', 'ATR', 'SMA_200']
     df['Gate'] = gate_txt
 
     print("=" * 120)
