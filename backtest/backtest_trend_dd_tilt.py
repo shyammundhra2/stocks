@@ -26,7 +26,7 @@ CAP, COST, TOP_N = 0.15, 5.0, 8
 TILTS = [1.0, 1.5, 2.0]   # 1.0 = always_trend baseline, no tilt
 WINDOWS = [("2008 GFC", "2007-10-01", "2009-06-30"), ("2020 COVID", "2020-02-01", "2020-12-31"),
            ("2022 bear", "2022-01-01", "2022-12-31"), ("FULL 2007-26", TRADE_START, END),
-           ("DEV 2020-26", "2020-01-01", END)]
+           ("DEV 2020-26", "2020-01-01", END), ("Last 5yr", "2021-11-23", END)]
 
 
 def stats(r, dts, lo, hi):
