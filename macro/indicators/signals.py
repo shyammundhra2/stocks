@@ -51,9 +51,16 @@ def get_vix_signal():
       - Entry needs the AND: vol spike (z > 2) AND price washout
         (SPY RSI14 < 30). Pure z-triggers deployed too early in 2008;
         the AND was the only entry that did not backfire.
-      - Defined exit: SPY back within 5% of its 252d high -> reserve
+      - Defined exit: SPY back within 10% of its 252d high -> reserve
         returns to cash. (The old z-based TRIMs were never validated and
-        are removed - this recovery exit is the sell side now.)
+        are removed - this recovery exit is the sell side now.) Moved from
+        5% to 10% (2026-11-23, backtest_capitulation_exit_sweep.py): the
+        5% threshold was never itself validated against alternatives - a
+        sweep found 10% gives the smallest maxDD in the 2020/2022-style
+        correction windows (the more relevant comparison than the 2008 GFC
+        tail case, where all thresholds converge), at the cost of a lower
+        Sharpe/CAGR than tighter exits. Chosen for drawdown control over
+        return-maximization, matching this book's stated objective.
 
     Scale-in: deploy grows linearly from $1k at z=2 to the full $100k
     reserve (20% of the $500k book) at z >= 4.
@@ -83,12 +90,12 @@ def get_vix_signal():
         # the MAINTAIN level ratchets UP with the episode's high-water z
         # (deeper panic -> bigger target; a cooling z does NOT sell you down
         # mid-episode - the backtested exit is price recovery, not z decay);
-        # full exit (sell all) when SPY recovers to within 5% of its high.
+        # full exit (sell all) when SPY recovers to within 10% of its high.
         deployed = False
         exited_today = False
         hw_z = 0.0
         for z_, r_, d_ in df[["z", "rsi", "dd"]].itertuples(index=False):
-            if deployed and d_ > -0.05:
+            if deployed and d_ > -0.10:
                 deployed = False
                 exited_today = True
                 hw_z = 0.0
