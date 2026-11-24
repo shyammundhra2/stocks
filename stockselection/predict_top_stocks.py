@@ -149,6 +149,28 @@ def calculate_slope_r2(close, period=21):
     return round(slope * 100, 3), round(max(min(r2, 1.0), 0.0), 3)
 
 
+def _spy_hysteresis_gate(spy_close, spy_sma200, buf=0.02):
+    """Sticky-hysteresis SPY-200DMA gate (2026-11-24, backtest_stock_bufgate_sweep.py):
+    enter risk-off only below 200DMA*(1-buf), exit only above 200DMA*(1+buf);
+    unchanged in between. Replaces the prior exact threshold - that was
+    chosen after only buf=0.03 was tested and lost; a proper sweep found
+    buf=0.02 beats or ties the exact gate in every tested window (2005-12,
+    2013-19, 2020-26, full), with a notably smaller maxDD in the three most
+    recent windows. Same sticky-state logic as macro/indicators/portfolio.py's
+    _spy_risk_gate, reimplemented here rather than imported to keep this
+    script's own dependency footprint light."""
+    off = False
+    sv, s2 = spy_close.values, spy_sma200.values
+    for i in range(len(sv)):
+        if not np.isfinite(s2[i]):
+            continue
+        if off and sv[i] > s2[i] * (1 + buf):
+            off = False
+        elif (not off) and sv[i] < s2[i] * (1 - buf):
+            off = True
+    return off
+
+
 def momentum_12_1(close):
     """12-1 momentum: return from t-252 to t-21 (skip last month)."""
     if len(close) < MOM_LOOKBACK + 1:
@@ -304,14 +326,21 @@ def infer_today(top_n=25):
     _auto_refresh_universe()
     end = datetime.now()
     start = end - timedelta(days=650)          # ~450 trading days > 273 needed
+    # Hysteresis gate needs extra history before `start` to walk into the
+    # correct state (not just a snapshot comparison like the old exact
+    # gate) - download further back, but still only report/trade from
+    # `start` onward.
+    gate_start = end - timedelta(days=1000)
     print(f"📅 {start.date()} → {end.date()}")
 
-    # SPY 200-DMA gate (exact threshold - buffered lost in backtest)
-    spy = yf.download("SPY", start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    # SPY 200-DMA gate: 2% sticky hysteresis (2026-11-24, backtest_stock_bufgate_sweep.py -
+    # replaces the prior exact threshold; see _spy_hysteresis_gate's docstring).
+    spy = yf.download("SPY", start=gate_start, end=end, auto_adjust=True, progress=False)["Close"]
     spy = pd.Series(np.asarray(spy).ravel(), index=spy.index)
     spy_200 = spy.rolling(DMA_200).mean()
-    gate_risk_off = bool(spy.iloc[-1] < spy_200.iloc[-1]) if np.isfinite(spy_200.iloc[-1]) else False
-    gate_txt = "RISK-OFF (SPY<200DMA → book to CASH)" if gate_risk_off else "RISK-ON (SPY>200DMA)"
+    gate_risk_off = _spy_hysteresis_gate(spy, spy_200, buf=0.02)
+    gate_txt = ("RISK-OFF (SPY<200DMA-2% hysteresis → book to CASH)" if gate_risk_off
+               else "RISK-ON (SPY>200DMA-2% hysteresis)")
     print(f"🚦 Gate: {gate_txt}   SPY {spy.iloc[-1]:.2f} vs 200DMA {spy_200.iloc[-1]:.2f}\n")
 
     names = load_company_names()
