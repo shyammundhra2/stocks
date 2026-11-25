@@ -85,13 +85,23 @@ def _conviction_score(item):
     return max(item["slope"] * item["r2"], 0.0)
 
 
-def _spy_risk_gate(spy_close, buf=0.03):
+def _spy_risk_gate(spy_close, buf=0.04):
     """Buffered SPY-200DMA regime gate with hysteresis (backtest_gss_whipsaw /
     backtest_gss_eqgate). Risk-off when SPY closes below 200DMA*(1-buf);
-    risk-on again only above 200DMA*(1+buf). The +/-3% band is the actual
+    risk-on again only above 200DMA*(1+buf). The buffer band is the actual
     anti-whipsaw mechanism - an exact-threshold gate flip-flops in chop and
     made 2015/2018 WORSE. State is walked deterministically over the full
     series, so the live call needs no persisted state.
+
+    Width moved 3%->4% (2026-11-24, backtest_gss_whipsaw_buf_sweep.py): the
+    backtest that originally picked 3% had a real hysteresis bug (re-picked
+    a single threshold off current state and compared the same direction
+    both ways - confirmed to flip on every step regardless of width, so 3%
+    was never actually validated against alternatives). Fixed and swept:
+    4% beats or ties 3% in every tested window, never worse - notably the
+    2015-16 whipsaw year this gate exists for (Sharpe -0.94->-0.59, maxDD
+    -19.8%->-13.6%). This function's own hysteresis logic was already
+    correct; only the backtest that chose the width was buggy.
     Returns True when risk-off.
     """
     if spy_close is None or len(spy_close) < 210:
