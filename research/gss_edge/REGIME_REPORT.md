@@ -2,7 +2,7 @@
 Branch `gss-edge-research`. Nothing pushed, merged or changed live. Code: `regime_study.py`, `run_regime.py`, `run_regime_robust.py`. Results: `regime_results.csv` (all 184 rules), `regime_passers_robustness.csv`.
 
 ## Bottom line
-**No switching rule was demonstrated to beat the baselines out of sample.** 8 of 184 rules clear the stated bar (both periods), but that is only a little above the ~2.3 expected from random regimes. Rules selected on one period do not carry to the other, and doubling costs removes the edge from 7 of the 8. The best lead is a single signal, *days since the 252-day low*, and it is not established. **Always-trend is the right default**; MR is dominated in both periods.
+**No switching rule was demonstrated to beat the baselines out of sample.** 8 of 184 rules clear the stated bar (both periods), but that is only a little above the ~2.3 expected from random regimes. Rules selected on one period do not carry to the other, and doubling costs removes the edge, in at least one period, from all 8. The best lead is a single signal, *days since the 252-day low*, and it is not established. **Always-trend is the right default**; MR is dominated in both periods.
 
 ## Setup
 - Data: Yahoo query1 adjusted OHLCV (2005 to 2026-11-26) for the 42 GSS universe ETFs, SPY, ^VIX, ^VIX3M, BIL. Same rules as before: next-day fills, 5 bps on all turnover, cash earns BIL, Sharpe on excess over BIL.
@@ -27,7 +27,7 @@ VIX level; VIX/VIX3M term structure; implied minus realized vol (VIX - SPY 21d R
 - **8 of 184 rules pass** the stated rule. 17 beat always-trend's Sharpe in both periods; 46 and 49 did in one period each (about a quarter, so one-period wins are the norm, not evidence).
 - **Null calibration:** 400 random persistent regime sequences run through the same test pass at 1.3%, i.e. **~2.3 false passes expected among 184 rules**. 8 is above that but the rules are heavily overlapping.
 - **Cross-period selection fails.** Rank correlation of Sharpe margin vs always-trend between the two periods across all rules is only +0.16. Top-10 rules chosen on 2007-2015 average +0.149 there but **-0.044** in 2016-now (3/10 positive); chosen on 2016-now, +0.167 vs **-0.047** in 2007-2015 (3/10 positive).
-- **Cost robustness:** at 2x costs (10 bps) 7 of the 8 passers lose Sharpe vs always-trend in at least one period. Switch counts are 25 to 157 over 20 years.
+- **Cost robustness:** at 2x costs (10 bps) all 8 passers lose Sharpe vs always-trend in at least one period. Switch counts are 25 to 157 over 20 years.
 - **Four sub-periods** (07-10, 11-15, 16-20, 21-now): 6 of the 8 beat always-trend in 3 of 4; none in all 4.
 
 ### The 8 passers (Sharpe / maxDD; baseline best = always-trend 0.347/-18.8% and 0.418/-24.2%)
