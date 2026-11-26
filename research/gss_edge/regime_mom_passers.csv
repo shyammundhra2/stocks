@@ -1,0 +1,2 @@
+rule,wins4,m2x_p1,m2x_p2
+mom121_univ_median|lo50 AND bottom_gain_zz10|hi50,3,-0.08880413957987149,-0.01432133788485862
