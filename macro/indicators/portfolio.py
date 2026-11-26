@@ -37,6 +37,7 @@ from macro.indicators.signals import capitulation_state
 # V. Portfolio Optimizer
 # =========================
 _portfolio_summary = {}
+MOM_ELIGIBILITY = "live"   # research hook: "live" | "m12" | "m12_noer" (see get_trends)
 
 
 def get_portfolio_summary():
@@ -753,6 +754,19 @@ def get_trends():
                                    else "FLAT")
             else:
                 adaptive_state, adaptive_signal = "MID", "FLAT"
+
+            # RESEARCH HOOK (research/gss_edge/T6_REPORT.md): alternative MOM eligibility,
+            # default "live" = no behaviour change. "m12": in TREND state, MOM needs
+            # >200DMA and 12-1>0 (drops the >50DMA + slope>0 tests). "m12_noer": same
+            # but independent of the ER state. REV names are left alone. Short history
+            # (<252 bars) is ineligible here (conservative), unlike the REV 12-1 gate.
+            if MOM_ELIGIBILITY != "live" and adaptive_signal != "REV":
+                _m12v = (float(c.iloc[-22] / c.iloc[-252] - 1.0) if len(c) >= 252 else None)
+                _t6ok = bool(above200 and _m12v is not None and _m12v > 0.0)
+                if MOM_ELIGIBILITY == "m12_noer":
+                    adaptive_signal = "MOM" if _t6ok else "FLAT"
+                elif MOM_ELIGIBILITY == "m12" and adaptive_state == "TREND":
+                    adaptive_signal = "MOM" if _t6ok else "FLAT"
 
             # Risk-off equity gate: zero equity names, spare defensives.
             gated = False
