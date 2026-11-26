@@ -411,7 +411,8 @@ def _get_shared_market_data():
         list(TREND_ASSETS.keys()) +
         list(SECTOR_NAMES.keys()) +
         ['SPY', 'RSP', '^VIX', '^MOVE', 'HYG', 'IEF', '^TNX', '^IRX',
-         'JPY=X', 'HG=F', 'GC=F', 'QQQ']
+         'JPY=X', 'HG=F', 'GC=F', 'QQQ',
+        'SHY', 'BIL']   # SHY/BIL: bond-haven vs-cash test (overlays.py)
     ))
     data = _persistent_fetch("shared", all_tickers, "1y", group_by="column")
     # Self-heal: if a core ticker is sparse (a transient bad fetch the incremental

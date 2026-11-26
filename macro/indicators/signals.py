@@ -40,6 +40,80 @@ _VIX_MAX_DEPLOY = int(0.20 * _VIX_PORTFOLIO_VALUE)   # $100k
 _VIX_MIN_DEPLOY = 1_000
 
 
+def capitulation_state(vix, spy):
+    """PURE capitulation lifecycle on VIX and SPY close series (extracted 2026-11-26 so the live
+    signal and the historical replay share one implementation; behaviour unchanged from the
+    inline version it replaces). Returns the get_vix_signal dict. Raises ValueError on short data."""
+    # Same gauge as before: VIX z vs its rolling 50d mean/std.
+    zs = (vix - vix.rolling(50).mean()) / vix.rolling(50).std()
+    rsi14 = compute_RSI(spy, 14)
+    dd = spy / spy.rolling(252, min_periods=60).max() - 1.0
+    # Exit-side comparison against the PRIOR day's trailing high, not
+    # today's - rolling().max() includes the current row, so "today's
+    # price > today's own high" is structurally impossible at a 0%/above
+    # threshold (confirmed the hard way in backtest_capitulation_exit_sweep.py:
+    # it silently degenerated to "never exits"). dd (inclusive) is kept
+    # separately for the "from_high" display metric, where inclusive is
+    # the semantically correct answer.
+    dd_exit = spy / spy.rolling(252, min_periods=60).max().shift(1) - 1.0
+
+    df = pd.concat({"z": zs, "rsi": rsi14, "dd": dd, "dd_exit": dd_exit}, axis=1).dropna()
+    if df.empty:
+        raise ValueError("insufficient history for VIX capitulation state")
+
+    def ladder(zval):
+        # Maintain-level from z: $1k at z=2, full $100k reserve at z>=4.
+        depth = min(max((zval - 2.0) / 2.0, 0.0), 1.0)
+        return int(round(_VIX_MIN_DEPLOY + depth * (_VIX_MAX_DEPLOY - _VIX_MIN_DEPLOY), -2))
+
+    # Walk the episode state. Enter on capitulation (z>2 AND washout);
+    # the MAINTAIN level ratchets UP with the episode's high-water z
+    # (deeper panic -> bigger target; a cooling z does NOT sell you down
+    # mid-episode - the backtested exit is price recovery, not z decay);
+    # full exit (sell all) when SPY actually sets a new 252d high - best
+    # Sharpe/CAGR with zero whipsaws in the full-period sweep (2026-11-23,
+    # backtest_capitulation_exit_sweep.py); -10% is the better choice
+    # specifically in the 2020-26 regime window (best Sharpe AND best
+    # drawdown there) - flagged as a live, regime-dependent judgment call,
+    # not a settled one, if this needs revisiting.
+    deployed = False
+    exited_today = False
+    hw_z = 0.0
+    for z_, r_, d_ in df[["z", "rsi", "dd_exit"]].itertuples(index=False):
+        if deployed and d_ > 0.0:
+            deployed = False
+            exited_today = True
+            hw_z = 0.0
+        else:
+            exited_today = False
+            if not deployed and z_ > 2.0 and r_ < 30.0:
+                deployed = True
+                hw_z = z_
+            elif deployed:
+                hw_z = max(hw_z, z_)
+
+    z = float(df["z"].iloc[-1])
+    r_now = float(df["rsi"].iloc[-1])
+    dd_now = float(df["dd"].iloc[-1])
+    v_last = float(vix.iloc[-1])
+
+    target = ladder(hw_z) if deployed else 0
+    if deployed and z > 2.0 and r_now < 30.0:
+        signal = "BUY (CAPITULATION)"       # trigger live: add up to target
+    elif exited_today:
+        signal = "EXIT (RECOVERED)"         # sell all - reserve back to cash
+    elif deployed:
+        signal = "DEPLOYED_HOLD"            # maintain target until recovery
+    else:
+        signal = "HOLD"
+
+    return {
+        "vix": round(v_last, 2), "z": round(z, 2), "signal": signal,
+        "spy_rsi14": round(r_now, 1), "from_high": round(dd_now * 100, 1),
+        "target": target,                    # $ to maintain (0 = flat)
+    }
+
+
 @ttl_cache(30)
 def get_vix_signal():
     """VIX fear-gauge SPY buyer - capitulation lifecycle (2026-08-24).
@@ -71,75 +145,7 @@ def get_vix_signal():
         shared_data = _get_shared_market_data()
         vix = _get_close(shared_data, '^VIX')
         spy = _get_close(shared_data, 'SPY')
-
-        # Same gauge as before: VIX z vs its rolling 50d mean/std.
-        zs = (vix - vix.rolling(50).mean()) / vix.rolling(50).std()
-        rsi14 = compute_RSI(spy, 14)
-        dd = spy / spy.rolling(252, min_periods=60).max() - 1.0
-        # Exit-side comparison against the PRIOR day's trailing high, not
-        # today's - rolling().max() includes the current row, so "today's
-        # price > today's own high" is structurally impossible at a 0%/above
-        # threshold (confirmed the hard way in backtest_capitulation_exit_sweep.py:
-        # it silently degenerated to "never exits"). dd (inclusive) is kept
-        # separately for the "from_high" display metric, where inclusive is
-        # the semantically correct answer.
-        dd_exit = spy / spy.rolling(252, min_periods=60).max().shift(1) - 1.0
-
-        df = pd.concat({"z": zs, "rsi": rsi14, "dd": dd, "dd_exit": dd_exit}, axis=1).dropna()
-        if df.empty:
-            raise ValueError("insufficient history for VIX capitulation state")
-
-        def ladder(zval):
-            # Maintain-level from z: $1k at z=2, full $100k reserve at z>=4.
-            depth = min(max((zval - 2.0) / 2.0, 0.0), 1.0)
-            return int(round(_VIX_MIN_DEPLOY + depth * (_VIX_MAX_DEPLOY - _VIX_MIN_DEPLOY), -2))
-
-        # Walk the episode state. Enter on capitulation (z>2 AND washout);
-        # the MAINTAIN level ratchets UP with the episode's high-water z
-        # (deeper panic -> bigger target; a cooling z does NOT sell you down
-        # mid-episode - the backtested exit is price recovery, not z decay);
-        # full exit (sell all) when SPY actually sets a new 252d high - best
-        # Sharpe/CAGR with zero whipsaws in the full-period sweep (2026-11-23,
-        # backtest_capitulation_exit_sweep.py); -10% is the better choice
-        # specifically in the 2020-26 regime window (best Sharpe AND best
-        # drawdown there) - flagged as a live, regime-dependent judgment call,
-        # not a settled one, if this needs revisiting.
-        deployed = False
-        exited_today = False
-        hw_z = 0.0
-        for z_, r_, d_ in df[["z", "rsi", "dd_exit"]].itertuples(index=False):
-            if deployed and d_ > 0.0:
-                deployed = False
-                exited_today = True
-                hw_z = 0.0
-            else:
-                exited_today = False
-                if not deployed and z_ > 2.0 and r_ < 30.0:
-                    deployed = True
-                    hw_z = z_
-                elif deployed:
-                    hw_z = max(hw_z, z_)
-
-        z = float(df["z"].iloc[-1])
-        r_now = float(df["rsi"].iloc[-1])
-        dd_now = float(df["dd"].iloc[-1])
-        v_last = float(vix.iloc[-1])
-
-        target = ladder(hw_z) if deployed else 0
-        if deployed and z > 2.0 and r_now < 30.0:
-            signal = "BUY (CAPITULATION)"       # trigger live: add up to target
-        elif exited_today:
-            signal = "EXIT (RECOVERED)"         # sell all - reserve back to cash
-        elif deployed:
-            signal = "DEPLOYED_HOLD"            # maintain target until recovery
-        else:
-            signal = "HOLD"
-
-        return {
-            "vix": round(v_last, 2), "z": round(z, 2), "signal": signal,
-            "spy_rsi14": round(r_now, 1), "from_high": round(dd_now * 100, 1),
-            "target": target,                    # $ to maintain (0 = flat)
-        }
+        return capitulation_state(vix, spy)
     except Exception as e:
         print(f"VIX Signal Error: {e}")
         return {"vix": 0, "z": 0, "signal": "ERROR",
@@ -234,6 +240,7 @@ def get_mean_reversion():
         return {"price": 0, "rsi2": 0, "signal": "ERROR", "deploy": 0}
 
 __all__ = [
+    "capitulation_state",
     "get_vix_signal",
     "get_mean_reversion",
 ]

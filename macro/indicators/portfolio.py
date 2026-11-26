@@ -29,6 +29,8 @@ from macro.indicators.cache import *
 from macro.indicators.data import *
 from macro.indicators.mathstats import *
 from macro.indicators.regime import *
+from macro.indicators import overlays as _ov
+from macro.indicators.signals import capitulation_state
 
 
 # =========================
@@ -997,6 +999,45 @@ def get_trends():
             sum(r.get("weight_pct", 0) for r in optimized_results), 1)
 
     summary["risk_gate"] = "RISK-OFF" if gate_riskoff else "RISK-ON"
+
+    # --- Book overlays (2026-11-26, research/gss_edge/REPORT.md) -------------------------------
+    # (1) capitulation reserve folded INTO the book: optimizer weights x (1-RESERVE_FRAC), SPY
+    #     reserve sized by the capitulation ladder; (2) bond haven (IEF/SHY) fills idle cash while
+    #     the gate is risk-off. Pure logic lives in overlays.py; this block only wires live data.
+    _overlay_w = {}
+    if _ov.OVERLAYS_ENABLED:
+        try:
+            try:
+                _res_dollars = float(capitulation_state(
+                    _get_close(shared_data, '^VIX'), _get_close(shared_data, 'SPY')).get("target", 0))
+            except Exception as _e:
+                print(f"Overlay: capitulation state unavailable ({_e}); reserve stays cash")
+                _res_dollars = 0.0
+            try:
+                _hv = _ov.pick_haven(_get_close(shared_data, 'IEF'), _get_close(shared_data, 'SHY'),
+                                     _get_close(shared_data, 'BIL'))
+            except Exception as _e:
+                print(f"Overlay: haven inputs unavailable ({_e}); no haven")
+                _hv = None
+            _ob = _ov.book_overlay(
+                {r["sym"]: r.get("weight_pct", 0) / 100.0 for r in optimized_results if r.get("weight_pct", 0) > 0},
+                gate_riskoff, _res_dollars, _hv)
+            for r in optimized_results:
+                if r.get("weight_pct", 0) > 0:
+                    r["weight_pct"] = round(r["weight_pct"] * _ob["core_scale"], 2)
+                    r["dollar_amount"] = round(r.get("dollar_amount", 0.0) * _ob["core_scale"], 2)
+                    r["pos_size"] = f"${r['dollar_amount']:,.0f}"
+            summary["total_allocated"] = round(sum(r.get("weight_pct", 0) for r in optimized_results), 1)
+            if _ob["reserve_spy"] > 0:
+                _overlay_w["SPY"] = _ob["reserve_spy"]
+            if _ob["haven_sym"]:
+                _overlay_w[_ob["haven_sym"]] = _ob["haven_w"]
+            summary["overlay"] = {"reserve_spy_pct": round(_ob["reserve_spy"] * 100, 2),
+                                  "haven": _ob["haven_sym"], "haven_pct": round(_ob["haven_w"] * 100, 2),
+                                  "core_scale": _ob["core_scale"], "reserve_dollars": _res_dollars}
+        except Exception as _e:
+            print(f"Book overlay error (serving un-overlaid book): {_e}")
+
     summary["vix_throttle"] = round(vix_throttle, 2)
     summary["vix_ts_ratio"] = round(_vix_ts_ratio, 3) if _vix_ts_ratio is not None else None
     summary["vix_inverted"] = bool(_vix_ts_ratio is not None and _vix_ts_ratio > 1.0)
@@ -1006,6 +1047,8 @@ def get_trends():
         r["sym"]: round(r["weight_pct"] / 100.0, 4)
         for r in optimized_results if r.get("weight_pct", 0) > 0
     }
+    for _s, _w in _overlay_w.items():
+        summary["weights"][_s] = round(summary["weights"].get(_s, 0.0) + _w, 4)
 
     # Top correlations for EVERY name (display), not just held positions. The
     # optimizer only computes corr over the routed (MOM/REV) names it sizes;

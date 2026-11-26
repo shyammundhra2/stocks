@@ -64,3 +64,29 @@ Neighbours pass, so no knife-edge, but haven 100% did NOT pass (DD -23.8% is 1.3
 
 ## Files
 `fetch_data.py`, `prices.csv`, `engine.py`, `run_ideas.py` (batch 1), `run_batch2.py`, `make_report.py`, `check_vol_headroom_bug.py`, `results_all.csv`, `survivors_table.md`, `baseline_returns.csv`.
+
+---
+# Update 2026-11-26: overlays wired into the GSS code, re-backtested with the LIVE optimizer
+
+## What changed in the code (branch `gss-edge-research` only; not pushed, not merged)
+- `macro/indicators/overlays.py` (new, pure functions): `pick_haven` (IEF/SHY if the better 126d return beats BIL, else none) and `book_overlay` (scales optimizer weights by 1-20%, sizes an SPY reserve from the capitulation ladder, fills idle cash up to 50% of the book with the haven **only while the SPY gate is risk-off**; it never displaces defensives the optimizer already holds).
+- `macro/indicators/signals.py`: capitulation logic extracted to a pure `capitulation_state(vix, spy)`; `get_vix_signal` calls it. Verified identical to the old inline version on 40 historical dates (`test_signals_refactor.py`).
+- `macro/indicators/portfolio.py` `get_trends`: applies the overlays after the optimizer/throttle and exposes `summary["overlay"]`; overlay legs are included in `summary["weights"]` (so `_vol_headroom_deploy` sees them). Kill switch: `overlays.OVERLAYS_ENABLED`.
+- `macro/indicators/data.py`: SHY and BIL added to the shared download list.
+- The `_vol_headroom_deploy` empty-book bug is still unfixed (not asked).
+
+## Live-optimizer replay (`live_replay.py`, `run_replay.py`, `replay_sim.py`, `run_live_backtest.py`)
+The real `get_trends()` (router, sizing, covariance optimizer, gate, throttle) is called at 257 historical decision dates (month-ends + gate flips) on adjusted OHLCV from Yahoo. Only the data feeds are substituted (price store -> trailing window, VIX/VIX3M term structure, ML regime stub; `_effective_vol_cap` no longer uses ml_slow, so this changes no sizing). Same rules: next-day fill, 5 bps, cash earns BIL. The wired `get_trends` overlay output matched the offline overlay on all 14 sampled dates (`check_integration.py`).
+
+| (Sharpe on excess over BIL, maxDD) | 2007-2015 | 2016-now | Rule |
+|---|---|---|---|
+| **Baseline (live optimizer, no overlays)** | 0.102 / -8.0% | 0.373 / -5.4% | |
+| Haven only | 0.252 / -10.6% | 0.437 / -5.4% | **FAIL** (DD 2.6pp worse in 2007-15) |
+| Reserve folded in only | 0.266 / -9.1% | 0.540 / -7.2% | **FAIL** (DD 1.1pp worse 07-15, 1.8pp worse 16-now) |
+| Haven + reserve | 0.418 / -9.3% | 0.626 / -7.6% | **FAIL** (DD 1.3pp and 2.2pp worse) |
+
+Sensitivity to the data window the optimizer sees (252 bars ~ the live 1y store vs 1000 bars): baseline 0.113/0.375, haven+reserve 0.424/0.597. Same conclusion.
+
+**Verdict: neither change passes your rule on the live optimizer.** Sharpe rises in both periods for all three, which agrees with the proxy, but drawdown is worse by more than 1pp. The live book is much lower-vol than the proxy (baseline DD only -8%/-5%), so 1pp is a tight tolerance, and holding 50% IEF (2013 taper) or a 20% SPY reserve (2020, 2022) adds real drawdown relative to that.
+Informational, **chosen after seeing the failure so NOT a clean pass** (3 extra variants on the same data): haven 25% -> Sh 0.191/0.408, DD -8.6%/-5.4% (DD 0.6pp worse in 2007-15, inside the 1pp tolerance); reserve 10% -> 0.218/0.480, DD -6.6%/-5.2%; both -> 0.311/0.520, DD -6.7%/-5.2%. These pass the rule but would need fresh data to trust.
+Recommendation: do not run the overlays at full size live. If kept, set the sizes before UI testing (`RESERVE_FRAC`, `HAVEN_FRAC`) or flip `OVERLAYS_ENABLED=False`.
