@@ -18,7 +18,9 @@ RESERVE_FRAC = 0.20
 HAVEN_FRAC = 0.50
 HAVEN_LOOKBACK = 126
 PORTFOLIO_VALUE = 500_000
-OVERLAYS_ENABLED = True       # tests/replays flip this to get the raw (pre-overlay) optimizer book
+OVERLAYS_ENABLED = False      # OFF 2026-11-26: failed the DD rule at full size on the live-optimizer replay
+                              # (research/gss_edge/REPORT.md). Re-enable only after choosing RESERVE_FRAC/HAVEN_FRAC.
+                              # tests/replays flip this to get the raw (pre-overlay) optimizer book
 
 
 def _trail_ret(close, n=HAVEN_LOOKBACK):
