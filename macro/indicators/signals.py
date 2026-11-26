@@ -152,6 +152,9 @@ def get_vix_signal():
                 "spy_rsi14": 0, "from_high": 0, "target": 0}
 
 
+EMPTY_BOOK_MAX_FRAC = 0.20   # cap on tactical deploy when the book is all cash (= capitulation reserve size)
+
+
 def _vol_headroom_deploy(shared_data, tactical_sym="QQQ",
                          vol_cap=0.15, portfolio_value=500_000):
     """Tactical deploy sized by the vol budget: the largest w such that
@@ -166,12 +169,23 @@ def _vol_headroom_deploy(shared_data, tactical_sym="QQQ",
     """
     try:
         from macro.indicators.portfolio import get_portfolio_summary
-        weights = (get_portfolio_summary() or {}).get("weights") or {}
-        if not weights:
+        summary = get_portfolio_summary() or {}
+        # Distinguish "summary not computed yet" (no 'weights' key: stay at 0)
+        # from "computed, and the book is all cash" ({}): that is exactly when
+        # vol headroom is largest, so it must NOT return 0 (fixed 2026-11-26).
+        if summary.get("weights") is None:
             return 0
+        weights = summary["weights"]
         rets = shared_data["Close"].pct_change().tail(63)
         if tactical_sym not in rets.columns:
             return 0
+        q = rets[tactical_sym].fillna(0)
+        sig_q = float(q.std() * np.sqrt(252))
+        if not weights:                                 # all-cash book: sig_p = 0
+            if sig_q <= 0 or not np.isfinite(sig_q):
+                return 0
+            w_max = min(vol_cap / sig_q, EMPTY_BOOK_MAX_FRAC)
+            return int(round(w_max * portfolio_value, -3))
         book = None
         for s, wt in weights.items():
             if s in rets.columns:
@@ -179,9 +193,7 @@ def _vol_headroom_deploy(shared_data, tactical_sym="QQQ",
                 book = leg if book is None else book + leg
         if book is None:
             return 0
-        q = rets[tactical_sym].fillna(0)
         sig_p = float(book.std() * np.sqrt(252))
-        sig_q = float(q.std() * np.sqrt(252))
         rho = float(np.corrcoef(book, q)[0, 1])
         if not np.isfinite(rho):
             rho = 1.0                                   # conservative
