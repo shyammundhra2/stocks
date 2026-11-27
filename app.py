@@ -94,8 +94,18 @@ def index():
     from trendselection.selected import get_selected_trends
     selected_trends = get_selected_trends()
 
+    # Live $500k allocation (variant F, monthly rebalance). Isolated: a failure here must not 500 the tab.
+    try:
+        from macro.allocation import get_allocation
+        allocation = get_allocation(all_data["vix_mr"])
+    except Exception as e:
+        print(f"allocation skipped: {e}")
+        allocation = {"book": 500000, "sleeves": [], "by_ticker": [], "invested": 0, "cash": 500000, "cash_pct": 1.0,
+                      "budget_cash": 115000, "next_rebalance": "?", "errors": ["allocation"]}
+
     resp = make_response(render_template(
         "dashboard.html",
+        allocation=allocation,
         selected_stocks=selected_stocks,
         selected_trends=selected_trends,
         regime=all_data["regime"],

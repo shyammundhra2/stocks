@@ -1,0 +1,80 @@
+{# Live $500k allocation, variant F (macro/allocation.py). Monthly rebalance; shows the live signal = target if rebalanced today. #}
+<div class="bg-slate-800 rounded p-3 mb-6">
+  <div class="flex flex-wrap justify-between items-center mb-1 gap-2">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider">Allocation — ${{ '{:,.0f}'.format(allocation.book) }} book · variant F · QQQ RSI2 &amp; VIX/SPY daily · rest monthly</p>
+    <span class="text-[10px] text-slate-500">live signal · monthly sleeves next rebalance {{ allocation.next_rebalance }}</span>
+  </div>
+  {% if allocation.errors %}<p class="text-[10px] text-yellow-400 mb-1">Data issue in: {{ allocation.errors|join(', ') }} (that sleeve shows as cash).</p>{% endif %}
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="overflow-x-auto">
+      <p class="text-[10px] text-slate-500 mb-1">By sleeve</p>
+      <table class="w-full text-xs">
+        <tr class="text-slate-500 text-[10px]"><td>Sleeve</td><td class="text-right">Budget</td><td class="text-right">Deployed</td><td class="text-right">Cash</td></tr>
+        {% for s in allocation.sleeves %}
+        <tr class="border-t border-slate-700/40">
+          <td class="py-1"><span class="text-white font-bold">{{ s.label }}</span> <span class="text-[9px] px-1 rounded {% if s.cadence == 'daily' %}bg-amber-900 text-amber-300{% else %}bg-slate-700 text-slate-300{% endif %}">{{ s.cadence }}</span><br>
+            <span class="text-[10px] {% if s.signal == 'ERROR' %}text-yellow-400{% else %}text-slate-400{% endif %}">{{ s.signal }}{% if s.note %} · {{ s.note }}{% endif %}</span><br>
+            <span class="text-[10px] text-slate-300">{% if s.positions %}{% for t, v in s.positions.items() %}{{ t }} ${{ '{:,.0f}'.format(v) }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}<em>all cash</em>{% endif %}</span></td>
+          <td class="py-1 text-right font-mono text-slate-300 align-top">${{ '{:,.0f}'.format(s.budget) }}</td>
+          <td class="py-1 text-right font-mono text-green-400 align-top">${{ '{:,.0f}'.format(s.deployed) }}</td>
+          <td class="py-1 text-right font-mono text-slate-400 align-top">${{ '{:,.0f}'.format(s.cash) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="border-t border-slate-600">
+          <td class="py-1 text-white font-bold">Unallocated cash cushion</td><td class="text-right font-mono text-slate-300">${{ '{:,.0f}'.format(allocation.budget_cash) }}</td><td></td><td class="text-right font-mono text-slate-400">${{ '{:,.0f}'.format(allocation.budget_cash) }}</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="overflow-x-auto">
+      <p class="text-[10px] text-slate-500 mb-1">Combined by ticker (SPY, QQQ always shown)</p>
+      <table class="w-full text-xs">
+        <tr class="text-slate-500 text-[10px]"><td>Ticker</td><td>Sleeve(s)</td><td class="text-right">$</td><td class="text-right">% book</td></tr>
+        {% for r in allocation.by_ticker %}
+        <tr class="border-t border-slate-700/40">
+          <td class="py-0.5 font-bold text-white w-14">{{ r.ticker }}</td>
+          <td class="py-0.5 text-[10px] text-slate-500">{% if r.sleeves %}{{ r.sleeves|join(', ') }}{% else %}flat{% endif %}</td>
+          <td class="py-0.5 text-right font-mono {% if r.dollars %}text-slate-200{% else %}text-slate-600{% endif %}">${{ '{:,.0f}'.format(r.dollars) }}</td>
+          <td class="py-0.5 text-right font-mono text-slate-400">{{ '{:.1%}'.format(r.pct) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="border-t border-slate-600">
+          <td class="py-1 font-bold text-white">CASH</td><td class="text-[10px] text-slate-500">budget cushion + undeployed</td>
+          <td class="text-right font-mono text-slate-200">${{ '{:,.0f}'.format(allocation.cash) }}</td><td class="text-right font-mono text-slate-400">{{ '{:.1%}'.format(allocation.cash_pct) }}</td>
+        </tr>
+        <tr><td class="py-1 text-slate-500 text-[10px]" colspan="2">Invested</td><td class="text-right font-mono text-slate-400">${{ '{:,.0f}'.format(allocation.invested) }}</td><td></td></tr>
+      </table>
+    </div>
+  </div>
+
+  {% set o = allocation.orders %}
+  {% if o %}
+  <div class="mt-4 overflow-x-auto">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Orders vs recorded holdings
+      {% if o.first_run %}<span class="text-yellow-400 normal-case">· no holdings recorded yet → initial build</span>{% endif %}
+      · <span class="{% if o.monthly_due %}text-amber-300{% else %}text-slate-500{% endif %} normal-case">monthly sleeves {% if o.monthly_due %}DUE today{% else %}not due — preview until {{ allocation.next_rebalance }}{% endif %}</span></p>
+    {% if o.per_sleeve %}
+    <table class="w-full text-xs">
+      <tr class="text-slate-500 text-[10px]"><td></td><td>Sleeve</td><td>Ticker</td><td>Action</td><td class="text-right">Held</td><td class="text-right">Target</td><td class="text-right">$ trade</td><td class="text-right">~Shares</td></tr>
+      {% for x in o.per_sleeve %}
+      <tr class="border-t border-slate-700/40 {% if not x.due %}opacity-50{% endif %}">
+        <td class="py-0.5 text-[9px] {% if x.due %}text-amber-300{% else %}text-slate-500{% endif %}">{{ 'DUE' if x.due else 'preview' }}</td>
+        <td class="text-[10px] text-slate-400">{{ x.sleeve }}</td>
+        <td class="font-bold text-white">{{ x.ticker }}</td>
+        <td class="font-bold {% if x.action == 'BUY' %}text-green-400{% else %}text-red-400{% endif %}">{{ x.action }}</td>
+        <td class="text-right font-mono text-slate-500">${{ '{:,.0f}'.format(x.held) }}</td>
+        <td class="text-right font-mono text-slate-400">${{ '{:,.0f}'.format(x.target) }}</td>
+        <td class="text-right font-mono text-slate-200">${{ '{:,.0f}'.format(x.dollars) }}</td>
+        <td class="text-right font-mono text-slate-400">{{ x.shares if x.shares is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% if o.net_due %}<p class="text-[10px] text-slate-300 mt-1">Net, due now: {% for n in o.net_due %}<span class="{% if n.action == 'BUY' %}text-green-400{% else %}text-red-400{% endif %} font-bold">{{ n.action }}</span> {{ n.ticker }} ${{ '{:,.0f}'.format(n.dollars) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% else %}<p class="text-[10px] text-slate-500 mt-1">No orders due now.</p>{% endif %}
+    {% else %}<p class="text-xs text-slate-500">No orders — holdings already match the targets.</p>{% endif %}
+    <p class="text-[9px] text-slate-600 mt-1">"Held" = what you recorded as held (data/allocation_holdings.json). After you trade, run <code>venv/bin/python -m macro.allocation mark</code> (due sleeves) or <code>mark all</code> (initial build). The page never writes. Drift under $250 is ignored.</p>
+  </div>
+  {% endif %}
+  <p class="text-[9px] text-slate-600 mt-2">Budgets: sieve $100k · 12-1 ETFs $50k · trend ETFs $100k · VIX/SPY $100k · QQQ RSI2 $25k · top country $10k · cash $115k. Backtest (this cadence, 2006-26): Sharpe ~1.1, maxDD ~-7%; sieve series is survivorship-biased and the backtest is in-sample. Display only — research, not advice.</p>
+</div>
