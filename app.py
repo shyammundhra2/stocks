@@ -101,7 +101,7 @@ def index():
     except Exception as e:
         print(f"allocation skipped: {e}")
         allocation = {"book": 500000, "sleeves": [], "by_ticker": [], "invested": 0, "cash": 500000, "cash_pct": 1.0,
-                      "budget_cash": 115000, "next_rebalance": "?", "errors": ["allocation"]}
+                      "budget_cash": 65000, "next_rebalance": "?", "errors": ["allocation"]}
 
     resp = make_response(render_template(
         "dashboard.html",

@@ -1,6 +1,6 @@
 """Live $-allocation of the $500k book across the six sleeves of research variant "F"
-(research/kelly/: stock sieve 100k, 12-1 ETFs 50k, trend ETFs 100k, VIX/SPY capitulation 100k,
-QQQ RSI2 25k, top-country 10k; the rest, 115k, is cash).
+(research/kelly/: stock sieve 100k, momentum-trend optimizer book 100k, trend ETFs 100k, VIX/SPY capitulation 100k,
+QQQ RSI2 25k, top-5 countries 10k; the rest, 65k, is cash).
 
 Cadence (user's choice): QQQ RSI2 and VIX/SPY are acted on DAILY; the other four sleeves MONTHLY.
 Every number is the live signal ("what the rules say to hold at today's close"); for the monthly sleeves
@@ -23,7 +23,7 @@ from macro.helpers import compute_RSI
 BOOK = 500_000
 BUDGETS = {                       # variant F
     "stock_sieve": 100_000,
-    "etf_12_1": 50_000,
+    "mom_trend": 100_000,
     "trend_etf": 100_000,
     "vix_spy": 100_000,
     "qqq_rsi2": 25_000,
@@ -31,15 +31,16 @@ BUDGETS = {                       # variant F
 }
 LABELS = {
     "stock_sieve": "Stock sieve (12-1, top 10, <=3/sector, vol-managed)",
-    "etf_12_1": "12-1 ETFs (top 8, equal-weight)",
+    "mom_trend": "Momentum-trend ETFs (live optimizer book)",
     "trend_etf": "Trend ETFs (equal-weight, above 200DMA)",
     "vix_spy": "VIX capitulation -> SPY",
     "qqq_rsi2": "QQQ RSI2",
-    "country": "Top country (12-1)",
+    "country": "Top-5 countries (6-month momentum, gated)",
 }
-CADENCE = {"stock_sieve": "monthly", "etf_12_1": "monthly", "trend_etf": "monthly",
+CADENCE = {"stock_sieve": "monthly", "mom_trend": "monthly", "trend_etf": "monthly",
            "vix_spy": "daily", "qqq_rsi2": "daily", "country": "monthly"}
-COUNTRY_ETFS = ["EWY", "EWJ", "IEV"]   # the country ETFs in the trend universe (trend_etf_ranking.csv)
+COUNTRY_TOP_K = 5
+COUNTRY_LOOKBACK = 126   # 6-month momentum
 ETF_TOP_K = 8
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ETF_CSV = os.path.join(_ROOT, "trendselection", "trend_etf_ranking.csv")
@@ -99,21 +100,23 @@ def _etf_universe_and_mom():
     return t["Ticker"].tolist(), t.set_index("Ticker")["Mom_12_1"].astype(float)
 
 
-def _etf_12_1(shared):
+def _mom_trend():
+    """The main momentum-trend sleeve = the live get_trends() optimizer book (inverse-vol/covariance optimizer,
+    SPY-200DMA risk gate, defensives). Its weights are fractions of ITS OWN book, so position $ = weight x sleeve
+    budget - the optimizer's own deployment (typically 40-60%) and cash are preserved, as in the replay backtest.
+    Needs get_trends() to have run first (app.py does this); otherwise the sleeve reports ERROR/cash."""
     try:
-        _, mom = _etf_universe_and_mom()
-        gate_on = _above_200(_close(shared, "SPY"))
-        if gate_on is None:
-            return _sleeve("etf_12_1", signal="ERROR", note="SPY history too short for 200DMA gate")
-        if not gate_on:
-            return _sleeve("etf_12_1", signal="GATE: CASH", note="SPY below its 200DMA -> sleeve in cash")
-        top = mom.dropna()
-        top = top[top > 0].sort_values(ascending=False).head(ETF_TOP_K)
-        slot = BUDGETS["etf_12_1"] / ETF_TOP_K
-        return _sleeve("etf_12_1", {t: slot for t in top.index}, signal=f"{len(top)} of {ETF_TOP_K} slots",
-                       note="empty slots stay cash" if len(top) < ETF_TOP_K else "")
+        from macro.indicators import get_portfolio_summary
+        summ = get_portfolio_summary() or {}
+        if summ.get("weights") is None:
+            return _sleeve("mom_trend", signal="ERROR", note="optimizer book not computed yet (get_trends must run first)")
+        w = {t: float(v) for t, v in summ["weights"].items() if float(v) > 0}
+        gross = sum(w.values())
+        pos = {t: v * BUDGETS["mom_trend"] for t, v in w.items()}
+        return _sleeve("mom_trend", pos, signal=f"{len(pos)} names, {gross:.0%} deployed",
+                       note="optimizer weights x sleeve budget; backtest standalone Sharpe ~0.04 (low-vol diversifier)")
     except Exception as e:
-        return _sleeve("etf_12_1", signal="ERROR", note=f"{e}")
+        return _sleeve("mom_trend", signal="ERROR", note=f"{e}")
 
 
 def _trend_etf(shared):
@@ -163,17 +166,27 @@ def _qqq(shared):
 
 
 def _country(shared):
+    """Top-5 countries by 6-month (126d) momentum, equal-weight, each must be above its 200DMA with positive
+    6m momentum (research/kelly country tests: Sharpe 0.37, just past the random-pick 95th pct 0.36; empty
+    slots stay cash). Universe = macro.constants.COUNTRIES (same 16 ETFs as the test, incl. SPY)."""
     try:
-        _, mom = _etf_universe_and_mom()
-        ranks = mom.reindex(COUNTRY_ETFS).dropna().sort_values(ascending=False)
-        if ranks.empty:
-            return _sleeve("country", signal="ERROR", note="no country momentum data")
-        top = ranks.index[0]
-        rk = ", ".join(f"{t} {v:+.0%}" for t, v in ranks.items())
-        on = _above_200(_close(shared, top))
-        if ranks.iloc[0] <= 0 or not on:
-            return _sleeve("country", signal=f"{top} OFF", note=f"top country {top} fails momentum/200DMA -> cash. 12-1: {rk}")
-        return _sleeve("country", {top: BUDGETS["country"]}, signal=top, note=f"12-1: {rk}")
+        from macro.constants import COUNTRIES
+        mom, up = {}, {}
+        for t in [t for t in COUNTRIES if not t.startswith("^")]:
+            c = _close(shared, t).dropna()
+            if len(c) < 200:
+                continue
+            mom[t] = float(c.iloc[-1] / c.iloc[-1 - COUNTRY_LOOKBACK] - 1.0) if len(c) > COUNTRY_LOOKBACK else np.nan
+            up[t] = bool(c.iloc[-1] > c.rolling(200).mean().iloc[-1])
+        if not mom:
+            return _sleeve("country", signal="ERROR", note="no country price history")
+        ranked = sorted(((t, m) for t, m in mom.items() if np.isfinite(m) and m > 0 and up[t]), key=lambda x: -x[1])
+        top = ranked[:COUNTRY_TOP_K]
+        slot = BUDGETS["country"] / COUNTRY_TOP_K
+        top6 = sorted(((t, m) for t, m in mom.items() if np.isfinite(m)), key=lambda x: -x[1])[:5]
+        note = (f"{len(ranked)} of {len(mom)} pass gate (6m>0 and >200DMA); empty slots stay cash. "
+                "6m leaders: " + ", ".join(f"{t} {m:+.0%}{'' if up[t] else ' (<200DMA)'}" for t, m in top6))
+        return _sleeve("country", {t: slot for t, _ in top}, signal=f"{len(top)} of {COUNTRY_TOP_K} slots", note=note)
     except Exception as e:
         return _sleeve("country", signal="ERROR", note=f"{e}")
 
@@ -185,7 +198,7 @@ def get_allocation(vix_signal=None):
         shared = _get_shared_market_data()
     except Exception:
         shared = pd.DataFrame()
-    sleeves = [_sieve(), _etf_12_1(shared), _trend_etf(shared), _vix_spy(vix_signal), _qqq(shared), _country(shared)]
+    sleeves = [_sieve(), _mom_trend(), _trend_etf(shared), _vix_spy(vix_signal), _qqq(shared), _country(shared)]
 
     by_ticker = {}
     for s in sleeves:
@@ -294,7 +307,8 @@ def mark_executed(alloc, which="due", today=None):
 if __name__ == "__main__":
     # python -m macro.allocation orders   -> print today's orders
     # python -m macro.allocation mark     -> after trading: record due sleeves as held ('mark all' = initial build)
-    from macro.indicators import get_vix_signal
+    from macro.indicators import get_vix_signal, get_trends
+    get_trends()                      # runs the optimizer so the momentum-trend sleeve has its weights
     a = get_allocation(get_vix_signal())
     cmd = sys.argv[1] if len(sys.argv) > 1 else "orders"
     if cmd == "mark":

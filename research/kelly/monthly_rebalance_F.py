@@ -83,3 +83,4 @@ for k,x in rows.items():
 print("\nlev needed for gated SPY to match F vol: %.2fx ; SPY b&h: %.2fx"%(vol/gated.std(),vol/spy_ex.std()))
 # paired difference F - scaled gated SPY: is it distinguishable from noise?
 diff=mix-scaled(gated,vol); print("F minus scaled gated-SPY: mean %.2f%%/yr, t-stat (monthly) %.2f"%(diff.mean()*1200,diff.mean()/diff.std()*np.sqrt(len(diff))))
+D.to_csv("/Users/riddhisiddhi/stocks/research/kelly/sleeve_components_mixed_cadence.csv")
