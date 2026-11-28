@@ -1,17 +1,17 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set s = sleeves.get('qqq_rsi2') %}
 <div class="card">
-    <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-4">Tactical QQQ (RSI 2)</h2>
+    {% if s %}{{ m.header(s, "QQQ RSI2", "text-blue-400") }}{% else %}<h2 class="text-xs font-black text-blue-400 uppercase tracking-widest mb-2">QQQ RSI2</h2>{% endif %}
     <div class="card-highlight">
-        <p class="{{ 'status-green' if 'BUY' in mr.signal
-                     else 'status-red' if 'EXIT' in mr.signal or 'RISK OFF' in mr.signal
+        <p class="{{ 'status-green' if s and s.positions
+                     else 'status-red' if mr.signal in ('EXIT', 'RISK OFF')
                      else '' }} text-3xl font-black">
-            {{ mr.signal }}
+            {{ 'IN' if s and s.positions else ('FLAT' if s else mr.signal) }}
         </p>
-        {% if mr.deploy and mr.deploy > 0 %}
-        <p class="text-[11px] font-black text-green-400 font-mono mt-1"
-           title="Sized by vol headroom: largest QQQ add keeping total book vol at the 15% cap (accounts for book-QQQ correlation). Max hold ~1 week; exit RSI2>=70.">
-            DEPLOY ${{ "{:,.0f}".format(mr.deploy) }}
-        </p>
+        {% if s and s.positions %}
+        <p class="text-[11px] font-black text-green-400 font-mono mt-1">HOLD QQQ ${{ "{:,.0f}".format(s.positions['QQQ']) }}</p>
         {% endif %}
-        <p class="label-small mt-2">RSI(2): {{ mr.rsi2 }} | QQQ: ${{ mr.price }}</p>
+        <p class="label-small mt-2">RSI(2): {{ mr.rsi2 }} | QQQ: ${{ mr.price }} | today's raw signal: {{ mr.signal }}</p>
     </div>
+    <p class="text-[9px] text-slate-600 mt-1.5">Stateful: enter RSI2 ≤ 5 above the 200DMA, exit RSI2 ≥ 70, flat below the 200DMA. Fixed sleeve size (no vol-headroom sizing). Small edge standalone (~2.6%/yr excess); in the market ~7% of days.</p>
 </div>

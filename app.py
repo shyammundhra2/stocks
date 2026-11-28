@@ -106,6 +106,7 @@ def index():
     resp = make_response(render_template(
         "dashboard.html",
         allocation=allocation,
+        sleeves={x["key"]: x for x in allocation.get("sleeves", [])},
         selected_stocks=selected_stocks,
         selected_trends=selected_trends,
         regime=all_data["regime"],
@@ -187,6 +188,21 @@ def scanner():
         "scanner.html", sc=sc,
         rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         active_tab="scanner",
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
+@app.route("/bonds")
+def bonds():
+    # Lazy + cached (6h, stale-while-revalidate). First-ever load builds the dataset (~30-60s); never touches
+    # the trading path. See macro/bonds.py and research/bonds/ for what the signals are (and are not).
+    from macro.bonds import get_bonds
+    b = get_bonds()
+    resp = make_response(render_template(
+        "bonds.html", b=b,
+        rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        active_tab="bonds",
     ))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp

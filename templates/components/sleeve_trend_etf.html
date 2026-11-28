@@ -1,0 +1,9 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set s = sleeves.get('trend_etf') %}
+<div class="card">
+  {% if s %}
+  {{ m.header(s, "Trend ETFs (equal-weight)", "text-green-400") }}
+  {{ m.positions(s, "No ETF in the universe is above its 200DMA — sleeve in cash.") }}
+  <p class="text-[9px] text-slate-600 mt-1.5">Every ETF in the trend universe above its 200DMA, equal-weight (budget ÷ ETFs with data). Standalone backtest Sharpe ~0.45-0.6 (daily vs monthly rebalance); correlated 0.5-0.7 with the momentum sleeves, so it adds little diversification.</p>
+  {% else %}<p class="text-xs text-slate-500">Allocation unavailable.</p>{% endif %}
+</div>

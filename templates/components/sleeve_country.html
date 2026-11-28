@@ -1,0 +1,9 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set s = sleeves.get('country') %}
+<div class="card">
+  {% if s %}
+  {{ m.header(s, "Top-5 Countries (6-month momentum)", "text-emerald-400") }}
+  {{ m.positions(s, "No country passes the gate (6-month > 0 and above its 200DMA) — sleeve in cash.") }}
+  <p class="text-[9px] text-slate-600 mt-1.5">16 country ETFs, top 5 by 6-month momentum that are also above their 200DMA, equal-weight; empty slots stay cash. Backtest Sharpe 0.37 vs 0.36 for random picks — a trend gate more than a ranking edge. Small ($10k).</p>
+  {% else %}<p class="text-xs text-slate-500">Allocation unavailable.</p>{% endif %}
+</div>

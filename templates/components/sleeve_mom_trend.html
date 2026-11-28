@@ -1,0 +1,9 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set s = sleeves.get('mom_trend') %}
+<div class="card">
+  {% if s %}
+  {{ m.header(s, "Momentum-Trend ETFs (main sleeve)", "text-cyan-400") }}
+  {{ m.positions(s, "Optimizer book is all cash (risk gate off) — the whole sleeve sits in cash.") }}
+  <p class="text-[9px] text-slate-600 mt-1.5">Live get_trends() optimizer: inverse-vol/covariance weights, SPY-200DMA gate, defensives (GLD, DBC, DBMF, TLT) kept through the gate. Weights × sleeve budget; it deploys ~40-60% of budget when on. Detail table on the right.</p>
+  {% else %}<p class="text-xs text-slate-500">Allocation unavailable.</p>{% endif %}
+</div>

@@ -1,5 +1,7 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set s = sleeves.get('vix_spy') %}
 <div class="card">
-    <h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-4">VIX Fear Gauge (SPY)</h2>
+    {% if s %}{{ m.header(s, "VIX Capitulation → SPY", "text-purple-400") }}{% else %}<h2 class="text-xs font-black text-purple-400 uppercase tracking-widest mb-2">VIX Capitulation → SPY</h2>{% endif %}
     <div class="card-highlight">
         <p class="{{ 'status-green' if 'BUY' in vix_mr.signal
                      else 'status-red' if 'EXIT' in vix_mr.signal or 'TRIM' in vix_mr.signal
@@ -8,23 +10,15 @@
         </p>
         {% if vix_mr.target and vix_mr.target > 0 %}
         <p class="text-[11px] font-black text-green-400 font-mono mt-1"
-           title="Reserve to maintain, from the z-score ladder: $1k at z=2 scaling to $100k (20% of book) at z>=4. Ratchets up with the episode's peak z; sells ALL when SPY recovers to within 5% of its 252d high.">
-            MAINTAIN ${{ "{:,.0f}".format(vix_mr.target) }}
+           title="Held SPY, from the z-score ladder: $1k at z=2 scaling to the full $100k sleeve at z>=4. Ratchets up with the episode's peak z; sells ALL when SPY sets a new 252d high.">
+            HOLD SPY ${{ "{:,.0f}".format(vix_mr.target) }}
         </p>
         {% endif %}
         <div class="details-row mt-4">
-            <div>
-                <p class="label-small">VIX</p>
-                <p class="font-mono font-bold">{{ vix_mr.vix }}</p>
-            </div>
-            <div>
-                <p class="label-small">Z-Score</p>
-                <p class="font-mono font-bold">{{ vix_mr.z }}</p>
-            </div>
-            <div>
-                <p class="label-small">SPY RSI14</p>
-                <p class="font-mono font-bold">{{ vix_mr.spy_rsi14 }}</p>
-            </div>
+            <div><p class="label-small">VIX</p><p class="font-mono font-bold">{{ vix_mr.vix }}</p></div>
+            <div><p class="label-small">Z-Score</p><p class="font-mono font-bold">{{ vix_mr.z }}</p></div>
+            <div><p class="label-small">SPY RSI14</p><p class="font-mono font-bold">{{ vix_mr.spy_rsi14 }}</p></div>
         </div>
     </div>
+    <p class="text-[9px] text-slate-600 mt-1.5">Enter: VIX z &gt; 2 and SPY RSI14 &lt; 30. Exit: SPY back above its prior 252-day high. Rare (few episodes in 20 years); nearly uncorrelated with the other sleeves.</p>
 </div>

@@ -1,6 +1,9 @@
+{% import "components/_sleeve_macros.html" as m %}
+{% set sl = sleeves.get('stock_sieve') %}
 <div class="bg-slate-800 rounded p-3">
+  {% if sl %}{{ m.header(sl, "Stock Sieve — top 10 (12-1 + gate)", "text-amber-400") }}{% endif %}
   <div class="flex justify-between items-center mb-1">
-    <p class="text-[10px] text-slate-400 uppercase tracking-wider">Stock Sleeve — Top 10 (momentum + gate)</p>
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider">{{ 'Names' if sl else 'Stock Sleeve — Top 10 (momentum + gate)' }}</p>
     {% if selected_stocks.refreshing %}<span class="text-[9px] text-yellow-400 animate-pulse">↻ refreshing</span>{% endif %}
   </div>
   {% if selected_stocks.stocks %}
@@ -14,7 +17,7 @@
     </tr>
     {% endfor %}
   </table>
-  <p class="text-[9px] text-slate-600 mt-1.5">$50k sleeve · ≤3/sector · equal-weight (~${{ '{:,.0f}'.format(selected_stocks.stocks[0].alloc) }}/position) · hold only when gate risk-on. Cached daily; refreshes in background.</p>
+  <p class="text-[9px] text-slate-600 mt-1.5">≤3/sector · equal-weight · vol-managed deploy · hold only when gate risk-on. Sleeve size and $ per name are in the header above (the cached ranking CSV still carries the old $50k sizing). Cached daily; refreshes in background.</p>
   {% elif selected_stocks.gate %}
   <p class="text-[10px] text-slate-500 mb-2">{{ selected_stocks.gate }} · {{ selected_stocks.asof }}</p>
   <p class="text-xs text-slate-500 py-2">Sleeve is correctly empty, not stuck — the 200DMA gate is risk-off, so the

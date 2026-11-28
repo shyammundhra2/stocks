@@ -1,0 +1,207 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="min-h-screen bg-slate-950 text-slate-200 font-sans">
+{% include "components/nav.html" %}
+<div class="max-w-[1400px] mx-auto px-4 py-6">
+
+  <div class="flex flex-wrap justify-between items-baseline mb-1 gap-2">
+    <h1 class="text-lg font-black text-teal-400 uppercase tracking-widest">Bonds — Signals &amp; Analysis</h1>
+    <span class="text-[10px] text-slate-500 font-mono">data as of {{ b.asof or '?' }} · built {{ b.built or '?' }}{% if b.refreshing %} · <span class="text-yellow-400 animate-pulse">refreshing</span>{% endif %}</span>
+  </div>
+
+  {% if b.error %}
+  <div class="bg-slate-900 border border-yellow-700 rounded p-4 text-sm text-yellow-300">{{ b.error }}</div>
+  {% else %}
+  {% set A = b.analysis %}
+  {% for e in A.errors %}<p class="text-[11px] text-yellow-400 mb-2">⚠ {{ e }}</p>{% endfor %}
+
+  <div class="bg-slate-900 border border-slate-800 rounded p-3 mb-5 text-[11px] text-slate-400 leading-relaxed">
+    <span class="text-white font-bold">How to read this tab.</span>
+    <span class="text-green-400 font-bold">BUY</span> / <span class="text-red-400 font-bold">AVOID</span> is a <b>defensive trend filter</b>
+    (above the 200-day average; for credit also equities above their 200DMA and credit spreads not widening fast). In 15-20 years of monthly data it
+    cut maximum drawdown by roughly 40-60% at about the same Sharpe as buy-and-hold — it is <b>not</b> a return forecast and it did not beat random timing at the same exposure.
+    The <b>Bayesian view</b> below is shown for honest uncertainty: out of sample its probabilities had <b>no predictive skill</b> (AUC 0.51). Research, not advice.
+  </div>
+
+  {# ---------------- regime strip ---------------- #}
+  <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 mb-5 text-xs">
+    {% macro tile(label, value, sub, cls) %}
+    <div class="bg-slate-900 border border-slate-800 rounded p-2"><p class="text-[9px] text-slate-500 uppercase">{{ label }}</p><p class="font-mono font-bold {{ cls }}">{{ value }}</p><p class="text-[9px] text-slate-600">{{ sub }}</p></div>
+    {% endmacro %}
+    {{ tile("Equities", "above 200DMA" if A.spy_above_200 else "below 200DMA", "SPY regime gate for credit", "text-green-400" if A.spy_above_200 else "text-red-400") }}
+    {{ tile("VIX", A.vix, "z vs 1y: " ~ A.vix_z, "text-red-400" if (A.vix_z or 0) > 1 else "text-slate-200") }}
+    {{ tile("Baa spread", (A.baa_spread ~ "%") if A.baa_spread is defined else "n/a", "z " ~ A.baa_spread_z ~ " · " ~ A.baa_pctile ~ "th pctile" if A.baa_spread_z is defined else "", "text-slate-200") }}
+    {{ tile("Spread 3m chg", (A.baa_spread_chg3m ~ " pp") if A.baa_spread_chg3m is not none else "n/a", "gate: widening z>1 = stress", "text-slate-200") }}
+    {{ tile("HYG vs IEF 3m", (A.hy_vs_treasury_3m ~ "%") if A.hy_vs_treasury_3m is defined else "n/a", "credit appetite", "text-green-400" if (A.hy_vs_treasury_3m or 0) > 0 else "text-red-400") }}
+    {{ tile("Curve 10y-3m", (A.slope_10y3m ~ " pp") if A.slope_10y3m is defined else "n/a", "10y-2y: " ~ A.slope_10y2y if A.slope_10y2y is defined else "", "text-slate-200") }}
+    {{ tile("Real 10y", (A.real10 ~ "%") if A.real10 is defined else "n/a", "breakeven " ~ A.breakeven10 ~ "%" if A.breakeven10 is defined else "", "text-slate-200") }}
+    {{ tile("Cash yield", A.cash_yield ~ "%", "hurdle for every bond", "text-slate-200") }}
+  </div>
+
+  {# ---------------- where it points ---------------- #}
+  {% set buys = b.etfs|selectattr('signal','equalto','BUY')|list %}
+  <div class="bg-slate-900 border border-slate-800 rounded p-3 mb-5">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Where the filter points today</p>
+    {% if buys %}
+    <p class="text-sm text-white">
+      {% for r in buys %}<span class="inline-block mr-3"><span class="text-green-400 font-bold">{{ r.ticker }}</span> <span class="text-slate-400 text-xs">{{ r.name }}</span></span>{% endfor %}
+    </p>
+    <p class="text-[11px] text-slate-500 mt-1">Everything else is AVOID (in cash) until it clears its filter.
+      {% set cr = b.etfs|selectattr('category','in',['Investment-grade','High yield','Emerging'])|selectattr('signal','equalto','BUY')|list %}
+      {% if not cr %} No credit ETF (investment-grade, high yield, EM) passes — {% if not A.spy_above_200 %}equities are below their 200DMA{% else %}see the per-ETF reasons below{% endif %}.{% endif %}</p>
+    {% else %}
+    <p class="text-sm text-red-400 font-bold">No bond ETF passes its filter — the rule says cash.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------- signals table ---------------- #}
+  <div class="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mb-5">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider px-3 pt-3">Signals by type and duration</p>
+    <table class="w-full text-xs">
+      <thead class="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+        <tr><th class="text-left px-3 py-2">ETF</th><th class="text-left">Type</th><th class="text-right">~Dur (y)</th><th class="text-right">Yield</th><th class="text-right">Carry vs cash</th>
+            <th class="text-right">12-1 mom</th><th class="text-right">3m</th><th class="text-right">From high</th><th class="text-right">vs 200DMA</th><th class="text-center">Signal</th><th class="text-left px-3">Why</th></tr>
+      </thead>
+      <tbody>
+      {% for r in b.etfs|sort(attribute='duration') %}{% set _g = loop %}
+        <tr class="border-t border-slate-800/60">
+          <td class="px-3 py-1.5"><span class="font-bold text-white">{{ r.ticker }}</span> <span class="text-slate-500 text-[10px]">{{ r.name }}</span></td>
+          <td class="text-slate-400">{{ r.category }}</td>
+          <td class="text-right font-mono text-slate-300">{{ r.duration }}</td>
+          <td class="text-right font-mono">{{ r.yield_pct if r.yield_pct is not none else '—' }}{{ '%' if r.yield_pct is not none }}</td>
+          <td class="text-right font-mono {{ 'text-green-400' if (r.carry_pct or 0) > 0 else 'text-red-400' }}">{{ ('%+.2f'|format(r.carry_pct)) if r.carry_pct is not none else '—' }}</td>
+          <td class="text-right font-mono {{ 'text-green-400' if (r.mom12 or 0) > 0 else 'text-red-400' }}">{{ ('%+.1f%%'|format(r.mom12)) if r.mom12 is not none else '—' }}</td>
+          <td class="text-right font-mono {{ 'text-green-400' if r.mom3 > 0 else 'text-red-400' }}">{{ '%+.1f%%'|format(r.mom3) }}</td>
+          <td class="text-right font-mono text-slate-400">{{ '%.1f%%'|format(r.dd_pct) }}</td>
+          <td class="text-right font-mono {{ 'text-green-400' if r.above_200 else 'text-red-400' }}">{{ '%+.1f%%'|format(r.dist_200_pct) }}</td>
+          <td class="text-center"><span class="px-2 py-0.5 rounded font-black text-[10px] {{ 'bg-green-900 text-green-300' if r.signal == 'BUY' else 'bg-red-900/60 text-red-300' }}">{{ r.signal }}</span></td>
+          <td class="px-3 text-[10px]">{% for x in r.reasons %}<span class="{{ 'text-green-500' if x.ok else 'text-red-400' }}">{{ '✓' if x.ok else '✗' }} {{ x.text }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-[9px] text-slate-600 px-3 pb-2">Yield = trailing-12-month distributions ÷ price (a proxy, not SEC yield). Durations are approximate. Carry = yield minus the 3-month T-bill. Longer duration = more rate risk per unit of carry.</p>
+  </div>
+
+  {# ---------------- Bayesian view ---------------- #}
+  <div class="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mb-5">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider px-3 pt-3">Bayesian view — posterior for next month's excess return over cash</p>
+    <p class="text-[11px] text-slate-500 px-3 mb-2 leading-relaxed">
+      <b class="text-slate-300">Prior</b> = the ETF's historical share of months beating cash. <b class="text-slate-300">Evidence</b> = ten features (trend, momentum, carry, credit spread level/change,
+      curve, real yield, equity trend, VIX) entering a Bayesian ridge regression whose Normal prior shrinks every effect toward zero. <b class="text-slate-300">Posterior</b> = the updated
+      probability and a 90% credible interval for next month's excess return. Notice how wide the intervals are compared with the means: that width <i>is</i> the honest answer.
+      <span class="text-yellow-400">Out-of-sample check: AUC 0.51, average rank-IC −0.04 — the posterior did not predict realised returns. Treat as a map of uncertainty, not a forecast.</span>
+    </p>
+    <table class="w-full text-xs">
+      <thead class="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+        <tr><th class="text-left px-3 py-2">ETF</th><th class="text-right">Prior P(&gt;cash)</th><th class="text-right">Posterior P</th><th class="text-right">Mean</th><th class="text-center">90% credible interval (monthly excess, %)</th><th class="text-center">View</th><th class="text-left px-3">What moved it</th></tr>
+      </thead>
+      <tbody>
+      {% for r in b.etfs|sort(attribute='duration') if r.bayes %}{% set y = r.bayes %}
+        {% set lo = y.lo_pct %}{% set hi = y.hi_pct %}
+        <tr class="border-t border-slate-800/60">
+          <td class="px-3 py-1.5 font-bold text-white">{{ r.ticker }}</td>
+          <td class="text-right font-mono text-slate-400">{{ '%.0f%%'|format(y.prior_p*100) }}</td>
+          <td class="text-right font-mono font-bold {{ 'text-green-400' if y.post_p >= 0.6 else 'text-red-400' if y.post_p <= 0.4 else 'text-slate-200' }}">{{ '%.0f%%'|format(y.post_p*100) }}</td>
+          <td class="text-right font-mono">{{ '%+.2f'|format(y.mu_pct) }}</td>
+          <td class="px-2">
+            <div class="relative h-3 bg-slate-800 rounded" style="min-width:180px" title="{{ lo }}% to {{ hi }}%">
+              {% set scale = 10.0 %}{% set L = ((lo + scale) / (2*scale) * 100)|round|int %}{% set H = ((hi + scale) / (2*scale) * 100)|round|int %}
+              <div class="absolute top-0 h-3 bg-teal-700/70 rounded" style="left: {{ [[L,0]|max,100]|min }}%; width: {{ [[H,0]|max,100]|min - [[L,0]|max,100]|min }}%"></div>
+              <div class="absolute top-0 h-3 w-px bg-slate-400" style="left:50%"></div>
+              <div class="absolute top-0 h-3 w-1 bg-white rounded" style="left: {{ [[((y.mu_pct + scale) / (2*scale) * 100)|round|int,0]|max,100]|min }}%"></div>
+            </div>
+            <div class="flex justify-between text-[9px] font-mono text-slate-500"><span>{{ '%+.1f'|format(lo) }}</span><span>{{ '%+.1f'|format(hi) }}</span></div>
+          </td>
+          <td class="text-center text-[10px] {{ 'text-green-400' if y.view == 'favors' else 'text-red-400' if y.view == 'against' else 'text-slate-500' }}">{{ y.view }}</td>
+          <td class="px-3 text-[10px] text-slate-400">{% for d in y.drivers[:3] %}{{ d.feature }} <span class="{{ 'text-green-500' if d.effect_pct > 0 else 'text-red-400' }}">{{ '%+.2f'|format(d.effect_pct) }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-[9px] text-slate-600 px-3 pb-2">Bar scale: −10% to +10% a month; white tick = posterior mean, vertical line = 0. "What moved it" = feature × its posterior effect (percentage points of monthly excess return). View: favors if P ≥ 60%, against if ≤ 40%. Trained walk-forward on all history for each ETF (≥5 years). <span class="text-yellow-400">Caution: the same macro inputs (today mostly the real 10y yield and VIX) move every ETF's posterior together, so a row of "favors" mostly reflects one shared macro reading, not ETF-specific evidence — and it can disagree with the trend filter above (e.g. TLT: posterior favors, filter says AVOID).</span></p>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+    {# ---------------- curve ---------------- #}
+    <div class="bg-slate-900 rounded-lg border border-slate-800 p-3">
+      <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Treasury curve (what each duration pays)</p>
+      {% if A.curve %}
+      <table class="w-full text-xs mb-2">
+        <tr class="text-[10px] text-slate-500"><td>Maturity</td><td class="text-right">Now</td><td class="text-right">1m ago</td><td class="text-right">1y ago</td><td class="text-right">Δ 1y (pp)</td></tr>
+        {% for c in A.curve %}
+        <tr class="border-t border-slate-800/60"><td class="py-0.5 text-white font-bold">{{ c.label }}</td><td class="text-right font-mono">{{ '%.2f'|format(c.now) }}%</td>
+          <td class="text-right font-mono text-slate-400">{{ ('%.2f'|format(c.m1)) if c.m1 is not none else '—' }}</td><td class="text-right font-mono text-slate-400">{{ ('%.2f'|format(c.y1)) if c.y1 is not none else '—' }}</td>
+          <td class="text-right font-mono {{ 'text-red-400' if c.y1 is not none and c.now > c.y1 else 'text-green-400' }}">{{ ('%+.2f'|format(c.now - c.y1)) if c.y1 is not none else '—' }}</td></tr>
+        {% endfor %}
+      </table>
+      <div id="curve_chart" style="height:200px"></div>
+      <script>
+        (function(){ var c = {{ A.curve|tojson }};
+          var x = c.map(function(r){return r.label});
+          Plotly.newPlot('curve_chart', [
+            {x:x, y:c.map(function(r){return r.now}), name:'now', mode:'lines+markers', line:{color:'#2dd4bf'}},
+            {x:x, y:c.map(function(r){return r.y1}), name:'1y ago', mode:'lines+markers', line:{color:'#64748b', dash:'dot'}}],
+            {margin:{l:35,r:10,t:5,b:25}, paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)', font:{color:'#94a3b8', size:10},
+             legend:{orientation:'h', y:1.15}, yaxis:{gridcolor:'#1e293b', ticksuffix:'%'}, xaxis:{gridcolor:'#1e293b'}}, {displayModeBar:false, responsive:true});
+        })();
+      </script>
+      {% endif %}
+      <p class="text-[10px] text-slate-500 mt-2 leading-relaxed">
+        Curve 10y−3m is <b>{{ A.slope_10y3m }} pp</b>{% if A.slope_10y3m is defined and A.slope_10y3m < 0 %} (inverted: short rates pay more than long){% elif A.slope_10y3m is defined %} (upward-sloping: you are paid modestly to extend){% endif %}.
+        Real 10y yield is {{ A.real10 }}% against a {{ A.breakeven10 }}% breakeven. A high real yield is a better starting point for long bonds, but the research found that
+        <b>yield level alone did not time returns</b> (it failed in 2022, when yields kept rising), which is why the signal is trend-based, not valuation-based.
+      </p>
+    </div>
+
+    {# ---------------- credit ---------------- #}
+    <div class="bg-slate-900 rounded-lg border border-slate-800 p-3 text-[11px] text-slate-400 leading-relaxed">
+      <p class="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Credit analysis (corporate &amp; junk)</p>
+      <ul class="space-y-1.5">
+        <li><b class="text-slate-200">Spread level.</b> Baa–Treasury spread is {{ A.baa_spread }}% — {{ A.baa_pctile }}th percentile of its history (z {{ A.baa_spread_z }}).
+          {% if A.baa_pctile is defined and A.baa_pctile < 20 %}Spreads are <b>tight</b>: little cushion if credit worsens, so investors are paid little for default risk.{% elif A.baa_pctile is defined and A.baa_pctile > 80 %}Spreads are <b>wide</b>: historically a better entry, but wide spreads also mark stress.{% else %}Mid-range.{% endif %}</li>
+        <li><b class="text-slate-200">Spread momentum.</b> 3-month change {{ A.baa_spread_chg3m }} pp. The gate blocks credit when widening is unusually fast (z &gt; 1).</li>
+        <li><b class="text-slate-200">Equity link.</b> Credit — high yield especially — trades with equities. With equities {{ 'above' if A.spy_above_200 else 'below' }} their 200DMA the gate is {{ 'open' if A.spy_above_200 else 'closed for credit' }}.</li>
+        <li><b class="text-slate-200">Appetite.</b> HYG vs IEF over 3 months: {{ A.hy_vs_treasury_3m }}% ({{ 'investors favoring junk over Treasuries' if (A.hy_vs_treasury_3m or 0) > 0 else 'investors rotating out of junk into Treasuries' }}).</li>
+        <li><b class="text-slate-200">Carry vs risk.</b> Junk pays more but its drawdowns behave like equities; investment-grade and short-duration credit sit in between. Compare the carry column above with the drawdown column in the evidence table below.</li>
+      </ul>
+    </div>
+  </div>
+
+  {# ---------------- evidence ---------------- #}
+  {% if b.evidence %}
+  <div class="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mb-5">
+    <p class="text-[10px] text-slate-400 uppercase tracking-wider px-3 pt-3">Research evidence — the filter vs buy-and-hold (monthly, walk-forward, excess over cash)</p>
+    <table class="w-full text-xs">
+      <thead class="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+        <tr><th class="text-left px-3 py-2">ETF</th><th class="text-left">Rule</th><th class="text-right">Since</th><th class="text-right">In market</th><th class="text-right">Sharpe B&amp;H → rule</th><th class="text-right">Max DD B&amp;H → rule</th>
+            <th class="text-right">Rule Sharpe by half</th><th class="text-right">At 2× cost</th><th class="text-right">Random-timing 95th pct</th></tr>
+      </thead>
+      <tbody>
+      {% for r in b.etfs|sort(attribute='duration') if b.evidence.get(r.ticker) %}{% set e = b.evidence[r.ticker] %}
+        <tr class="border-t border-slate-800/60">
+          <td class="px-3 py-1 font-bold text-white">{{ r.ticker }}</td><td class="text-slate-400 text-[10px]">{{ e.rule }}</td><td class="text-right font-mono text-slate-500">{{ e.start[:4] }}</td>
+          <td class="text-right font-mono">{{ '%.0f%%'|format(e.exposure*100) }}</td>
+          <td class="text-right font-mono">{{ '%.2f'|format(e.bh_sharpe) }} → <span class="{{ 'text-green-400' if e.rule_sharpe > e.bh_sharpe else 'text-slate-300' }}">{{ '%.2f'|format(e.rule_sharpe) }}</span></td>
+          <td class="text-right font-mono">{{ '%.1f'|format(e.bh_maxdd) }}% → <span class="text-green-400">{{ '%.1f'|format(e.rule_maxdd) }}%</span></td>
+          <td class="text-right font-mono text-slate-400">{{ '%.2f'|format(e.rule_h1) }} / {{ '%.2f'|format(e.rule_h2) }}</td>
+          <td class="text-right font-mono text-slate-400">{{ '%.2f'|format(e.sharpe_2x_cost) }}</td>
+          <td class="text-right font-mono {{ 'text-green-400' if e.rule_sharpe > e.null95 else 'text-slate-500' }}">{{ '%.2f'|format(e.null95) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-[9px] text-slate-600 px-3 pb-3 leading-relaxed">
+      Reading it: the filter lowers max drawdown for every ETF (often by half) and its Sharpe is similar to buy-and-hold (modestly above for Treasuries, TIPS and Agg; slightly below for HYG, VCSH and EMB) — but it never clears the random-timing 95th
+      percentile (right column; green = it does), so the benefit is <b>drawdown control, not proven alpha</b>. Monthly data understates intra-month drawdowns. Bond ETFs barely beat cash after
+      2011, so buy-and-hold Sharpe ratios are low. Also tested and <b>rejected</b>: trading directly on the Bayesian probability (never reliably better than random timing; hurt junk and EM),
+      and a yield-level/valuation tilt (failed in the 2022 rate shock).
+    </p>
+  </div>
+  {% endif %}
+
+  <p class="text-[10px] text-slate-600">Method: research/bonds/ (bond_research.py, bond_followup.py, bond_evidence.py). Live engine: macro/bonds.py. Display only — not investment advice.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

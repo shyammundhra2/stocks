@@ -1,0 +1,31 @@
+{# Shared sleeve header + position list. `s` = one entry of allocation.sleeves (macro/allocation.py). #}
+{% macro header(s, title, color) %}
+<div class="flex justify-between items-center mb-1">
+  <h2 class="text-xs font-black {{ color }} uppercase tracking-widest">{{ title }}</h2>
+  <span class="text-[9px] px-1.5 py-0.5 rounded {% if s.cadence == 'daily' %}bg-amber-900 text-amber-300{% else %}bg-slate-700 text-slate-300{% endif %}">{{ s.cadence }}</span>
+</div>
+<div class="flex justify-between text-[10px] font-mono mb-2">
+  <span class="text-slate-400">budget ${{ '{:,.0f}'.format(s.budget) }}</span>
+  <span class="text-green-400">invested ${{ '{:,.0f}'.format(s.deployed) }}</span>
+  <span class="text-slate-500">cash ${{ '{:,.0f}'.format(s.cash) }}</span>
+</div>
+<div class="w-full h-1 bg-slate-700 rounded mb-2"><div class="h-1 bg-green-500 rounded" style="width: {{ (100 * s.deployed / s.budget) if s.budget else 0 }}%"></div></div>
+<p class="text-[10px] {% if s.signal == 'ERROR' %}text-yellow-400{% else %}text-slate-300{% endif %} font-bold">{{ s.signal }}</p>
+{% if s.note %}<p class="text-[10px] text-slate-500 mb-1">{{ s.note }}</p>{% endif %}
+{% endmacro %}
+
+{% macro positions(s, empty_msg) %}
+{% if s.positions %}
+<table class="w-full text-xs mt-1">
+  {% for t, v in s.positions.items() %}
+  <tr class="border-t border-slate-700/40">
+    <td class="py-0.5 font-bold text-white w-14">{{ t }}</td>
+    <td class="py-0.5 text-right font-mono text-slate-200">${{ '{:,.0f}'.format(v) }}</td>
+    <td class="py-0.5 text-right font-mono text-slate-500 w-14">{{ '{:.1%}'.format(v / 500000) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="text-xs text-slate-500 py-1">{{ empty_msg }}</p>
+{% endif %}
+{% endmacro %}
